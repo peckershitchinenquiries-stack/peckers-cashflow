@@ -4,12 +4,20 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 const PUBLIC_PATHS = ["/login", "/access-denied"];
 
 export async function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+  try {
+    const res = NextResponse.next();
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl || !supabaseKey) {
+      console.error("[Middleware] Missing Supabase environment variables");
+      const url = req.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
+    }
+
+    const supabase = createServerClient(supabaseUrl, supabaseKey, {
       cookies: {
         get(name: string) {
           return req.cookies.get(name)?.value;
@@ -21,56 +29,63 @@ export async function middleware(req: NextRequest) {
           res.cookies.set({ name, value: "", ...options });
         },
       },
+    });
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const { pathname } = req.nextUrl;
+    const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+
+    if (!user) {
+      if (isPublic) return res;
+      const url = req.nextUrl.clone();
+      url.pathname = "/login";
+      return NextResponse.redirect(url);
     }
-  );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    if (user.email) {
+      const { data: allowed, error } = await supabase
+        .from("allowed_users")
+        .select("id")
+        .ilike("email", user.email)
+        .maybeSingle();
 
-  const { pathname } = req.nextUrl;
-  const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+      if (error) {
+        console.error("[Middleware] allowed_users query error:", error.message);
+      }
 
-  if (!user) {
-    if (isPublic) return res;
+      if (!allowed) {
+        await supabase.auth.signOut();
+        if (pathname !== "/access-denied") {
+          const url = req.nextUrl.clone();
+          url.pathname = "/access-denied";
+          return NextResponse.redirect(url);
+        }
+        return res;
+      }
+    }
+
+    if (pathname === "/login") {
+      const url = req.nextUrl.clone();
+      url.pathname = "/dashboard";
+      return NextResponse.redirect(url);
+    }
+
+    if (pathname === "/") {
+      const url = req.nextUrl.clone();
+      url.pathname = "/dashboard";
+      return NextResponse.redirect(url);
+    }
+
+    return res;
+  } catch (err) {
+    console.error("[Middleware] Error:", err instanceof Error ? err.message : String(err));
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
-
-  // User is logged in – check allowed_users.
-  if (user.email) {
-    const { data: allowed } = await supabase
-      .from("allowed_users")
-      .select("id")
-      .ilike("email", user.email)
-      .maybeSingle();
-
-    if (!allowed) {
-      // sign them out and bounce to access denied
-      await supabase.auth.signOut();
-      if (pathname !== "/access-denied") {
-        const url = req.nextUrl.clone();
-        url.pathname = "/access-denied";
-        return NextResponse.redirect(url);
-      }
-      return res;
-    }
-  }
-
-  if (pathname === "/login") {
-    const url = req.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
-  }
-
-  if (pathname === "/") {
-    const url = req.nextUrl.clone();
-    url.pathname = "/dashboard";
-    return NextResponse.redirect(url);
-  }
-
-  return res;
 }
 
 export const config = {
