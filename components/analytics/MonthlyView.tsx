@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/icons";
 import { createClient } from "@/lib/supabase";
 import { StatTile } from "./StatTile";
+import { useChartColors } from "./useChartColors";
 import {
   endOfISOWeek,
   endOfMonth,
@@ -65,6 +66,7 @@ function getMonthWeeks(year: number, monthIdx: number) {
 
 export function MonthlyView() {
   const supabase = React.useMemo(() => createClient(), []);
+  const colors = useChartColors();
   const now = new Date();
   const [year, setYear] = React.useState(now.getFullYear());
   const [month, setMonth] = React.useState(now.getMonth()); // 0-11
@@ -364,14 +366,14 @@ export function MonthlyView() {
                 <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `₹${v}`} width={70} />
                 <Tooltip
                   formatter={(v: number) => formatINR(v)}
-                  cursor={{ stroke: "#3a3a3a" }}
+                  cursor={{ stroke: colors.cursorStroke }}
                 />
                 <Line
                   type="monotone"
                   dataKey="net"
-                  stroke="#e8d5a3"
+                  stroke={colors.gold}
                   strokeWidth={2.5}
-                  dot={{ r: 4, fill: "#e8d5a3", stroke: "#e8d5a3" }}
+                  dot={{ r: 4, fill: colors.gold, stroke: colors.gold }}
                   activeDot={{ r: 6 }}
                   name="Net"
                 />
@@ -403,22 +405,22 @@ export function MonthlyView() {
                 <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `₹${v}`} width={70} />
                 <Tooltip
                   formatter={(v: number) => formatINR(v)}
-                  cursor={{ fill: "#ffffff08" }}
+                  cursor={{ fill: colors.cursorFill }}
                 />
                 <Legend />
-                <Bar dataKey="sales" name="Sales" fill="#e8d5a3" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="sales" name="Sales" fill={colors.gold} radius={[6, 6, 0, 0]} />
                 <Bar
                   dataKey="expenses"
                   stackId="costs"
                   name="Expenses"
-                  fill="#f87171"
+                  fill={colors.danger}
                   radius={[0, 0, 0, 0]}
                 />
                 <Bar
                   dataKey="empCash"
                   stackId="costs"
                   name="Employee Cash Pay"
-                  fill="#fbbf24"
+                  fill={colors.warning}
                   radius={[6, 6, 0, 0]}
                 />
               </BarChart>

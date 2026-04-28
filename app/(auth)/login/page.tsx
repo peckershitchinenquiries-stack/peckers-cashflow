@@ -1,5 +1,6 @@
 import { LoginForm } from "@/components/auth/LoginForm";
 import { Logo } from "@/components/layout/Logo";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 export const metadata = {
   title: "Sign in · Peckers Cash Flow",
@@ -8,6 +9,9 @@ export const metadata = {
 export default function LoginPage() {
   return (
     <main className="min-h-screen w-full grid place-items-center px-4 py-10 relative overflow-hidden">
+      <div className="absolute top-4 right-4 z-10">
+        <ThemeToggle variant="icon" />
+      </div>
       <div className="pointer-events-none absolute inset-0 opacity-60">
         <div className="absolute -top-32 -left-32 h-[420px] w-[420px] rounded-full bg-gold/10 blur-3xl" />
         <div className="absolute -bottom-32 -right-24 h-[380px] w-[380px] rounded-full bg-gold/5 blur-3xl" />

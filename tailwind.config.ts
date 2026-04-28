@@ -1,6 +1,9 @@
 import type { Config } from "tailwindcss";
 
+const rgb = (v: string) => `rgb(var(${v}) / <alpha-value>)`;
+
 const config: Config = {
+  darkMode: "class",
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
@@ -8,27 +11,27 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: "#0f0f0f",
-        surface: "#1a1a1a",
-        "surface-hover": "#222222",
-        border: "#2a2a2a",
-        "border-strong": "#3a3a3a",
+        bg: rgb("--color-bg"),
+        surface: rgb("--color-surface"),
+        "surface-hover": rgb("--color-surface-hover"),
+        border: rgb("--color-border"),
+        "border-strong": rgb("--color-border-strong"),
         gold: {
-          DEFAULT: "#e8d5a3",
-          dim: "#c9b888",
-          50: "#fbf7ec",
-          100: "#f4ead0",
-          200: "#e8d5a3",
-          300: "#dcbf76",
+          DEFAULT: rgb("--color-gold"),
+          dim: rgb("--color-gold-dim"),
+          50: rgb("--color-gold-50"),
+          100: rgb("--color-gold-100"),
+          200: rgb("--color-gold-200"),
+          300: rgb("--color-gold-300"),
         },
         text: {
-          primary: "#f5f5f5",
-          muted: "#888888",
-          subtle: "#aaaaaa",
+          primary: rgb("--color-text-primary"),
+          muted: rgb("--color-text-muted"),
+          subtle: rgb("--color-text-subtle"),
         },
-        success: "#4ade80",
-        danger: "#f87171",
-        warning: "#fbbf24",
+        success: rgb("--color-success"),
+        danger: rgb("--color-danger"),
+        warning: rgb("--color-warning"),
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],

@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ChartIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { createClient } from "@/lib/supabase";
 import { StatTile } from "./StatTile";
+import { useChartColors } from "./useChartColors";
 import {
   addDays,
   eachDay,
@@ -48,6 +49,7 @@ type EmpPay = {
 
 export function WeeklyView() {
   const supabase = React.useMemo(() => createClient(), []);
+  const colors = useChartColors();
   const [weekStart, setWeekStart] = React.useState<Date>(startOfISOWeek(new Date()));
   const [loading, setLoading] = React.useState(true);
   const [daily, setDaily] = React.useState<DailyRow[]>([]);
@@ -202,11 +204,11 @@ export function WeeklyView() {
                 />
                 <Tooltip
                   formatter={(v: number) => formatINR(v)}
-                  cursor={{ fill: "#ffffff08" }}
+                  cursor={{ fill: colors.cursorFill }}
                 />
                 <Legend />
-                <Bar dataKey="sales" name="Sales" fill="#e8d5a3" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="expenses" name="Expenses" fill="#f87171" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="sales" name="Sales" fill={colors.gold} radius={[6, 6, 0, 0]} />
+                <Bar dataKey="expenses" name="Expenses" fill={colors.danger} radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -256,7 +258,7 @@ export function WeeklyView() {
                         {Number(p.cash_hours).toFixed(2)}
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums font-medium text-gold">
-                        {formatINR(p.cash_amount_due)}
+                        {formatINR(Number(p.cash_amount_due))}
                       </td>
                     </tr>
                   ))}

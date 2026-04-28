@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import {
   ChartIcon,
   HomeIcon,
@@ -88,11 +89,14 @@ export function Sidebar() {
 
       <div
         className={cn(
-          "p-3 border-t border-border text-text-muted",
-          collapsed ? "text-center" : "",
+          "p-3 border-t border-border flex items-center gap-2",
+          collapsed ? "justify-center" : "justify-between",
         )}
       >
-        <p className="text-[10px] uppercase tracking-[0.2em]">v1.0</p>
+        {!collapsed && (
+          <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted">v1.0</p>
+        )}
+        <ThemeToggle variant="icon" />
       </div>
     </aside>
   );

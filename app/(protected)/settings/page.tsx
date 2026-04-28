@@ -6,6 +6,7 @@ import { LogoutIcon } from "@/components/ui/icons";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { signOutAction } from "@/app/actions/auth";
 import { AllowedUsersAdmin } from "@/components/settings/AllowedUsersAdmin";
+import { AppearanceCard } from "@/components/settings/AppearanceCard";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,8 @@ export default async function SettingsPage() {
       <PageHeader title="Settings" description="Account and app information." />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <AppearanceCard />
+
         <Card>
           <CardHeader>
             <CardTitle>Your Account</CardTitle>
