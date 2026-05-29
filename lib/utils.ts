@@ -7,27 +7,37 @@ export function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 // ---------------- currency ----------------
-export function formatINR(value: number | null | undefined, opts?: { compact?: boolean }) {
+/** Format a value as GBP (£) with 2 decimals. */
+export function formatGBP(value: number | null | undefined, opts?: { compact?: boolean }) {
   const n = Number(value ?? 0);
-  if (opts?.compact && Math.abs(n) >= 100000) {
-    return "₹" + new Intl.NumberFormat("en-IN", {
+  if (opts?.compact && Math.abs(n) >= 1000) {
+    return new Intl.NumberFormat("en-GB", {
+      style: "currency",
+      currency: "GBP",
       maximumFractionDigits: 1,
       notation: "compact",
     }).format(n);
   }
-  return "₹" + new Intl.NumberFormat("en-IN", {
+  return new Intl.NumberFormat("en-GB", {
+    style: "currency",
+    currency: "GBP",
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
 }
 
-export function formatINRPlain(value: number | null | undefined) {
+/** Alias kept for backwards-compat with cash-flow pages. */
+export const formatINR = formatGBP;
+
+export function formatGBPPlain(value: number | null | undefined) {
   const n = Number(value ?? 0);
-  return new Intl.NumberFormat("en-IN", {
+  return new Intl.NumberFormat("en-GB", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(n);
 }
+
+export const formatINRPlain = formatGBPPlain;
 
 // ---------------- date ----------------
 export function pad(n: number) {
@@ -37,7 +47,6 @@ export function pad(n: number) {
 /** Parses YYYY-MM-DD or ISO timestamp into a local Date (no timezone shift). */
 export function parseISODate(s: string): Date {
   if (!s) return new Date(NaN);
-  // If pure date YYYY-MM-DD -> construct in local timezone to avoid UTC offset issues.
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return new Date(s);
@@ -111,6 +120,15 @@ export function eachDay(start: Date, end: Date) {
 }
 
 export const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const WEEKDAY_LONG = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
 export const MONTH_SHORT = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -129,6 +147,77 @@ export function weekLabel(weekStart: Date) {
   return `${formatDDMMYYYY(weekStart)} – ${formatDDMMYYYY(end)}`;
 }
 
+/** Weekday index (0=Mon, 6=Sun) for a date. */
+export function weekdayIndex(d: Date): number {
+  return (d.getDay() + 6) % 7;
+}
+
+// ---------------- time / shift helpers ----------------
+/** Convert HH:MM (24h) string to minutes since midnight. */
+export function timeToMinutes(t: string | null | undefined): number {
+  if (!t) return 0;
+  const m = /^(\d{1,2}):(\d{2})/.exec(t.trim());
+  if (!m) return 0;
+  const h = Math.max(0, Math.min(23, Number(m[1])));
+  const min = Math.max(0, Math.min(59, Number(m[2])));
+  return h * 60 + min;
+}
+
+/** Format minutes back to HH:MM. */
+export function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${pad(h)}:${pad(m)}`;
+}
+
+/** Hours between start & end HH:MM strings (handles overnight). */
+export function shiftHours(start: string | null, end: string | null): number {
+  if (!start || !end) return 0;
+  let s = timeToMinutes(start);
+  let e = timeToMinutes(end);
+  if (e < s) e += 24 * 60;
+  return Math.max(0, (e - s) / 60);
+}
+
+/** Format start/end as "HH:MM – HH:MM" or "Day Off". */
+export function formatShiftRange(
+  isDayOff: boolean,
+  start: string | null,
+  end: string | null,
+): string {
+  if (isDayOff) return "Day Off";
+  if (!start || !end) return "—";
+  return `${start.slice(0, 5)}–${end.slice(0, 5)}`;
+}
+
+/** Format a timestamptz to HH:MM (local). */
+export function formatTimeOnly(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ---------------- geofencing ----------------
+/** Haversine distance in metres between two lat/lng points. */
+export function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6_371_000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const φ1 = toRad(lat1);
+  const φ2 = toRad(lat2);
+  const Δφ = toRad(lat2 - lat1);
+  const Δλ = toRad(lng2 - lng1);
+  const a =
+    Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 // ---------------- numbers / safety ----------------
 export function clampNumber(n: unknown, fallback = 0) {
   const v = typeof n === "string" ? parseFloat(n) : (n as number);
@@ -139,6 +228,12 @@ export function clampNumber(n: unknown, fallback = 0) {
 export function safeDivide(a: number, b: number) {
   if (!b) return 0;
   return a / b;
+}
+
+/** Percent difference between a and baseline (0 if baseline is 0). */
+export function percentDelta(a: number, baseline: number): number {
+  if (!baseline) return 0;
+  return ((a - baseline) / baseline) * 100;
 }
 
 // ---------------- CSV ----------------

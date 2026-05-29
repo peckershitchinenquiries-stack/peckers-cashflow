@@ -92,7 +92,7 @@ export function HoursTable({
                 <th className="px-3 py-2 font-medium text-right">Total</th>
                 <th className="px-3 py-2 font-medium text-right">Bank</th>
                 <th className="px-3 py-2 font-medium text-right">Cash hrs</th>
-                <th className="px-3 py-2 font-medium text-right">Cash ₹</th>
+                <th className="px-3 py-2 font-medium text-right">Cash £</th>
                 <th className="px-3 py-2 font-medium text-right">Logged</th>
                 <th className="px-3 py-2"></th>
               </tr>

@@ -2,44 +2,65 @@
 
 import * as React from "react";
 import { Modal } from "@/components/ui/Modal";
-import { Input, Textarea } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { createEmployee } from "@/app/actions/employees";
-import { todayISO } from "@/lib/utils";
+import {
+  EmployeeProfileForm,
+  emptyEmployeeForm,
+  validateEmployeeForm,
+  type EmployeeFormState,
+  type FormErrors,
+} from "./EmployeeProfileForm";
+import type { Store } from "@/lib/types";
 
 export function AddEmployeeModal({
+  stores,
+  defaultStoreId,
   onClose,
   onCreated,
 }: {
+  stores: Store[];
+  defaultStoreId?: string | null;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const toast = useToast();
-  const [name, setName] = React.useState("");
-  const [phone, setPhone] = React.useState("");
-  const [rate, setRate] = React.useState("");
-  const [joined, setJoined] = React.useState(todayISO());
-  const [notes, setNotes] = React.useState("");
-  const [errors, setErrors] = React.useState<{ [k: string]: string }>({});
+  const [form, setForm] = React.useState<EmployeeFormState>(() => ({
+    ...emptyEmployeeForm(),
+    store_id: defaultStoreId ?? "",
+  }));
+  const [errors, setErrors] = React.useState<FormErrors>({});
   const [busy, setBusy] = React.useState(false);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const errs: typeof errors = {};
-    if (!name.trim()) errs.name = "Name is required";
-    if (!rate || Number(rate) <= 0) errs.rate = "Hourly rate must be > 0";
+  async function submit() {
+    const errs = validateEmployeeForm(form);
     setErrors(errs);
-    if (Object.keys(errs).length > 0) return;
-
+    if (Object.keys(errs).length > 0) {
+      toast.error("Please fix the highlighted fields.");
+      return;
+    }
     setBusy(true);
     try {
       await createEmployee({
-        name,
-        phone: phone || null,
-        hourly_rate: Number(rate),
-        joined_date: joined || null,
-        notes: notes || null,
+        name: form.name,
+        email: form.email || null,
+        phone: form.phone || null,
+        date_of_birth: form.date_of_birth || null,
+        gender: form.gender || null,
+        position: form.position || null,
+        employment_start_date: form.employment_start_date || null,
+        joined_date: form.employment_start_date || null,
+        hourly_ni_rate: form.hourly_ni_rate ? Number(form.hourly_ni_rate) : null,
+        hourly_cash_rate: form.hourly_cash_rate ? Number(form.hourly_cash_rate) : null,
+        hourly_rate: Number(form.hourly_ni_rate || 0),
+        store_id: form.store_id || null,
+        bank_account_name: form.bank_account_name || null,
+        bank_name: form.bank_name || null,
+        account_number: form.account_number || null,
+        sort_code: form.sort_code || null,
+        employment_status: form.employment_status,
+        notes: form.notes || null,
       });
       toast.success("Employee added");
       onCreated();
@@ -55,58 +76,25 @@ export function AddEmployeeModal({
       open
       onClose={onClose}
       title="Add Employee"
-      description="Hourly rate is used to calculate cash pay for hours over 20/week."
-      size="md"
+      description="Full profile including pay rates and bank details (required for payroll)."
+      size="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} loading={busy} type="submit" form="add-employee-form">
+          <Button onClick={submit} loading={busy}>
             Save Employee
           </Button>
         </>
       }
     >
-      <form id="add-employee-form" onSubmit={submit} className="flex flex-col gap-4">
-        <Input
-          label="Name *"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          error={errors.name}
-          autoFocus
-        />
-        <Input
-          label="Phone"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          placeholder="(optional)"
-        />
-        <Input
-          type="number"
-          inputMode="decimal"
-          step="0.01"
-          min="0"
-          label="Hourly Rate *"
-          prefix="₹"
-          value={rate}
-          onChange={(e) => setRate(e.target.value)}
-          error={errors.rate}
-        />
-        <Input
-          type="date"
-          label="Joined Date"
-          value={joined}
-          onChange={(e) => setJoined(e.target.value)}
-        />
-        <Textarea
-          label="Notes"
-          rows={3}
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="(optional)"
-        />
-      </form>
+      <EmployeeProfileForm
+        form={form}
+        setForm={setForm}
+        errors={errors}
+        stores={stores}
+      />
     </Modal>
   );
 }

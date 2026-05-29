@@ -69,13 +69,13 @@ export async function middleware(req: NextRequest) {
 
     if (pathname === "/login") {
       const url = req.nextUrl.clone();
-      url.pathname = "/dashboard";
+      url.pathname = "/live";
       return NextResponse.redirect(url);
     }
 
     if (pathname === "/") {
       const url = req.nextUrl.clone();
-      url.pathname = "/dashboard";
+      url.pathname = "/live";
       return NextResponse.redirect(url);
     }
 

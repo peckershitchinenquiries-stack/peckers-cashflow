@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSessionUser } from "@/lib/supabase-server";
+import { requireUser } from "@/lib/supabase-server";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { MobileTopBar } from "@/components/layout/TopBar";
@@ -9,8 +9,7 @@ export default async function ProtectedLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
+  const user = await requireUser();
   if (!user.allowed) redirect("/access-denied");
 
   return (

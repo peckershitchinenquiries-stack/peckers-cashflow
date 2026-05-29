@@ -12,20 +12,24 @@ import {
   PhoneIcon,
   ClockIcon,
 } from "@/components/ui/icons";
-import type { Employee } from "@/lib/types";
-import { formatINR } from "@/lib/utils";
+import type { Employee, Store } from "@/lib/types";
+import { formatGBP } from "@/lib/utils";
 
 export function EmployeeCard({
   employee,
+  stores,
   onEdit,
   onChanged,
 }: {
   employee: Employee;
+  stores: Store[];
   onEdit: () => void;
   onChanged: () => void;
 }) {
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
+
+  const store = stores.find((s) => s.id === employee.store_id);
 
   async function toggleArchive() {
     setBusy(true);
@@ -42,6 +46,9 @@ export function EmployeeCard({
     }
   }
 
+  const niRate = Number(employee.hourly_ni_rate ?? employee.hourly_rate ?? 0);
+  const cashRate = employee.hourly_cash_rate ? Number(employee.hourly_cash_rate) : null;
+
   return (
     <Card className="flex flex-col">
       <div className="flex items-start justify-between gap-3">
@@ -50,13 +57,17 @@ export function EmployeeCard({
             {employee.name}
           </h3>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <Badge variant="gold">
-              {formatINR(employee.hourly_rate)}/hr
-            </Badge>
-            <Badge variant="neutral">
-              <ClockIcon size={12} /> {employee.bank_weekly_hours_limit}h bank
-            </Badge>
-            {!employee.is_active && <Badge variant="warning">Archived</Badge>}
+            {employee.position && (
+              <Badge variant="gold">{employee.position}</Badge>
+            )}
+            {store && <Badge variant="neutral">{store.name}</Badge>}
+            {employee.employment_status === "active" ? (
+              <Badge variant="success">Active</Badge>
+            ) : employee.employment_status === "inactive" ? (
+              <Badge variant="warning">Inactive</Badge>
+            ) : (
+              <Badge variant="danger">Left</Badge>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -79,6 +90,19 @@ export function EmployeeCard({
           >
             <ArchiveIcon size={16} />
           </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
+        <div>
+          <div className="text-text-muted">NI rate</div>
+          <div className="text-text-primary font-medium">{formatGBP(niRate)}/h</div>
+        </div>
+        <div>
+          <div className="text-text-muted">Cash rate</div>
+          <div className="text-text-primary font-medium">
+            {cashRate ? `${formatGBP(cashRate)}/h` : "—"}
+          </div>
         </div>
       </div>
 

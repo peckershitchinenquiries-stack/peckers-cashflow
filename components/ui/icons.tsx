@@ -225,3 +225,35 @@ export const MoonIcon = ({ size, ...p }: IconProps) => (
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
   </svg>
 );
+
+export const GridIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <rect x="3" y="3" width="7" height="7" />
+    <rect x="14" y="3" width="7" height="7" />
+    <rect x="14" y="14" width="7" height="7" />
+    <rect x="3" y="14" width="7" height="7" />
+  </svg>
+);
+
+export const RadioIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <circle cx="12" cy="12" r="2" />
+    <path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49" />
+    <path d="M20.07 4.93a10 10 0 0 1 0 14.14M3.93 19.07a10 10 0 0 1 0-14.14" />
+  </svg>
+);
+
+export const PinIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+    <circle cx="12" cy="10" r="3" />
+  </svg>
+);
+
+export const AlertIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1="12" y1="9" x2="12" y2="13" />
+    <line x1="12" y1="17" x2="12.01" y2="17" />
+  </svg>
+);

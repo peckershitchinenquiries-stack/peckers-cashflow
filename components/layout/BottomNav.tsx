@@ -4,19 +4,19 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
-  ChartIcon,
+  AlertIcon,
+  ClockIcon,
+  GridIcon,
   HomeIcon,
-  ListIcon,
-  SettingsIcon,
-  UsersIcon,
+  RadioIcon,
 } from "@/components/ui/icons";
 
 const items = [
   { href: "/dashboard", label: "Home", icon: HomeIcon },
-  { href: "/analytics", label: "Analytics", icon: ChartIcon },
-  { href: "/employees", label: "Staff", icon: UsersIcon },
-  { href: "/entries", label: "Entries", icon: ListIcon },
-  { href: "/settings", label: "Settings", icon: SettingsIcon },
+  { href: "/live", label: "Live", icon: RadioIcon },
+  { href: "/rota", label: "Rota", icon: GridIcon },
+  { href: "/crew", label: "Crew", icon: ClockIcon },
+  { href: "/alerts", label: "Alerts", icon: AlertIcon },
 ];
 
 export function BottomNav() {

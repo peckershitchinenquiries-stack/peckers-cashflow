@@ -6,14 +6,24 @@ import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 async function requireAdmin() {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
-  if (user.allowed.role !== "admin") throw new Error("Admin only");
+  if (user.allowed.role !== "admin" && user.allowed.role !== "super_admin") {
+    throw new Error("Admin only");
+  }
   return user;
+}
+
+type AllowedRole = "admin" | "manager" | "super_admin";
+
+function normaliseRole(r: AllowedRole | undefined): AllowedRole {
+  if (r === "admin" || r === "manager" || r === "super_admin") return r;
+  return "manager";
 }
 
 export async function addAllowedUser(input: {
   email: string;
   name?: string | null;
-  role?: "admin" | "manager";
+  role?: AllowedRole;
+  store_id?: string | null;
 }) {
   await requireAdmin();
   const supabase = createServerSupabase();
@@ -23,7 +33,8 @@ export async function addAllowedUser(input: {
   const { error } = await supabase.from("allowed_users").insert({
     email,
     name: input.name?.trim() || null,
-    role: input.role === "admin" ? "admin" : "manager",
+    role: normaliseRole(input.role),
+    store_id: input.store_id || null,
   });
   if (error) throw new Error(error.message);
   revalidatePath("/settings");
@@ -39,12 +50,24 @@ export async function removeAllowedUser(id: string) {
   return { ok: true };
 }
 
-export async function updateAllowedUserRole(input: { id: string; role: "admin" | "manager" }) {
+export async function updateAllowedUserRole(input: { id: string; role: AllowedRole }) {
   await requireAdmin();
   const supabase = createServerSupabase();
   const { error } = await supabase
     .from("allowed_users")
-    .update({ role: input.role })
+    .update({ role: normaliseRole(input.role) })
+    .eq("id", input.id);
+  if (error) throw new Error(error.message);
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+export async function updateAllowedUserStore(input: { id: string; store_id: string | null }) {
+  await requireAdmin();
+  const supabase = createServerSupabase();
+  const { error } = await supabase
+    .from("allowed_users")
+    .update({ store_id: input.store_id || null })
     .eq("id", input.id);
   if (error) throw new Error(error.message);
   revalidatePath("/settings");

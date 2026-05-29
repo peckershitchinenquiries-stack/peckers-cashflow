@@ -180,7 +180,7 @@ export function WeeklyView() {
       <Card>
         <CardHeader>
           <CardTitle>Daily Sales vs Expenses</CardTitle>
-          <CardDescription>Bars in ₹</CardDescription>
+          <CardDescription>Bars in £</CardDescription>
         </CardHeader>
 
         {loading ? (
@@ -199,7 +199,7 @@ export function WeeklyView() {
                 <XAxis dataKey="day" tick={{ fontSize: 12 }} />
                 <YAxis
                   tick={{ fontSize: 12 }}
-                  tickFormatter={(v) => `₹${v}`}
+                  tickFormatter={(v) => `£${v}`}
                   width={70}
                 />
                 <Tooltip

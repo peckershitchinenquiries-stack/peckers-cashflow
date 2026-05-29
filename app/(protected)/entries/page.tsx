@@ -1,11 +1,11 @@
 import { PageHeader } from "@/components/layout/PageHeader";
-import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import { EntriesView } from "@/components/entries/EntriesView";
 
 export const dynamic = "force-dynamic";
 
 export default async function EntriesPage() {
-  const user = (await getSessionUser())!;
+  const user = await requireUser();
   const supabase = createServerSupabase();
 
   const [entriesRes, allowedRes] = await Promise.all([

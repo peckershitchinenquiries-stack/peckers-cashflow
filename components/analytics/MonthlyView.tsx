@@ -363,7 +363,7 @@ export function MonthlyView() {
               <LineChart data={weeks} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="weekLabel" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `₹${v}`} width={70} />
+                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `£${v}`} width={70} />
                 <Tooltip
                   formatter={(v: number) => formatINR(v)}
                   cursor={{ stroke: colors.cursorStroke }}
@@ -402,7 +402,7 @@ export function MonthlyView() {
               <BarChart data={weeks} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="weekLabel" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `₹${v}`} width={70} />
+                <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `£${v}`} width={70} />
                 <Tooltip
                   formatter={(v: number) => formatINR(v)}
                   cursor={{ fill: colors.cursorFill }}

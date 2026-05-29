@@ -82,7 +82,7 @@ export function EntriesView({
   }, [from, to, manager]);
 
   function exportCSV() {
-    const headers = ["Date", "Manager", "Sales (₹)", "Expenses (₹)", "Net (₹)", "Notes"];
+    const headers = ["Date", "Manager", "Sales (£)", "Expenses (£)", "Net (£)", "Notes"];
     const rows = filtered.map((r) => {
       const net = Number(r.cash_sales) - Number(r.supermarket_expenses);
       return [

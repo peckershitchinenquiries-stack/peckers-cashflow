@@ -97,7 +97,7 @@ export function QuickEntryForm({ existing, today }: Props) {
           step="0.01"
           min="0"
           label="Cash Sales"
-          prefix="₹"
+          prefix="£"
           placeholder="0.00"
           value={sales}
           onChange={(e) => setSales(e.target.value)}
@@ -109,7 +109,7 @@ export function QuickEntryForm({ existing, today }: Props) {
           step="0.01"
           min="0"
           label="Supermarket Expenses"
-          prefix="₹"
+          prefix="£"
           placeholder="0.00"
           value={exp}
           onChange={(e) => setExp(e.target.value)}

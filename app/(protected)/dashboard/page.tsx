@@ -1,5 +1,5 @@
 import { PageHeader } from "@/components/layout/PageHeader";
-import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import {
   addDays,
   endOfISOWeek,
@@ -21,36 +21,49 @@ async function loadDashboardData(userId: string) {
   const weekEnd = toISODate(endOfISOWeek(new Date()));
   const sevenDaysAgo = toISODate(addDays(new Date(), -6));
 
-  const [todayEntryRes, todayTotalsRes, weekEntriesRes, weekHoursRes, recentRes, allowedRes] =
-    await Promise.all([
-      supabase
-        .from("cash_entries")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("entry_date", today)
-        .maybeSingle(),
-      supabase
-        .from("cash_entries")
-        .select("cash_sales, supermarket_expenses")
-        .eq("entry_date", today),
-      supabase
-        .from("cash_entries")
-        .select("cash_sales, supermarket_expenses, entry_date")
-        .gte("entry_date", weekStart)
-        .lte("entry_date", weekEnd),
-      supabase
-        .from("employee_hours_computed")
-        .select("cash_amount_due, week_start_date")
-        .eq("week_start_date", weekStart),
-      supabase
-        .from("cash_entries")
-        .select("id, entry_date, cash_sales, supermarket_expenses, notes, user_id, user_email, created_at")
-        .gte("entry_date", sevenDaysAgo)
-        .order("entry_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(50),
-      supabase.from("allowed_users").select("email, name"),
-    ]);
+  const [
+    todayEntryRes,
+    todayTotalsRes,
+    weekEntriesRes,
+    weekHoursRes,
+    recentRes,
+    allowedRes,
+    alertsRes,
+  ] = await Promise.all([
+    supabase
+      .from("cash_entries")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("entry_date", today)
+      .maybeSingle(),
+    supabase
+      .from("cash_entries")
+      .select("cash_sales, supermarket_expenses")
+      .eq("entry_date", today),
+    supabase
+      .from("cash_entries")
+      .select("cash_sales, supermarket_expenses, entry_date")
+      .gte("entry_date", weekStart)
+      .lte("entry_date", weekEnd),
+    supabase
+      .from("employee_hours_computed")
+      .select("cash_amount_due, week_start_date")
+      .eq("week_start_date", weekStart),
+    supabase
+      .from("cash_entries")
+      .select("id, entry_date, cash_sales, supermarket_expenses, notes, user_id, user_email, created_at")
+      .gte("entry_date", sevenDaysAgo)
+      .order("entry_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabase.from("allowed_users").select("email, name"),
+    supabase
+      .from("alerts")
+      .select("*")
+      .eq("resolved", false)
+      .order("created_at", { ascending: false })
+      .limit(5),
+  ]);
 
   const allowedMap = new Map<string, string | null>();
   for (const u of allowedRes.data ?? []) {
@@ -64,11 +77,12 @@ async function loadDashboardData(userId: string) {
     weekHours: weekHoursRes.data ?? [],
     recent: recentRes.data ?? [],
     allowedMap,
+    openAlerts: alertsRes.data ?? [],
   };
 }
 
 export default async function DashboardPage() {
-  const user = (await getSessionUser())!;
+  const user = await requireUser();
   const data = await loadDashboardData(user.id);
 
   const todaySales = data.todayTotals.reduce((s, r) => s + Number(r.cash_sales || 0), 0);
@@ -94,6 +108,21 @@ export default async function DashboardPage() {
         title={`Hello, ${user.allowed?.name?.split(" ")[0] || "there"}`}
         description={`Today is ${formatDDMMYYYY(new Date())}. Here's your cash flow at a glance.`}
       />
+
+      {data.openAlerts.length > 0 && (
+        <a
+          href="/alerts"
+          className="block mb-5 rounded-2xl bg-warning/10 border border-warning/30 px-4 py-3 text-sm hover:bg-warning/15 transition-colors"
+        >
+          <span className="font-medium text-warning">
+            {data.openAlerts.length} open alert{data.openAlerts.length === 1 ? "" : "s"}
+          </span>
+          <span className="text-text-subtle ml-2">
+            — {data.openAlerts[0].title}
+            {data.openAlerts.length > 1 && ` and ${data.openAlerts.length - 1} more`}
+          </span>
+        </a>
+      )}
 
       <SummaryCards
         todaySales={todaySales}
