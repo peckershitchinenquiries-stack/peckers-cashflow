@@ -80,7 +80,6 @@ export async function createManagerAccount(input: {
   if (!input.store_id) throw new Error("Store is required");
 
   const admin = createAdminClient();
-  const supabase = createServerSupabase();
 
   const username = await uniqueUsername(input.name);
   const email = buildLoginEmail(username);
@@ -97,8 +96,10 @@ export async function createManagerAccount(input: {
     throw new Error(authErr?.message || "Failed to create login account");
   }
 
-  // 2) whitelist + record credentials
-  const { error: rowErr } = await supabase.from("allowed_users").insert({
+  // 2) whitelist + record credentials. Use the service-role client: writing
+  // allowed_users is admin-only under RLS, and this action is already
+  // authorised (requireAdmin), so we bypass the policy intentionally.
+  const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
     name: input.name.trim(),
     role: "manager",
@@ -157,8 +158,9 @@ export async function createEmployeeWithAccount(input: {
       : input.store_id;
   if (!store_id) throw new Error("Store is required");
 
+  // Service-role client: provisioning writes to employees + allowed_users are
+  // privileged and already authorised above (requireStaff), so we bypass RLS.
   const admin = createAdminClient();
-  const supabase = createServerSupabase();
 
   const username = await uniqueUsername(input.name);
   const email = buildLoginEmail(username);
@@ -202,7 +204,7 @@ export async function createEmployeeWithAccount(input: {
     bank_weekly_hours_limit: 20,
   };
 
-  const { data: emp, error: empErr } = await supabase
+  const { data: emp, error: empErr } = await admin
     .from("employees")
     .insert(employeePayload)
     .select("id")
@@ -213,7 +215,7 @@ export async function createEmployeeWithAccount(input: {
   }
 
   // 3) whitelist login account linked to the employee row
-  const { error: rowErr } = await supabase.from("allowed_users").insert({
+  const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
     name: input.name.trim(),
     role: "employee",
@@ -224,7 +226,7 @@ export async function createEmployeeWithAccount(input: {
     employee_id: emp.id,
   });
   if (rowErr) {
-    await supabase.from("employees").delete().eq("id", emp.id);
+    await admin.from("employees").delete().eq("id", emp.id);
     await admin.auth.admin.deleteUser(authUserId);
     throw new Error(rowErr.message);
   }
