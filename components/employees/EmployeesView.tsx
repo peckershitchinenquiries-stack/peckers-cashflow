@@ -20,6 +20,8 @@ type Props = {
   initialHours: EmployeeHoursComputed[];
   stores: Store[];
   defaultStoreId?: string | null;
+  /** Manager portal: lock everything to a single store, hide cross-store UI. */
+  lockToStore?: boolean;
 };
 
 export function EmployeesView({
@@ -27,13 +29,14 @@ export function EmployeesView({
   initialHours,
   stores,
   defaultStoreId,
+  lockToStore = false,
 }: Props) {
   const router = useRouter();
   const [showAdd, setShowAdd] = React.useState(false);
   const [editing, setEditing] = React.useState<Employee | null>(null);
   const [showArchived, setShowArchived] = React.useState(false);
   const [storeFilter, setStoreFilter] = React.useState<string>(
-    defaultStoreId ?? "all",
+    lockToStore && defaultStoreId ? defaultStoreId : defaultStoreId ?? "all",
   );
 
   const employees = initialEmployees;
@@ -65,19 +68,21 @@ export function EmployeesView({
           >
             {showArchived ? "Hide archived/left" : "Show archived/left"}
           </button>
-          <div className="w-44">
-            <Select
-              value={storeFilter}
-              onChange={(e) => setStoreFilter(e.target.value)}
-            >
-              <option value="all">All stores</option>
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+          {!lockToStore && (
+            <div className="w-44">
+              <Select
+                value={storeFilter}
+                onChange={(e) => setStoreFilter(e.target.value)}
+              >
+                <option value="all">All stores</option>
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
         </div>
         <Button onClick={() => setShowAdd(true)} iconLeft={<PlusIcon size={16} />}>
           Add Employee
@@ -141,6 +146,7 @@ export function EmployeesView({
         <AddEmployeeModal
           stores={stores}
           defaultStoreId={defaultStoreId}
+          lockStore={lockToStore}
           onClose={() => setShowAdd(false)}
           onCreated={() => {
             setShowAdd(false);

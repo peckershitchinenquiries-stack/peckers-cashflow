@@ -152,6 +152,53 @@ as $$
 $$;
 
 -- =============================================================
+-- ACCOUNT-LINK COLUMNS + ROLE HELPERS
+-- Declared here (before RLS) because the policies below depend on them.
+-- The Stage 1 extension section re-declares these columns idempotently.
+-- =============================================================
+alter table public.employees
+  add column if not exists auth_user_id uuid references auth.users(id) on delete set null;
+alter table public.allowed_users
+  add column if not exists employee_id uuid references public.employees(id) on delete cascade;
+
+-- Role of the currently-authenticated user, by JWT email.
+create or replace function public.current_user_role()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select role from public.allowed_users
+  where lower(email) = lower(auth.jwt() ->> 'email')
+  limit 1;
+$$;
+
+-- True for admin OR manager (staff who manage data).
+create or replace function public.is_staff()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.current_user_role() in ('admin','manager');
+$$;
+
+-- The employees.id linked to the current login account (employee portal).
+create or replace function public.current_employee_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select employee_id from public.allowed_users
+  where lower(email) = lower(auth.jwt() ->> 'email')
+  limit 1;
+$$;
+
+-- =============================================================
 -- ROW LEVEL SECURITY
 -- =============================================================
 alter table public.allowed_users  enable row level security;
@@ -168,14 +215,20 @@ drop policy if exists "cash_entries_update"         on public.cash_entries;
 drop policy if exists "cash_entries_delete"         on public.cash_entries;
 drop policy if exists "employees_select"            on public.employees;
 drop policy if exists "employees_modify"            on public.employees;
+drop policy if exists "employees_self_update"       on public.employees;
 drop policy if exists "employee_hours_select"       on public.employee_hours;
 drop policy if exists "employee_hours_modify"       on public.employee_hours;
 
 -- ----- allowed_users -----
--- Everyone authenticated and allowed can read the whitelist.
+-- Staff (admin/manager) may read the whitelist; everyone else may read ONLY
+-- their own row. This prevents an 'employee' login from enumerating other
+-- users' usernames / temp_password / emails.
 create policy "allowed_users_select" on public.allowed_users
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (
+    public.is_staff()
+    or lower(email) = lower(auth.jwt() ->> 'email')
+  );
 
 -- Only admins can insert/update/delete the whitelist.
 create policy "allowed_users_admin_modify" on public.allowed_users
@@ -183,54 +236,64 @@ create policy "allowed_users_admin_modify" on public.allowed_users
   using (public.is_admin(auth.jwt() ->> 'email'))
   with check (public.is_admin(auth.jwt() ->> 'email'));
 
--- ----- cash_entries -----
+-- ----- cash_entries (staff only: admin + manager) -----
 create policy "cash_entries_select" on public.cash_entries
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff());
 
 create policy "cash_entries_insert" on public.cash_entries
   for insert to authenticated
   with check (
-    public.is_allowed(auth.jwt() ->> 'email')
+    public.is_staff()
     and (user_id = auth.uid() or user_id is null)
   );
 
 create policy "cash_entries_update" on public.cash_entries
   for update to authenticated
   using (
-    public.is_allowed(auth.jwt() ->> 'email')
+    public.is_staff()
     and (user_id = auth.uid() or public.is_admin(auth.jwt() ->> 'email'))
   )
-  with check (
-    public.is_allowed(auth.jwt() ->> 'email')
-  );
+  with check (public.is_staff());
 
 create policy "cash_entries_delete" on public.cash_entries
   for delete to authenticated
   using (
-    public.is_allowed(auth.jwt() ->> 'email')
+    public.is_staff()
     and (user_id = auth.uid() or public.is_admin(auth.jwt() ->> 'email'))
   );
 
 -- ----- employees -----
+-- Staff (admin/manager) see all; an employee sees only their own profile row.
 create policy "employees_select" on public.employees
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (
+    public.is_staff()
+    or id = public.current_employee_id()
+    or auth_user_id = auth.uid()
+  );
 
+-- Staff can do anything.
 create policy "employees_modify" on public.employees
   for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff())
+  with check (public.is_staff());
 
--- ----- employee_hours -----
+-- An employee may update their own profile row (server action limits columns).
+create policy "employees_self_update" on public.employees
+  for update to authenticated
+  using (id = public.current_employee_id() or auth_user_id = auth.uid())
+  with check (id = public.current_employee_id() or auth_user_id = auth.uid());
+
+-- ----- employee_hours (staff only) -----
 create policy "employee_hours_select" on public.employee_hours
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff() or employee_id = public.current_employee_id());
 
 create policy "employee_hours_modify" on public.employee_hours
   for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff())
+  with check (public.is_staff());
 
 -- =============================================================
 -- VIEW PERMISSIONS
@@ -263,16 +326,38 @@ values
 on conflict (code) do nothing;
 
 -- =============================================================
--- EXTEND allowed_users with store assignment + super_admin role
+-- EXTEND allowed_users: role model (admin | manager | employee),
+-- store assignment, and login-account credential columns.
 -- =============================================================
+alter table public.allowed_users
+  add column if not exists store_id uuid references public.stores(id) on delete set null;
+
+-- Login-account columns. Every allowed_users row IS a login account.
+--  - username: shown to admin to share; managers/employees log in with it.
+--  - temp_password: the generated password, kept so admins can re-share it
+--    (internal tool; rotate via the Reset action). Flagged in the handover.
+--  - must_change_password: reserved for a future force-change-on-first-login flow.
+--  - employee_id: links an 'employee' login account to its HR profile row.
+alter table public.allowed_users
+  add column if not exists username             text,
+  add column if not exists temp_password        text,
+  add column if not exists must_change_password boolean not null default true,
+  add column if not exists employee_id          uuid references public.employees(id) on delete cascade;
+
+create unique index if not exists allowed_users_username_unique
+  on public.allowed_users (lower(username)) where username is not null;
+
+-- Migrate any legacy 'super_admin' rows to 'admin' BEFORE tightening the check.
+update public.allowed_users set role = 'admin' where role = 'super_admin';
+
 alter table public.allowed_users
   drop constraint if exists allowed_users_role_check;
 alter table public.allowed_users
   add constraint allowed_users_role_check
-  check (role in ('admin','manager','super_admin'));
+  check (role in ('admin','manager','employee'));
 
-alter table public.allowed_users
-  add column if not exists store_id uuid references public.stores(id) on delete set null;
+-- (Role helper functions current_user_role / is_staff / current_employee_id
+--  are defined earlier, before the RLS section.)
 
 -- =============================================================
 -- EXTEND employees with full Stage 1 profile
@@ -493,6 +578,9 @@ drop policy if exists "rota_shifts_select"       on public.rota_shifts;
 drop policy if exists "rota_shifts_modify"       on public.rota_shifts;
 drop policy if exists "clock_events_select"      on public.clock_events;
 drop policy if exists "clock_events_modify"      on public.clock_events;
+drop policy if exists "clock_events_insert"      on public.clock_events;
+drop policy if exists "clock_events_update"      on public.clock_events;
+drop policy if exists "clock_events_delete"      on public.clock_events;
 drop policy if exists "weekly_deliveries_select" on public.weekly_deliveries;
 drop policy if exists "weekly_deliveries_modify" on public.weekly_deliveries;
 drop policy if exists "alerts_select"            on public.alerts;
@@ -500,6 +588,7 @@ drop policy if exists "alerts_modify"            on public.alerts;
 drop policy if exists "audit_log_select"         on public.audit_log;
 drop policy if exists "audit_log_insert"         on public.audit_log;
 
+-- ----- stores: everyone allowed can read (geofence); admin edits -----
 create policy "stores_select" on public.stores
   for select to authenticated
   using (public.is_allowed(auth.jwt() ->> 'email'));
@@ -509,45 +598,58 @@ create policy "stores_modify" on public.stores
   using (public.is_admin(auth.jwt() ->> 'email'))
   with check (public.is_admin(auth.jwt() ->> 'email'));
 
+-- ----- rota_shifts: staff see/edit all; employee reads only own -----
 create policy "rota_shifts_select" on public.rota_shifts
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff() or employee_id = public.current_employee_id());
 
 create policy "rota_shifts_modify" on public.rota_shifts
   for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff())
+  with check (public.is_staff());
 
+-- ----- clock_events: staff all; employee reads/writes only own -----
 create policy "clock_events_select" on public.clock_events
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff() or employee_id = public.current_employee_id());
 
-create policy "clock_events_modify" on public.clock_events
-  for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+create policy "clock_events_insert" on public.clock_events
+  for insert to authenticated
+  with check (public.is_staff() or employee_id = public.current_employee_id());
 
+create policy "clock_events_update" on public.clock_events
+  for update to authenticated
+  using (public.is_staff() or employee_id = public.current_employee_id())
+  with check (public.is_staff() or employee_id = public.current_employee_id());
+
+create policy "clock_events_delete" on public.clock_events
+  for delete to authenticated
+  using (public.is_staff());
+
+-- ----- weekly_deliveries: staff only -----
 create policy "weekly_deliveries_select" on public.weekly_deliveries
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff());
 
 create policy "weekly_deliveries_modify" on public.weekly_deliveries
   for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff())
+  with check (public.is_staff());
 
+-- ----- alerts: staff only -----
 create policy "alerts_select" on public.alerts
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff());
 
 create policy "alerts_modify" on public.alerts
   for all to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'))
-  with check (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff())
+  with check (public.is_staff());
 
+-- ----- audit_log: staff read; any allowed user can write (e.g. clock events) -----
 create policy "audit_log_select" on public.audit_log
   for select to authenticated
-  using (public.is_allowed(auth.jwt() ->> 'email'));
+  using (public.is_staff());
 
 create policy "audit_log_insert" on public.audit_log
   for insert to authenticated
@@ -556,11 +658,18 @@ create policy "audit_log_insert" on public.audit_log
 grant select on public.employee_weekly_summary to authenticated;
 
 -- =============================================================
--- SEED HINT
--- After running this schema, insert your first admin user manually:
+-- SEED HINT — first ADMIN account
+-- The admin is the only account created by hand. Managers & employees are
+-- then provisioned from inside the app (admin -> /managers and /employees),
+-- which auto-creates their auth user + login credentials.
+--
+-- 1) Create the auth user in Supabase Authentication > Users (email + password).
+-- 2) Whitelist that email as an admin:
 --
 --   insert into public.allowed_users (email, name, role)
---   values ('you@example.com', 'Your Name', 'admin');
+--   values ('you@example.com', 'Your Name', 'admin')
+--   on conflict (email) do update set role = 'admin';
 --
--- Then create that auth user in Supabase Authentication > Users.
+-- App-side provisioning requires SUPABASE_SERVICE_ROLE_KEY in the server env
+-- (Project Settings > API > service_role key). Never expose it to the browser.
 -- =============================================================

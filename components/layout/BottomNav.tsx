@@ -3,30 +3,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import {
-  AlertIcon,
-  ClockIcon,
-  GridIcon,
-  HomeIcon,
-  RadioIcon,
-} from "@/components/ui/icons";
+import { BOTTOM_NAV_FOR_PORTAL } from "./nav-config";
+import type { Portal } from "@/lib/types";
 
-const items = [
-  { href: "/dashboard", label: "Home", icon: HomeIcon },
-  { href: "/live", label: "Live", icon: RadioIcon },
-  { href: "/rota", label: "Rota", icon: GridIcon },
-  { href: "/crew", label: "Crew", icon: ClockIcon },
-  { href: "/alerts", label: "Alerts", icon: AlertIcon },
-];
-
-export function BottomNav() {
+export function BottomNav({ portal }: { portal: Portal }) {
   const pathname = usePathname();
+  const items = BOTTOM_NAV_FOR_PORTAL[portal];
   return (
     <nav
       className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-bg/95 backdrop-blur border-t border-border"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
     >
-      <ul className="grid grid-cols-5">
+      <ul
+        className="grid"
+        style={{ gridTemplateColumns: `repeat(${items.length}, minmax(0, 1fr))` }}
+      >
         {items.map((item) => {
           const Icon = item.icon;
           const active =

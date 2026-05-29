@@ -6,16 +6,14 @@ import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 async function requireAdmin() {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
-  if (user.allowed.role !== "admin" && user.allowed.role !== "super_admin") {
-    throw new Error("Admin only");
-  }
+  if (user.allowed.role !== "admin") throw new Error("Admin only");
   return user;
 }
 
-type AllowedRole = "admin" | "manager" | "super_admin";
+type AllowedRole = "admin" | "manager";
 
 function normaliseRole(r: AllowedRole | undefined): AllowedRole {
-  if (r === "admin" || r === "manager" || r === "super_admin") return r;
+  if (r === "admin" || r === "manager") return r;
   return "manager";
 }
 

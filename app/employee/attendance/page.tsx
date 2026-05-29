@@ -1,28 +1,21 @@
 import { PageHeader } from "@/components/layout/PageHeader";
-import { createServerSupabase, requireUser } from "@/lib/supabase-server";
+import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { CrewClockApp } from "@/components/crew/CrewClockApp";
 import {
-  addDays,
   endOfISOWeek,
   startOfISOWeek,
   toISODate,
   todayISO,
 } from "@/lib/utils";
-import type {
-  ClockEvent,
-  Employee,
-  RotaShift,
-  Store,
-} from "@/lib/types";
+import type { ClockEvent, Employee, RotaShift, Store } from "@/lib/types";
 import { Card } from "@/components/ui/Card";
 
 export const dynamic = "force-dynamic";
 
-export default async function CrewPage() {
-  const user = await requireUser();
+export default async function AttendancePage() {
+  const user = await requireRole(["employee"]);
   const supabase = createServerSupabase();
 
-  // Find the employee linked to this auth user (by auth_user_id or email)
   const { data: employee } = await supabase
     .from("employees")
     .select("*")
@@ -33,14 +26,11 @@ export default async function CrewPage() {
   if (!employee) {
     return (
       <>
-        <PageHeader
-          title="Crew App"
-          description="Clock in & out, view your rota."
-        />
+        <PageHeader title="Clock In/Out" description="Log the start and end of your shift." />
         <Card>
           <p className="text-sm text-text-muted">
-            Your manager hasn&apos;t linked your account to a crew profile yet. Once
-            they do, you&apos;ll be able to clock in here.
+            Your login isn&apos;t linked to a crew profile yet. Please ask your
+            manager to check your account.
           </p>
         </Card>
       </>
@@ -74,7 +64,7 @@ export default async function CrewPage() {
     <>
       <PageHeader
         title={`Hi ${employee.name.split(" ")[0]}`}
-        description="Clock in & out, see your week. Location is required to log shifts."
+        description="Clock in & out. Location is required — you must be at your store."
       />
       <CrewClockApp
         employee={employee as Employee}

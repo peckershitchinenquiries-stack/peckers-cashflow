@@ -93,8 +93,6 @@ export function validateEmployeeForm(form: EmployeeFormState): FormErrors {
   if (!form.bank_name.trim()) errs.bank_name = "Required";
   if (!form.account_number.trim()) errs.account_number = "Required";
   if (!form.sort_code.trim()) errs.sort_code = "Required";
-  if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
-    errs.email = "Invalid email";
   return errs;
 }
 
@@ -113,11 +111,13 @@ export function EmployeeProfileForm({
   setForm,
   errors,
   stores,
+  lockStore = false,
 }: {
   form: EmployeeFormState;
   setForm: React.Dispatch<React.SetStateAction<EmployeeFormState>>;
   errors: FormErrors;
   stores: Store[];
+  lockStore?: boolean;
 }) {
   const set = <K extends keyof EmployeeFormState>(k: K, v: EmployeeFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -136,13 +136,6 @@ export function EmployeeProfileForm({
             value={form.name}
             onChange={(e) => set("name", e.target.value)}
             error={errors.name}
-          />
-          <Input
-            label="Email (for crew app)"
-            value={form.email}
-            onChange={(e) => set("email", e.target.value)}
-            placeholder="optional"
-            error={errors.email}
           />
           <Input
             label="Phone"
@@ -194,6 +187,7 @@ export function EmployeeProfileForm({
             value={form.store_id}
             onChange={(e) => set("store_id", e.target.value)}
             error={errors.store_id}
+            disabled={lockStore}
           >
             <option value="">Select…</option>
             {stores.map((s) => (

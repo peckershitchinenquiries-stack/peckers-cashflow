@@ -4,7 +4,11 @@ import * as React from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { createEmployee } from "@/app/actions/employees";
+import { createEmployeeWithAccount } from "@/app/actions/accounts";
+import {
+  CredentialsModal,
+  type Credentials,
+} from "@/components/accounts/CredentialsModal";
 import {
   EmployeeProfileForm,
   emptyEmployeeForm,
@@ -12,16 +16,19 @@ import {
   type EmployeeFormState,
   type FormErrors,
 } from "./EmployeeProfileForm";
-import type { Store } from "@/lib/types";
+import type { EmployeePosition, Store } from "@/lib/types";
 
 export function AddEmployeeModal({
   stores,
   defaultStoreId,
+  lockStore,
   onClose,
   onCreated,
 }: {
   stores: Store[];
   defaultStoreId?: string | null;
+  /** Manager portal: store is fixed to the manager's store. */
+  lockStore?: boolean;
   onClose: () => void;
   onCreated: () => void;
 }) {
@@ -32,6 +39,7 @@ export function AddEmployeeModal({
   }));
   const [errors, setErrors] = React.useState<FormErrors>({});
   const [busy, setBusy] = React.useState(false);
+  const [creds, setCreds] = React.useState<Credentials | null>(null);
 
   async function submit() {
     const errs = validateEmployeeForm(form);
@@ -42,28 +50,27 @@ export function AddEmployeeModal({
     }
     setBusy(true);
     try {
-      await createEmployee({
+      const res = await createEmployeeWithAccount({
         name: form.name,
-        email: form.email || null,
         phone: form.phone || null,
         date_of_birth: form.date_of_birth || null,
         gender: form.gender || null,
-        position: form.position || null,
+        position: form.position as EmployeePosition,
         employment_start_date: form.employment_start_date || null,
-        joined_date: form.employment_start_date || null,
-        hourly_ni_rate: form.hourly_ni_rate ? Number(form.hourly_ni_rate) : null,
+        hourly_ni_rate: Number(form.hourly_ni_rate || 0),
         hourly_cash_rate: form.hourly_cash_rate ? Number(form.hourly_cash_rate) : null,
-        hourly_rate: Number(form.hourly_ni_rate || 0),
-        store_id: form.store_id || null,
+        store_id: form.store_id,
         bank_account_name: form.bank_account_name || null,
         bank_name: form.bank_name || null,
         account_number: form.account_number || null,
         sort_code: form.sort_code || null,
-        employment_status: form.employment_status,
         notes: form.notes || null,
       });
-      toast.success("Employee added");
-      onCreated();
+      setCreds({
+        username: res.username,
+        password: res.password,
+        loginUrl: res.loginUrl,
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -71,12 +78,28 @@ export function AddEmployeeModal({
     }
   }
 
+  // After the admin closes the credentials modal, refresh the list.
+  if (creds) {
+    return (
+      <CredentialsModal
+        open
+        onClose={() => {
+          setCreds(null);
+          onCreated();
+        }}
+        title={`${form.name.trim()} added`}
+        subtitle="Crew login created. Share these with them — the password is shown once."
+        credentials={creds}
+      />
+    );
+  }
+
   return (
     <Modal
       open
       onClose={onClose}
       title="Add Employee"
-      description="Full profile including pay rates and bank details (required for payroll)."
+      description="Full profile + auto-generated crew login. Bank details required for payroll."
       size="lg"
       footer={
         <>
@@ -84,7 +107,7 @@ export function AddEmployeeModal({
             Cancel
           </Button>
           <Button onClick={submit} loading={busy}>
-            Save Employee
+            Create employee &amp; login
           </Button>
         </>
       }
@@ -94,6 +117,7 @@ export function AddEmployeeModal({
         setForm={setForm}
         errors={errors}
         stores={stores}
+        lockStore={lockStore}
       />
     </Modal>
   );

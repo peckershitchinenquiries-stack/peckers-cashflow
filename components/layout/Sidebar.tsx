@@ -6,43 +6,20 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Logo } from "./Logo";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
-import {
-  AlertIcon,
-  ChartIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  ClockIcon,
-  GridIcon,
-  HomeIcon,
-  ListIcon,
-  PinIcon,
-  RadioIcon,
-  SettingsIcon,
-  UsersIcon,
-} from "@/components/ui/icons";
+import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
+import { NAV_FOR_PORTAL } from "./nav-config";
+import type { Portal } from "@/lib/types";
 
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ size?: number }>;
-  group?: string;
+const PORTAL_TAG: Record<Portal, string> = {
+  admin: "Admin",
+  manager: "Manager",
+  employee: "Crew",
 };
 
-const items: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
-  { href: "/live", label: "Live", icon: RadioIcon, group: "Rota" },
-  { href: "/rota", label: "Rota", icon: GridIcon, group: "Rota" },
-  { href: "/crew", label: "Crew App", icon: ClockIcon, group: "Rota" },
-  { href: "/alerts", label: "Alerts", icon: AlertIcon, group: "Rota" },
-  { href: "/employees", label: "Employees", icon: UsersIcon },
-  { href: "/entries", label: "Cash Entries", icon: ListIcon },
-  { href: "/analytics", label: "Analytics", icon: ChartIcon },
-  { href: "/settings", label: "Settings", icon: SettingsIcon },
-];
-
-export function Sidebar() {
+export function Sidebar({ portal }: { portal: Portal }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
+  const items = NAV_FOR_PORTAL[portal];
 
   return (
     <aside
@@ -112,7 +89,9 @@ export function Sidebar() {
         )}
       >
         {!collapsed && (
-          <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted">v1.0</p>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-text-muted">
+            {PORTAL_TAG[portal]}
+          </p>
         )}
         <ThemeToggle variant="icon" />
       </div>

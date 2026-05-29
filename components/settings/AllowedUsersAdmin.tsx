@@ -4,17 +4,18 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input, Select } from "@/components/ui/Input";
+import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon, TrashIcon } from "@/components/ui/icons";
-import {
-  addAllowedUser,
-  removeAllowedUser,
-  updateAllowedUserRole,
-} from "@/app/actions/admin";
+import { addAllowedUser, removeAllowedUser } from "@/app/actions/admin";
 import type { AllowedUser } from "@/lib/types";
 
+/**
+ * Admin-user management. Admins log in with a real email created in the
+ * Supabase dashboard; this card only whitelists/relabels them. Managers and
+ * crew are provisioned from the Managers and Employees pages instead.
+ */
 export function AllowedUsersAdmin({
   initialUsers,
   currentUserEmail,
@@ -27,11 +28,9 @@ export function AllowedUsersAdmin({
 
   const [email, setEmail] = React.useState("");
   const [name, setName] = React.useState("");
-  const [role, setRole] = React.useState<"admin" | "manager">("manager");
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
-  const [updatingId, setUpdatingId] = React.useState<string | null>(null);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -39,11 +38,10 @@ export function AllowedUsersAdmin({
     if (!email.trim()) return setError("Email is required");
     setBusy(true);
     try {
-      await addAllowedUser({ email, name: name || null, role });
+      await addAllowedUser({ email, name: name || null, role: "admin" });
       setEmail("");
       setName("");
-      setRole("manager");
-      toast.success("User added to allowed list");
+      toast.success("Admin added to allow-list");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
@@ -57,11 +55,11 @@ export function AllowedUsersAdmin({
       toast.error("You cannot remove yourself");
       return;
     }
-    if (!confirm(`Remove ${u.email} from allowed users?`)) return;
+    if (!confirm(`Remove admin ${u.email}?`)) return;
     setRemovingId(u.id);
     try {
       await removeAllowedUser(u.id);
-      toast.success("User removed");
+      toast.success("Admin removed");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -70,37 +68,25 @@ export function AllowedUsersAdmin({
     }
   }
 
-  async function changeRole(u: AllowedUser, newRole: "admin" | "manager") {
-    setUpdatingId(u.id);
-    try {
-      await updateAllowedUserRole({ id: u.id, role: newRole });
-      toast.success("Role updated");
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
-    } finally {
-      setUpdatingId(null);
-    }
-  }
-
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Allowed Users</CardTitle>
+        <CardTitle>Admin Users</CardTitle>
         <CardDescription>
-          Only emails listed here may sign in. Make sure to also create their auth user in
-          Supabase Authentication.
+          Admins sign in with a real email. First create the auth user in Supabase
+          Authentication, then whitelist the email here. (Managers &amp; crew are
+          created on their own pages.)
         </CardDescription>
       </CardHeader>
 
       <form
         onSubmit={add}
-        className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end mb-6"
+        className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end mb-6"
       >
         <Input
           type="email"
           label="Email"
-          placeholder="person@webcros.in"
+          placeholder="person@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           error={error}
@@ -111,12 +97,8 @@ export function AllowedUsersAdmin({
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
-        <Select label="Role" value={role} onChange={(e) => setRole(e.target.value as any)}>
-          <option value="manager">manager</option>
-          <option value="admin">admin</option>
-        </Select>
         <Button type="submit" loading={busy} iconLeft={<PlusIcon size={16} />}>
-          Add user
+          Add admin
         </Button>
       </form>
 
@@ -126,7 +108,6 @@ export function AllowedUsersAdmin({
             <tr className="text-left text-xs uppercase tracking-wider text-text-muted">
               <th className="px-3 py-2 font-medium">Email</th>
               <th className="px-3 py-2 font-medium">Name</th>
-              <th className="px-3 py-2 font-medium">Role</th>
               <th className="px-3 py-2"></th>
             </tr>
           </thead>
@@ -145,20 +126,6 @@ export function AllowedUsersAdmin({
                   </div>
                 </td>
                 <td className="px-3 py-3">{u.name || "—"}</td>
-                <td className="px-3 py-3">
-                  <Select
-                    value={u.role}
-                    onChange={(e) => changeRole(u, e.target.value as any)}
-                    disabled={
-                      updatingId === u.id ||
-                      u.email.toLowerCase() === currentUserEmail.toLowerCase()
-                    }
-                    className="h-9"
-                  >
-                    <option value="manager">manager</option>
-                    <option value="admin">admin</option>
-                  </Select>
-                </td>
                 <td className="px-3 py-3 text-right">
                   <Button
                     variant="ghost"

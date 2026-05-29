@@ -2,6 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
+import { PORTAL_HOME, type AllowedUserRole } from "./types";
 
 // Connect/read timeout for Supabase HTTP calls. Default undici timeout is 10s,
 // which is long enough to make every transient blip feel like a full hang in
@@ -113,4 +114,18 @@ export async function requireUser() {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   return user;
+}
+
+// Gate a portal to specific roles. Redirects:
+//  - no session -> /login
+//  - not whitelisted -> /access-denied
+//  - wrong role -> that role's own portal home
+// Returns the user plus a guaranteed non-null `role`.
+export async function requireRole(allowedRoles: AllowedUserRole[]) {
+  const user = await getSessionUser();
+  if (!user) redirect("/login");
+  const role = user.allowed?.role as AllowedUserRole | undefined;
+  if (!role) redirect("/access-denied");
+  if (!allowedRoles.includes(role)) redirect(PORTAL_HOME[role]);
+  return { ...user, role };
 }

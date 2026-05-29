@@ -10,7 +10,7 @@ export type Store = {
   created_at: string;
 };
 
-export type AllowedUserRole = "admin" | "manager" | "super_admin";
+export type AllowedUserRole = "admin" | "manager" | "employee";
 
 export type AllowedUser = {
   id: string;
@@ -18,7 +18,28 @@ export type AllowedUser = {
   name: string | null;
   role: AllowedUserRole;
   store_id: string | null;
+  username: string | null;
+  temp_password: string | null;
+  must_change_password: boolean;
+  employee_id: string | null;
   created_at: string;
+};
+
+/** Which portal a role lands in. */
+export type Portal = "admin" | "manager" | "employee";
+
+/** Home route for each role's portal. */
+export const PORTAL_HOME: Record<AllowedUserRole, string> = {
+  admin: "/dashboard",
+  manager: "/manager/live",
+  employee: "/employee/attendance",
+};
+
+/** The login page for each portal. */
+export const PORTAL_LOGIN: Record<Portal, string> = {
+  admin: "/login",
+  manager: "/manager/login",
+  employee: "/employee/login",
 };
 
 export type CashEntry = {

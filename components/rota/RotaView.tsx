@@ -68,7 +68,7 @@ export function RotaView({
     existing: WeeklyDelivery | null;
   } | null>(null);
 
-  const isSuperAdmin = userRole === "admin" || userRole === "super_admin";
+  const isSuperAdmin = userRole === "admin";
   const activeStore = stores.find((s) => s.id === activeStoreId);
   const weekDays = React.useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),

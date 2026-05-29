@@ -35,10 +35,12 @@ export type EmployeeInput = {
 
 function buildPayload(input: EmployeeInput) {
   const niRate = Number(input.hourly_ni_rate ?? input.hourly_rate ?? 0);
+  // NOTE: we intentionally do NOT manage `email` or `auth_user_id` here — those
+  // are the login linkage, set once by account provisioning (accounts.ts). The
+  // profile form must never overwrite them.
   return {
     name: input.name.trim(),
     phone: input.phone?.trim() || null,
-    email: input.email?.trim().toLowerCase() || null,
     date_of_birth: input.date_of_birth || null,
     gender: input.gender?.trim() || null,
     position: input.position || null,

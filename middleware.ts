@@ -1,7 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 
-const PUBLIC_PATHS = ["/login", "/access-denied"];
+// Login pages (one per portal) + access-denied are reachable without a session.
+const PUBLIC_PATHS = [
+  "/login",
+  "/manager/login",
+  "/employee/login",
+  "/access-denied",
+];
+
+const PORTAL_HOME = {
+  admin: "/dashboard",
+  manager: "/manager/live",
+  employee: "/employee/attendance",
+} as const;
+
+function loginPathForArea(pathname: string): string {
+  if (pathname.startsWith("/manager")) return "/manager/login";
+  if (pathname.startsWith("/employee")) return "/employee/login";
+  return "/login";
+}
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+}
 
 export async function middleware(req: NextRequest) {
   try {
@@ -36,26 +58,28 @@ export async function middleware(req: NextRequest) {
     } = await supabase.auth.getUser();
 
     const { pathname } = req.nextUrl;
-    const isPublic = PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
+    const isPublic = isPublicPath(pathname);
 
+    // ---- not signed in ----
     if (!user) {
       if (isPublic) return res;
       const url = req.nextUrl.clone();
-      url.pathname = "/login";
+      url.pathname = loginPathForArea(pathname);
       return NextResponse.redirect(url);
     }
 
+    // ---- signed in: resolve whitelist + role ----
+    let role: "admin" | "manager" | "employee" | null = null;
     if (user.email) {
       const { data: allowed, error } = await supabase
         .from("allowed_users")
-        .select("id")
+        .select("role")
         .ilike("email", user.email)
         .maybeSingle();
 
       if (error) {
         console.error("[Middleware] allowed_users query error:", error.message);
       }
-
       if (!allowed) {
         await supabase.auth.signOut();
         if (pathname !== "/access-denied") {
@@ -65,17 +89,37 @@ export async function middleware(req: NextRequest) {
         }
         return res;
       }
+      role = (allowed.role as typeof role) ?? null;
     }
 
-    if (pathname === "/login") {
+    const home = role ? PORTAL_HOME[role] : "/login";
+
+    // ---- on a login page or root while signed in -> go to portal home ----
+    if (isPublic || pathname === "/") {
+      // /access-denied stays reachable (e.g. just-removed users); only bounce login/root.
+      if (pathname === "/access-denied") return res;
       const url = req.nextUrl.clone();
-      url.pathname = "/live";
+      url.pathname = home;
       return NextResponse.redirect(url);
     }
 
-    if (pathname === "/") {
+    // ---- portal isolation ----
+    const inManager = pathname === "/manager" || pathname.startsWith("/manager/");
+    const inEmployee = pathname === "/employee" || pathname.startsWith("/employee/");
+
+    if (role === "employee" && !inEmployee) {
       const url = req.nextUrl.clone();
-      url.pathname = "/live";
+      url.pathname = PORTAL_HOME.employee;
+      return NextResponse.redirect(url);
+    }
+    if (role === "manager" && !inManager) {
+      const url = req.nextUrl.clone();
+      url.pathname = PORTAL_HOME.manager;
+      return NextResponse.redirect(url);
+    }
+    if (role === "admin" && (inManager || inEmployee)) {
+      const url = req.nextUrl.clone();
+      url.pathname = PORTAL_HOME.admin;
       return NextResponse.redirect(url);
     }
 

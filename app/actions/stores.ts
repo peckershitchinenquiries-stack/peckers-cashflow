@@ -7,9 +7,7 @@ import { writeAudit } from "./audit";
 async function requireAdmin() {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
-  if (user.allowed.role !== "admin" && user.allowed.role !== "super_admin") {
-    throw new Error("Admin only");
-  }
+  if (user.allowed.role !== "admin") throw new Error("Admin only");
   return user;
 }
 

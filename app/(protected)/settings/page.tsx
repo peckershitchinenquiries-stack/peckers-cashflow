@@ -3,7 +3,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { LogoutIcon } from "@/components/ui/icons";
-import { createServerSupabase, requireUser } from "@/lib/supabase-server";
+import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { signOutAction } from "@/app/actions/auth";
 import { AllowedUsersAdmin } from "@/components/settings/AllowedUsersAdmin";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
@@ -13,29 +13,26 @@ import { AuditLogList } from "@/components/settings/AuditLogList";
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const user = await requireUser();
-  const isAdmin =
-    user.allowed?.role === "admin" || user.allowed?.role === "super_admin";
-
+  const user = await requireRole(["admin"]);
   const supabase = createServerSupabase();
 
-  const [storesRes, allowedRes, auditRes] = await Promise.all([
+  const [storesRes, adminsRes, auditRes] = await Promise.all([
     supabase.from("stores").select("*").order("name"),
-    isAdmin
-      ? supabase.from("allowed_users").select("*").order("created_at")
-      : Promise.resolve({ data: [] }),
-    isAdmin
-      ? supabase
-          .from("audit_log")
-          .select("*")
-          .order("created_at", { ascending: false })
-          .limit(50)
-      : Promise.resolve({ data: [] }),
+    supabase
+      .from("allowed_users")
+      .select("*")
+      .eq("role", "admin")
+      .order("created_at"),
+    supabase
+      .from("audit_log")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
 
   return (
     <>
-      <PageHeader title="Settings" description="Account, stores, and audit log." />
+      <PageHeader title="Settings" description="Account, stores, admin users, and audit log." />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <AppearanceCard />
@@ -54,13 +51,12 @@ export default async function SettingsPage() {
             <dd className="col-span-2 text-text-primary break-all">{user.email}</dd>
             <dt className="text-text-muted">Role</dt>
             <dd className="col-span-2">
-              <Badge variant={isAdmin ? "gold" : "neutral"}>
-                {user.allowed?.role || "—"}
-              </Badge>
+              <Badge variant="gold">{user.allowed?.role || "—"}</Badge>
             </dd>
           </dl>
 
           <form action={signOutAction} className="mt-6">
+            <input type="hidden" name="portal" value="admin" />
             <Button
               type="submit"
               variant="danger"
@@ -73,16 +69,14 @@ export default async function SettingsPage() {
         </Card>
       </div>
 
-      {isAdmin && (
-        <div className="mt-6 flex flex-col gap-5">
-          <StoresAdmin stores={storesRes.data ?? []} />
-          <AllowedUsersAdmin
-            initialUsers={allowedRes.data ?? []}
-            currentUserEmail={user.email}
-          />
-          <AuditLogList entries={auditRes.data ?? []} />
-        </div>
-      )}
+      <div className="mt-6 flex flex-col gap-5">
+        <StoresAdmin stores={storesRes.data ?? []} />
+        <AllowedUsersAdmin
+          initialUsers={adminsRes.data ?? []}
+          currentUserEmail={user.email}
+        />
+        <AuditLogList entries={auditRes.data ?? []} />
+      </div>
     </>
   );
 }

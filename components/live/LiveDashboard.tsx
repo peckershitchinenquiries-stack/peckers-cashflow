@@ -119,7 +119,7 @@ export function LiveDashboard({
     };
   }, [router]);
 
-  const isSuperAdmin = userRole === "admin" || userRole === "super_admin";
+  const isSuperAdmin = userRole === "admin";
 
   const visibleStores = stores.filter((s) =>
     isSuperAdmin || !userStoreId ? true : s.id === userStoreId,
