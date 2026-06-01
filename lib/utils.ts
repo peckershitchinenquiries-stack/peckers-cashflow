@@ -218,6 +218,33 @@ export function haversineMeters(
   return R * c;
 }
 
+/**
+ * Max GPS-accuracy slack (metres) we forgive when deciding if someone is
+ * "in range". Phone GPS is typically accurate to 5–65m; this lets a reading at
+ * the door pass even if the fix is a little fuzzy, while still rejecting the
+ * wildly-inaccurate Wi-Fi/IP fixes laptops report (often 500–3000m).
+ */
+export const GEOFENCE_ACCURACY_TOLERANCE_M = 100;
+
+/**
+ * Is a reported position within a store's geofence?
+ * `distance` and `radius` are metres; `accuracy` is the GPS reading's ±metres.
+ * We treat the person as in-range if they could plausibly be inside the radius
+ * once GPS slop (capped) is accounted for. Shared by the client UI and the
+ * server action so both agree on the verdict.
+ */
+export function isWithinGeofence(
+  distanceM: number,
+  radiusM: number,
+  accuracyM?: number | null,
+): boolean {
+  const slack = Math.min(
+    Math.max(0, Number(accuracyM ?? 0)),
+    GEOFENCE_ACCURACY_TOLERANCE_M,
+  );
+  return distanceM <= radiusM + slack;
+}
+
 // ---------------- numbers / safety ----------------
 export function clampNumber(n: unknown, fallback = 0) {
   const v = typeof n === "string" ? parseFloat(n) : (n as number);

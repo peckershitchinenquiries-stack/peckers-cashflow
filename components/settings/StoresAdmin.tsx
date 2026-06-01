@@ -16,12 +16,48 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
     {},
   );
   const [busy, setBusy] = React.useState<string | null>(null);
+  const [locating, setLocating] = React.useState<string | null>(null);
 
   function setField(id: string, field: keyof Store, value: unknown) {
     setEditing((prev) => ({
       ...prev,
       [id]: { ...prev[id], [field]: value },
     }));
+  }
+
+  // Capture the device's current GPS position into a store's lat/lng fields.
+  // Intended workflow: stand at the store's front door, click this, then Save.
+  function useCurrentLocation(store: Store) {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("This device can't share a location.");
+      return;
+    }
+    setLocating(store.id);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setEditing((prev) => ({
+          ...prev,
+          [store.id]: {
+            ...prev[store.id],
+            latitude: Number(pos.coords.latitude.toFixed(7)),
+            longitude: Number(pos.coords.longitude.toFixed(7)),
+          },
+        }));
+        setLocating(null);
+        toast.success(
+          `Captured (±${Math.round(pos.coords.accuracy)}m). Review, then Save.`,
+        );
+      },
+      (err) => {
+        setLocating(null);
+        toast.error(
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission denied — allow it in your browser to capture coordinates."
+            : err.message || "Could not get your location.",
+        );
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 },
+    );
   }
 
   async function save(store: Store) {
@@ -61,8 +97,10 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
       <CardHeader>
         <CardTitle>Stores & Geofencing</CardTitle>
         <CardDescription>
-          Crew can only clock in within the configured radius of these
-          coordinates.
+          Staff can only clock in/out within this radius of the store. Easiest
+          setup: open this page on your phone while standing at the store, tap{" "}
+          <span className="text-text-primary">Use my current location</span>,
+          then Save.
         </CardDescription>
       </CardHeader>
       <div className="flex flex-col gap-5">
@@ -80,17 +118,32 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <h4 className="font-medium">{s.name}</h4>
-                  <p className="text-xs text-text-muted">Code: {s.code}</p>
+                  <p className="text-xs text-text-muted">
+                    Code: {s.code}
+                    {s.latitude == null || s.longitude == null ? (
+                      <span className="ml-2 text-danger">· coordinates not set</span>
+                    ) : null}
+                  </p>
                 </div>
-                {hasChanges && (
+                <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    onClick={() => save(s)}
-                    loading={busy === s.id}
+                    variant="outline"
+                    onClick={() => useCurrentLocation(s)}
+                    loading={locating === s.id}
                   >
-                    Save
+                    Use my current location
                   </Button>
-                )}
+                  {hasChanges && (
+                    <Button
+                      size="sm"
+                      onClick={() => save(s)}
+                      loading={busy === s.id}
+                    >
+                      Save
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Input
@@ -119,7 +172,7 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
                   onChange={(e) =>
                     setField(s.id, "geofence_radius_m", e.target.value)
                   }
-                  hint="2–3 min walk ≈ 200–300m"
+                  hint="Walk distance: 2–3 min ≈ 250m, 5 min ≈ 400m"
                 />
               </div>
             </div>

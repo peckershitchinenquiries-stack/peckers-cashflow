@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
-import { haversineMeters, todayISO } from "@/lib/utils";
+import { haversineMeters, isWithinGeofence, todayISO } from "@/lib/utils";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -22,7 +22,12 @@ async function getEmployeeForUser(userId: string, userEmail: string) {
   return data;
 }
 
-async function verifyGeofence(storeId: string, lat: number, lng: number) {
+async function verifyGeofence(
+  storeId: string,
+  lat: number,
+  lng: number,
+  accuracy?: number | null,
+) {
   const supabase = createServerSupabase();
   const { data: store } = await supabase
     .from("stores")
@@ -40,15 +45,20 @@ async function verifyGeofence(storeId: string, lat: number, lng: number) {
     lat,
     lng,
   );
-  if (distance > Number(store.geofence_radius_m ?? 250)) {
+  const radius = Number(store.geofence_radius_m ?? 250);
+  if (!isWithinGeofence(distance, radius, accuracy)) {
     throw new Error(
-      `You're ${Math.round(distance)}m from ${store.name}. You must be within ${store.geofence_radius_m}m to clock in or out.`,
+      `You're ${Math.round(distance)}m from ${store.name}. You must be within ${radius}m to clock in or out.`,
     );
   }
   return { distance };
 }
 
-export async function clockIn(input: { latitude: number; longitude: number }) {
+export async function clockIn(input: {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+}) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
 
@@ -59,21 +69,25 @@ export async function clockIn(input: { latitude: number; longitude: number }) {
     throw new Error("Your account is not active.");
   }
 
-  await verifyGeofence(employee.store_id, input.latitude, input.longitude);
+  await verifyGeofence(
+    employee.store_id,
+    input.latitude,
+    input.longitude,
+    input.accuracy,
+  );
 
   const today = todayISO();
 
-  // Find today's shift
+  // Link to today's scheduled shift if one exists. Clock-in is self-service:
+  // staff can clock in whenever they're on-site, with or without a shift on the
+  // rota (covering a colleague, picking up an extra shift, etc.). A scheduled
+  // shift simply gets attached so the Live board can compare planned vs actual.
   const { data: shift } = await supabase
     .from("rota_shifts")
     .select("id, is_day_off")
     .eq("employee_id", employee.id)
     .eq("shift_date", today)
     .maybeSingle();
-
-  if (shift?.is_day_off) {
-    throw new Error("Today is marked as a Day Off on the rota.");
-  }
 
   const { data: existing } = await supabase
     .from("clock_events")
@@ -115,14 +129,16 @@ export async function clockIn(input: { latitude: number; longitude: number }) {
     changes: { date: today, location: [input.latitude, input.longitude] },
   });
 
-  revalidatePath("/crew");
+  revalidatePath("/employee/attendance");
   revalidatePath("/live");
+  revalidatePath("/manager/live");
   return { ok: true };
 }
 
 export async function clockOut(input: {
   latitude: number;
   longitude: number;
+  accuracy?: number | null;
   deliveries_count?: number | null;
 }) {
   const user = await requireAllowed();
@@ -130,8 +146,14 @@ export async function clockOut(input: {
 
   const employee = await getEmployeeForUser(user.id, user.email);
   if (!employee) throw new Error("Your account is not linked to a crew profile.");
+  if (!employee.store_id) throw new Error("You're not assigned to a store yet.");
 
-  await verifyGeofence(employee.store_id!, input.latitude, input.longitude);
+  await verifyGeofence(
+    employee.store_id,
+    input.latitude,
+    input.longitude,
+    input.accuracy,
+  );
 
   const today = todayISO();
   const { data: existing } = await supabase
@@ -178,8 +200,9 @@ export async function clockOut(input: {
     },
   });
 
-  revalidatePath("/crew");
+  revalidatePath("/employee/attendance");
   revalidatePath("/live");
+  revalidatePath("/manager/live");
   return { ok: true };
 }
 
@@ -215,8 +238,9 @@ export async function updateDeliveryCount(input: { count: number }) {
     changes: { count: input.count },
   });
 
-  revalidatePath("/crew");
+  revalidatePath("/employee/attendance");
   revalidatePath("/live");
+  revalidatePath("/manager/live");
   revalidatePath("/rota");
   return { ok: true };
 }

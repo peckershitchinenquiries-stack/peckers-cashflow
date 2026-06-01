@@ -35,6 +35,11 @@ export async function upsertShift(input: RotaShiftInput) {
   const isDayOff = !!input.is_day_off;
   const start = isDayOff ? null : input.start_time?.slice(0, 5) || null;
   const end = isDayOff ? null : input.end_time?.slice(0, 5) || null;
+  if (!isDayOff && (!start || !end)) {
+    throw new Error(
+      "Enter both a start and end time, or mark the day as a Day Off.",
+    );
+  }
   const hours = isDayOff ? 0 : shiftHours(start, end);
 
   // Same-day edits require a reason.

@@ -81,6 +81,7 @@ export function ShiftEditModal({
   }
 
   const calculated = !isDayOff && start && end ? shiftHours(start, end) : 0;
+  const canSave = isDayOff || (!!start && !!end);
 
   return (
     <Modal
@@ -103,7 +104,7 @@ export function ShiftEditModal({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={save} loading={busy}>
+          <Button onClick={save} loading={busy} disabled={!canSave}>
             Save
           </Button>
         </>
