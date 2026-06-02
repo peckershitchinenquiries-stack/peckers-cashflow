@@ -1,8 +1,9 @@
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { PORTAL_HOME, type AllowedUserRole } from "./types";
+import { PORTAL_HOME, type AllowedUser, type AllowedUserRole, type SessionUser } from "./types";
+import { H_ALLOWED, H_USER_EMAIL, H_USER_ID, decodeIdentity } from "./auth-headers";
 
 // Connect/read timeout for Supabase HTTP calls. Default undici timeout is 10s,
 // which is long enough to make every transient blip feel like a full hang in
@@ -108,10 +109,31 @@ export const getSessionUser = cache(async () => {
   }
 });
 
+// Fast path for PAGE/LAYOUT renders only: read the identity the middleware
+// already validated this request and stashed in (forgery-proof) headers,
+// avoiding a second auth.getUser() + allowed_users round-trip.
+//
+// Safe because: (1) middleware strips any client-supplied copies and re-sets
+// these from the validated session on every matched route, and (2) all data
+// access is RLS-gated by the real JWT in the cookie, not by these headers.
+// Falls back to the authoritative lookup if the headers are absent, so nothing
+// breaks on routes the middleware didn't run for.
+//
+// NOTE: server actions (writes / service-role provisioning) intentionally keep
+// using getSessionUser() — they must not trust headers.
+function sessionUserFromHeaders(): SessionUser | null {
+  const h = headers();
+  const id = h.get(H_USER_ID);
+  const email = h.get(H_USER_EMAIL);
+  if (!id || !email) return null;
+  const allowed = decodeIdentity<AllowedUser>(h.get(H_ALLOWED));
+  return { id, email, allowed };
+}
+
 // Use in protected pages. If the session lookup fails or returns no user, we
 // redirect to /login instead of letting the page crash on a null assertion.
 export async function requireUser() {
-  const user = await getSessionUser();
+  const user = sessionUserFromHeaders() ?? (await getSessionUser());
   if (!user) redirect("/login");
   return user;
 }
@@ -122,7 +144,7 @@ export async function requireUser() {
 //  - wrong role -> that role's own portal home
 // Returns the user plus a guaranteed non-null `role`.
 export async function requireRole(allowedRoles: AllowedUserRole[]) {
-  const user = await getSessionUser();
+  const user = sessionUserFromHeaders() ?? (await getSessionUser());
   if (!user) redirect("/login");
   const role = user.allowed?.role as AllowedUserRole | undefined;
   if (!role) redirect("/access-denied");

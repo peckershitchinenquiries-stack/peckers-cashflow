@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import {
+  H_ALLOWED,
+  H_USER_EMAIL,
+  H_USER_ID,
+  encodeIdentity,
+} from "./lib/auth-headers";
 
 // Login pages (one per portal) + access-denied are reachable without a session.
 const PUBLIC_PATHS = [
@@ -26,17 +32,39 @@ function isPublicPath(pathname: string): boolean {
 }
 
 export async function middleware(req: NextRequest) {
-  try {
-    const res = NextResponse.next();
+  // Clone the incoming headers and ALWAYS strip the identity headers, so a
+  // client can never forge them — only the validated values we set below
+  // (further down) reach the page.
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.delete(H_USER_ID);
+  requestHeaders.delete(H_USER_EMAIL);
+  requestHeaders.delete(H_ALLOWED);
 
+  // Cookies Supabase wants to write (session refresh) are collected here and
+  // applied to whichever response we return, so the refreshed token survives
+  // both pass-throughs and redirects.
+  const pendingCookies: { name: string; value: string; options: CookieOptions }[] = [];
+  const applyCookies = <T extends NextResponse>(res: T): T => {
+    for (const c of pendingCookies) {
+      res.cookies.set({ name: c.name, value: c.value, ...c.options });
+    }
+    return res;
+  };
+  const passThrough = () =>
+    applyCookies(NextResponse.next({ request: { headers: requestHeaders } }));
+  const redirectTo = (pathname: string) => {
+    const url = req.nextUrl.clone();
+    url.pathname = pathname;
+    return applyCookies(NextResponse.redirect(url));
+  };
+
+  try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       console.error("[Middleware] Missing Supabase environment variables");
-      const url = req.nextUrl.clone();
-      url.pathname = "/login";
-      return NextResponse.redirect(url);
+      return redirectTo("/login");
     }
 
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
@@ -45,10 +73,10 @@ export async function middleware(req: NextRequest) {
           return req.cookies.get(name)?.value;
         },
         set(name: string, value: string, options: CookieOptions) {
-          res.cookies.set({ name, value, ...options });
+          pendingCookies.push({ name, value, options });
         },
         remove(name: string, options: CookieOptions) {
-          res.cookies.set({ name, value: "", ...options });
+          pendingCookies.push({ name, value: "", options });
         },
       },
     });
@@ -62,32 +90,30 @@ export async function middleware(req: NextRequest) {
 
     // ---- not signed in ----
     if (!user) {
-      if (isPublic) return res;
-      const url = req.nextUrl.clone();
-      url.pathname = loginPathForArea(pathname);
-      return NextResponse.redirect(url);
+      if (isPublic) return passThrough();
+      return redirectTo(loginPathForArea(pathname));
     }
 
     // ---- signed in: resolve whitelist + role ----
     let role: "admin" | "manager" | "employee" | null = null;
+    let allowed: Record<string, unknown> | null = null;
     if (user.email) {
-      const { data: allowed, error } = await supabase
+      const { data, error } = await supabase
         .from("allowed_users")
-        .select("role")
+        .select("*")
         .ilike("email", user.email)
         .maybeSingle();
 
       if (error) {
         console.error("[Middleware] allowed_users query error:", error.message);
       }
+      allowed = data ?? null;
       if (!allowed) {
         await supabase.auth.signOut();
         if (pathname !== "/access-denied") {
-          const url = req.nextUrl.clone();
-          url.pathname = "/access-denied";
-          return NextResponse.redirect(url);
+          return redirectTo("/access-denied");
         }
-        return res;
+        return passThrough();
       }
       role = (allowed.role as typeof role) ?? null;
     }
@@ -97,10 +123,8 @@ export async function middleware(req: NextRequest) {
     // ---- on a login page or root while signed in -> go to portal home ----
     if (isPublic || pathname === "/") {
       // /access-denied stays reachable (e.g. just-removed users); only bounce login/root.
-      if (pathname === "/access-denied") return res;
-      const url = req.nextUrl.clone();
-      url.pathname = home;
-      return NextResponse.redirect(url);
+      if (pathname === "/access-denied") return passThrough();
+      return redirectTo(home);
     }
 
     // ---- portal isolation ----
@@ -108,27 +132,28 @@ export async function middleware(req: NextRequest) {
     const inEmployee = pathname === "/employee" || pathname.startsWith("/employee/");
 
     if (role === "employee" && !inEmployee) {
-      const url = req.nextUrl.clone();
-      url.pathname = PORTAL_HOME.employee;
-      return NextResponse.redirect(url);
+      return redirectTo(PORTAL_HOME.employee);
     }
     if (role === "manager" && !inManager) {
-      const url = req.nextUrl.clone();
-      url.pathname = PORTAL_HOME.manager;
-      return NextResponse.redirect(url);
+      return redirectTo(PORTAL_HOME.manager);
     }
     if (role === "admin" && (inManager || inEmployee)) {
-      const url = req.nextUrl.clone();
-      url.pathname = PORTAL_HOME.admin;
-      return NextResponse.redirect(url);
+      return redirectTo(PORTAL_HOME.admin);
     }
 
-    return res;
+    // ---- authenticated, whitelisted, correct portal ----
+    // Hand the validated identity to the page so it doesn't repeat the
+    // auth.getUser() + allowed_users round-trips. (Stripped above, so these
+    // values are trustworthy on every matched route.)
+    if (user.email && allowed) {
+      requestHeaders.set(H_USER_ID, user.id);
+      requestHeaders.set(H_USER_EMAIL, user.email);
+      requestHeaders.set(H_ALLOWED, encodeIdentity(allowed));
+    }
+    return passThrough();
   } catch (err) {
     console.error("[Middleware] Error:", err instanceof Error ? err.message : String(err));
-    const url = req.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return redirectTo("/login");
   }
 }
 
