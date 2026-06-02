@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
-import type { EmployeePosition, EmploymentStatus } from "@/lib/types";
+import type { EmployeeHoursComputed, EmployeePosition, EmploymentStatus } from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -181,8 +181,12 @@ export async function logEmployeeHours(input: {
 
   if (!input.employee_id) throw new Error("Select an employee");
   if (!input.week_start_date) throw new Error("Week start date required");
-  if (input.total_hours_worked == null || input.total_hours_worked < 0)
-    throw new Error("Total hours must be a positive number");
+  if (
+    input.total_hours_worked == null ||
+    input.total_hours_worked <= 0 ||
+    isNaN(Number(input.total_hours_worked))
+  )
+    throw new Error("Hours must be greater than 0");
 
   const { data: emp, error: empErr } = await supabase
     .from("employees")
@@ -227,9 +231,18 @@ export async function logEmployeeHours(input: {
     changes: payload,
   });
 
+  // Fetch the fresh computed rows so the client can update state immediately
+  // without waiting for the router cache to clear.
+  const { data: freshHours } = await supabase
+    .from("employee_hours_computed")
+    .select("*")
+    .order("week_start_date", { ascending: false })
+    .limit(500);
+
   revalidatePath("/employees");
+  revalidatePath("/manager/employees");
   revalidatePath("/analytics");
-  return { ok: true };
+  return { ok: true, hours: (freshHours ?? []) as EmployeeHoursComputed[] };
 }
 
 export async function deleteEmployeeHours(id: string) {
@@ -239,6 +252,7 @@ export async function deleteEmployeeHours(id: string) {
   if (error) throw new Error(error.message);
   await writeAudit({ action: "delete", entity: "employee_hours", entity_id: id });
   revalidatePath("/employees");
+  revalidatePath("/manager/employees");
   revalidatePath("/analytics");
-  return { ok: true };
+  return { ok: true, deletedId: id };
 }

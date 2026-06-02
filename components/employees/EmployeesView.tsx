@@ -13,11 +13,12 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { EmptyState } from "@/components/ui/EmptyState";
 import { UsersIcon } from "@/components/ui/icons";
 import { Select } from "@/components/ui/Input";
-import type { Employee, EmployeeHoursComputed, Store } from "@/lib/types";
+import type { ClockWeeklySummary, Employee, EmployeeHoursComputed, Store } from "@/lib/types";
 
 type Props = {
   initialEmployees: Employee[];
   initialHours: EmployeeHoursComputed[];
+  clockSummaries?: ClockWeeklySummary[];
   stores: Store[];
   defaultStoreId?: string | null;
   /** Manager portal: lock everything to a single store, hide cross-store UI. */
@@ -27,6 +28,7 @@ type Props = {
 export function EmployeesView({
   initialEmployees,
   initialHours,
+  clockSummaries = [],
   stores,
   defaultStoreId,
   lockToStore = false,
@@ -39,8 +41,17 @@ export function EmployeesView({
     lockToStore && defaultStoreId ? defaultStoreId : defaultStoreId ?? "all",
   );
 
+  // Store hours in state so we can update it instantly on save/delete without
+  // relying on router.refresh() (which is async and can hit the router cache).
+  const [hours, setHours] = React.useState<EmployeeHoursComputed[]>(initialHours);
+
+  // Keep in sync when the server component provides fresh props (e.g. after
+  // navigating away and back, or an unrelated router.refresh()).
+  React.useEffect(() => {
+    setHours(initialHours);
+  }, [initialHours]);
+
   const employees = initialEmployees;
-  const hours = initialHours;
 
   const filtered = employees.filter((e) => {
     if (!showArchived && (e.employment_status === "left" || !e.is_active))
@@ -52,6 +63,19 @@ export function EmployeesView({
   const activeCount = employees.filter(
     (e) => e.employment_status === "active",
   ).length;
+
+  // Called after a manual hours save — the action returns fresh rows so we can
+  // update state immediately instead of waiting for the router cache.
+  function handleLogged(freshHours: EmployeeHoursComputed[]) {
+    setHours(freshHours);
+    router.refresh(); // sync everything else (employee cards, analytics)
+  }
+
+  // Called after a delete — optimistically remove the row then re-sync.
+  function handleDeleted(deletedId: string) {
+    setHours((prev) => prev.filter((r) => r.id !== deletedId));
+    router.refresh();
+  }
 
   const refresh = () => router.refresh();
 
@@ -126,19 +150,22 @@ export function EmployeesView({
         </CardHeader>
         <LogHoursForm
           employees={employees.filter((e) => e.employment_status === "active")}
-          onLogged={refresh}
+          onLogged={handleLogged}
         />
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Hours History</CardTitle>
-          <CardDescription>All weekly hour logs</CardDescription>
+          <CardDescription>
+            Manual logs and auto-calculated hours from clock-in/out events.
+          </CardDescription>
         </CardHeader>
         <HoursTable
           employees={employees}
           rows={hours}
-          onChanged={refresh}
+          clockSummaries={clockSummaries}
+          onDeleted={handleDeleted}
         />
       </Card>
 

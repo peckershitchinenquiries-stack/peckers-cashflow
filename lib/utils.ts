@@ -245,6 +245,61 @@ export function isWithinGeofence(
   return distanceM <= radiusM + slack;
 }
 
+/**
+ * Group an array of clock_events into per-employee per-week totals.
+ * employeeMap keys are employee id, values carry name + rates for wage calc.
+ */
+export function groupClockEventsByWeek(
+  clockEvents: Array<{
+    employee_id: string;
+    event_date: string;
+    clock_in_at: string | null;
+    clock_out_at: string | null;
+  }>,
+  employeeMap: Map<
+    string,
+    { name: string; hourly_ni_rate: number | null; hourly_rate: number }
+  >,
+): Array<{
+  employee_id: string;
+  employee_name: string;
+  week_start_date: string;
+  total_hours: number;
+  event_count: number;
+  hourly_ni_rate: number | null;
+  hourly_rate: number;
+}> {
+  const byKey = new Map<string, { hours: number; count: number }>();
+
+  for (const ce of clockEvents) {
+    if (!ce.clock_in_at || !ce.clock_out_at) continue;
+    const weekStart = toISODate(startOfISOWeek(parseISODate(ce.event_date)));
+    const key = `${ce.employee_id}:${weekStart}`;
+    const ms =
+      new Date(ce.clock_out_at).getTime() - new Date(ce.clock_in_at).getTime();
+    const prev = byKey.get(key) ?? { hours: 0, count: 0 };
+    byKey.set(key, { hours: prev.hours + ms / 3_600_000, count: prev.count + 1 });
+  }
+
+  return Array.from(byKey.entries())
+    .map(([key, data]) => {
+      const sepIdx = key.indexOf(":");
+      const empId = key.slice(0, sepIdx);
+      const weekStart = key.slice(sepIdx + 1);
+      const emp = employeeMap.get(empId);
+      return {
+        employee_id: empId,
+        employee_name: emp?.name ?? "—",
+        week_start_date: weekStart,
+        total_hours: Math.round(data.hours * 100) / 100,
+        event_count: data.count,
+        hourly_ni_rate: emp?.hourly_ni_rate ?? null,
+        hourly_rate: emp?.hourly_rate ?? 0,
+      };
+    })
+    .sort((a, b) => b.week_start_date.localeCompare(a.week_start_date));
+}
+
 // ---------------- numbers / safety ----------------
 export function clampNumber(n: unknown, fallback = 0) {
   const v = typeof n === "string" ? parseFloat(n) : (n as number);

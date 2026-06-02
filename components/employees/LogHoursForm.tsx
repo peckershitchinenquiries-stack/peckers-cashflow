@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Input, Select, Textarea } from "@/components/ui/Input";
+import { Input, Select } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { logEmployeeHours } from "@/app/actions/employees";
-import type { Employee } from "@/lib/types";
-import { formatINR, startOfISOWeek, todayISO, toISODate } from "@/lib/utils";
+import type { Employee, EmployeeHoursComputed } from "@/lib/types";
+import { formatINR, formatGBP, startOfISOWeek, toISODate } from "@/lib/utils";
 
 const BANK_LIMIT = 20;
 
@@ -15,7 +15,7 @@ export function LogHoursForm({
   onLogged,
 }: {
   employees: Employee[];
-  onLogged: () => void;
+  onLogged: (freshHours: EmployeeHoursComputed[]) => void;
 }) {
   const toast = useToast();
   const [empId, setEmpId] = React.useState<string>(employees[0]?.id ?? "");
@@ -29,46 +29,48 @@ export function LogHoursForm({
     if (!empId && employees.length > 0) setEmpId(employees[0].id);
   }, [employees, empId]);
 
-  // If user picks a date that isn't a Monday, snap to that ISO week's Monday.
   function onDateChange(value: string) {
-    if (!value) {
-      setWeekStart("");
-      return;
-    }
+    if (!value) { setWeekStart(""); return; }
     const d = new Date(value + "T00:00:00");
-    const monday = startOfISOWeek(d);
-    setWeekStart(toISODate(monday));
+    setWeekStart(toISODate(startOfISOWeek(d)));
   }
 
   const employee = employees.find((e) => e.id === empId);
-  const totalHours = Number(hours) || 0;
+  const totalHours = parseFloat(hours) || 0;
   const bankHours = Math.min(totalHours, BANK_LIMIT);
   const cashHours = Math.max(totalHours - BANK_LIMIT, 0);
-  const cashAmount = employee ? cashHours * Number(employee.hourly_rate) : 0;
+  const rate = employee ? Number(employee.hourly_ni_rate ?? employee.hourly_rate ?? 0) : 0;
+  const cashAmount = cashHours * rate;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const errs: typeof errors = {};
     if (!empId) errs.emp = "Pick an employee";
     if (!weekStart) errs.week = "Select a week";
-    if (totalHours < 0 || isNaN(totalHours)) errs.hours = "Enter total hours";
+    // Require a positive number — empty field or 0 is not valid
+    const parsed = parseFloat(hours);
+    if (!hours.trim() || isNaN(parsed) || parsed <= 0)
+      errs.hours = "Enter a positive number of hours";
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
 
     setBusy(true);
     try {
-      await logEmployeeHours({
+      const result = await logEmployeeHours({
         employee_id: empId,
         week_start_date: weekStart,
-        total_hours_worked: totalHours,
+        total_hours_worked: parsed,
         notes: notes || null,
       });
-      toast.success("Hours logged");
+      toast.success(
+        `Hours saved — ${employee?.name ?? ""} · week of ${weekStart.split("-").reverse().join("/")}`,
+      );
       setHours("");
       setNotes("");
-      onLogged();
+      // Pass the fresh hours list back so EmployeesView can update state instantly
+      onLogged(result.hours);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+      toast.error(err instanceof Error ? err.message : "Failed to save hours");
     } finally {
       setBusy(false);
     }
@@ -92,7 +94,7 @@ export function LogHoursForm({
       >
         {employees.map((e) => (
           <option key={e.id} value={e.id}>
-            {e.name} · {formatINR(e.hourly_rate)}/hr
+            {e.name} · {formatGBP(e.hourly_ni_rate ?? e.hourly_rate)}/hr
           </option>
         ))}
       </Select>
@@ -110,7 +112,7 @@ export function LogHoursForm({
         type="number"
         inputMode="decimal"
         step="0.25"
-        min="0"
+        min="0.25"
         label="Total Hours This Week"
         placeholder="e.g. 28.5"
         value={hours}
@@ -129,20 +131,26 @@ export function LogHoursForm({
       <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-xl bg-bg border border-border px-4 py-3 flex items-center justify-between">
           <span className="text-xs uppercase tracking-wide text-text-muted">Bank hours</span>
-          <span className="text-sm font-semibold">{bankHours.toFixed(2)} hrs</span>
+          <span className="text-sm font-semibold">
+            {totalHours > 0 ? bankHours.toFixed(2) : "—"} hrs
+          </span>
         </div>
         <div className="rounded-xl bg-bg border border-border px-4 py-3 flex items-center justify-between">
           <span className="text-xs uppercase tracking-wide text-text-muted">Cash hours</span>
-          <span className="text-sm font-semibold">{cashHours.toFixed(2)} hrs</span>
+          <span className="text-sm font-semibold">
+            {totalHours > 0 ? cashHours.toFixed(2) : "—"} hrs
+          </span>
         </div>
         <div className="rounded-xl bg-gold/10 border border-gold/30 px-4 py-3 flex items-center justify-between">
           <span className="text-xs uppercase tracking-wide text-gold/80">Cash due</span>
-          <span className="text-sm font-semibold text-gold">{formatINR(cashAmount)}</span>
+          <span className="text-sm font-semibold text-gold">
+            {totalHours > 0 ? formatINR(cashAmount) : "—"}
+          </span>
         </div>
       </div>
 
       <div className="sm:col-span-2 flex justify-end">
-        <Button type="submit" loading={busy}>
+        <Button type="submit" loading={busy} disabled={!hours.trim()}>
           Save Hours
         </Button>
       </div>

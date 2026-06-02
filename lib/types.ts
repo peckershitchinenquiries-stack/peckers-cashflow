@@ -240,6 +240,17 @@ export type SessionUser = {
   allowed: AllowedUser | null;
 };
 
+/** Weekly hours computed from clock_events (auto, not manually logged). */
+export type ClockWeeklySummary = {
+  employee_id: string;
+  employee_name: string;
+  week_start_date: string;
+  total_hours: number;
+  event_count: number;
+  hourly_ni_rate: number | null;
+  hourly_rate: number;
+};
+
 export type LiveDashboardStatus =
   | "on_shift"
   | "expected"
