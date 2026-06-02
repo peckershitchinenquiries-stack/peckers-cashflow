@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider, themeInitScript } from "@/components/theme/ThemeProvider";
+import { TopProgressBar } from "@/components/layout/TopProgressBar";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -36,6 +37,7 @@ export default function RootLayout({
       </head>
       <body className="font-sans bg-bg text-text-primary antialiased">
         <ThemeProvider>
+          <TopProgressBar />
           <ToastProvider>{children}</ToastProvider>
         </ThemeProvider>
       </body>

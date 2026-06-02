@@ -30,24 +30,12 @@ export async function upsertCashEntry(input: {
     user_email: user.email,
   };
 
-  // Manual upsert by (user_id, entry_date)
-  const { data: existing } = await supabase
+  // Single round-trip upsert — relies on the unique index on
+  // (user_id, entry_date). Replaces the old select-then-insert/update.
+  const { error } = await supabase
     .from("cash_entries")
-    .select("id")
-    .eq("user_id", user.id)
-    .eq("entry_date", input.entry_date)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
-      .from("cash_entries")
-      .update(payload)
-      .eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await supabase.from("cash_entries").insert(payload);
-    if (error) throw new Error(error.message);
-  }
+    .upsert(payload, { onConflict: "user_id,entry_date" });
+  if (error) throw new Error(error.message);
 
   revalidatePath("/dashboard");
   revalidatePath("/entries");
