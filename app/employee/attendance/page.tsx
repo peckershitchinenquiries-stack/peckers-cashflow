@@ -7,7 +7,13 @@ import {
   toISODate,
   todayISO,
 } from "@/lib/utils";
-import type { ClockEvent, Employee, RotaShift, Store } from "@/lib/types";
+import type {
+  ClockEvent,
+  Employee,
+  EmployeeScheduleDay,
+  RotaShift,
+  Store,
+} from "@/lib/types";
 import { Card } from "@/components/ui/Card";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +47,7 @@ export default async function AttendancePage() {
   const weekStart = startOfISOWeek(new Date());
   const weekEnd = endOfISOWeek(new Date());
 
-  const [storeRes, shiftsRes, clockRes] = await Promise.all([
+  const [storeRes, shiftsRes, clockRes, schedulesRes] = await Promise.all([
     employee.store_id
       ? supabase.from("stores").select("*").eq("id", employee.store_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
@@ -58,6 +64,10 @@ export default async function AttendancePage() {
       .eq("employee_id", employee.id)
       .eq("event_date", today)
       .maybeSingle(),
+    supabase
+      .from("employee_schedules")
+      .select("*")
+      .eq("employee_id", employee.id),
   ]);
 
   return (
@@ -70,6 +80,7 @@ export default async function AttendancePage() {
         employee={employee as Employee}
         store={(storeRes.data ?? null) as Store | null}
         weekShifts={(shiftsRes.data ?? []) as RotaShift[]}
+        schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         todayClock={(clockRes.data ?? null) as ClockEvent | null}
       />
     </>

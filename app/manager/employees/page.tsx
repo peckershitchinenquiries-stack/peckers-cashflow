@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { EmployeesView } from "@/components/employees/EmployeesView";
+import { getAppSettings } from "@/app/actions/settings";
 import { addDays, groupClockEventsByWeek, startOfISOWeek, toISODate } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
 
@@ -10,6 +11,7 @@ export default async function ManagerEmployeesPage() {
   const user = await requireRole(["manager"]);
   const storeId = user.allowed?.store_id ?? "";
   const supabase = createServerSupabase();
+  const settings = await getAppSettings();
 
   const eightWeeksBack = toISODate(addDays(startOfISOWeek(new Date()), -56));
 
@@ -58,6 +60,7 @@ export default async function ManagerEmployeesPage() {
         clockSummaries={clockSummaries}
         stores={storesRes.data ?? []}
         defaultStoreId={storeId || null}
+        minWageBands={settings.min_wage_bands}
         lockToStore
       />
     </>

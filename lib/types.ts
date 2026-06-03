@@ -146,6 +146,23 @@ export type RotaShift = {
   updated_by: string | null;
 };
 
+/**
+ * One day of an employee's recurring weekly schedule template.
+ * weekday: 0=Mon .. 6=Sun (matches `weekdayIndex` in lib/utils).
+ * This is the contracted/default pattern — the baseline the rota is generated
+ * from and that actual clock-in/out is compared against.
+ */
+export type EmployeeScheduleDay = {
+  id: string;
+  employee_id: string;
+  weekday: number;
+  is_working: boolean;
+  start_time: string | null;
+  end_time: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ClockEvent = {
   id: string;
   employee_id: string;
@@ -180,6 +197,7 @@ export type AlertSeverity = "info" | "warning" | "critical";
 export type AlertType =
   // Wage
   | "wage_variance"
+  | "min_wage_violation"
   // Delivery
   | "delivery_payout_high"
   | "delivery_unassigned"

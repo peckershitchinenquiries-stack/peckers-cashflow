@@ -8,28 +8,40 @@ import { useToast } from "@/components/ui/Toast";
 import { archiveEmployee } from "@/app/actions/employees";
 import {
   ArchiveIcon,
+  CalendarIcon,
   PencilIcon,
   PhoneIcon,
   ClockIcon,
 } from "@/components/ui/icons";
 import type { Employee, Store } from "@/lib/types";
 import { formatGBP } from "@/lib/utils";
+import { wageComplianceForEmployee } from "@/lib/compliance";
+import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
 
 export function EmployeeCard({
   employee,
   stores,
   onEdit,
+  onSchedule,
   onChanged,
+  minWageBands,
 }: {
   employee: Employee;
   stores: Store[];
   onEdit: () => void;
+  onSchedule: () => void;
   onChanged: () => void;
+  minWageBands?: MinWageBands;
 }) {
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
 
   const store = stores.find((s) => s.id === employee.store_id);
+  const wage = wageComplianceForEmployee(
+    employee,
+    minWageBands ?? DEFAULT_SETTINGS.min_wage_bands,
+  );
+  const underMinWage = wage ? !wage.compliant : false;
 
   async function toggleArchive() {
     setBusy(true);
@@ -68,9 +80,26 @@ export function EmployeeCard({
             ) : (
               <Badge variant="danger">Left</Badge>
             )}
+            {underMinWage && wage && (
+              <span
+                title={`Needs at least £${wage.required.toFixed(2)}/h for age ${wage.age} (${(minWageBands ?? DEFAULT_SETTINGS.min_wage_bands).effective_label})`}
+              >
+                <Badge variant="danger">Below min wage</Badge>
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onSchedule}
+            aria-label="Edit weekly schedule"
+            title="Weekly schedule"
+            className="text-text-muted hover:text-text-primary"
+          >
+            <CalendarIcon size={16} />
+          </Button>
           <Button
             variant="ghost"
             size="icon"

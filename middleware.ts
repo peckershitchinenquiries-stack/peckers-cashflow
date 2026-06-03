@@ -119,6 +119,21 @@ export async function middleware(req: NextRequest) {
     }
 
     const home = role ? PORTAL_HOME[role] : "/login";
+    const onChangePw = pathname === "/change-password";
+    const mustChange = allowed?.must_change_password === true;
+
+    // ---- forced password change ----
+    // A user still on an admin-shared temp password is funnelled to a single
+    // change-password screen (isolation-exempt, reachable by any role) until
+    // they set their own. /access-denied stays reachable so a just-removed user
+    // isn't trapped.
+    if (mustChange && !onChangePw && pathname !== "/access-denied") {
+      return redirectTo("/change-password");
+    }
+    if (onChangePw && !mustChange) {
+      // Nothing to change (or already done) — bounce to their portal home.
+      return redirectTo(home);
+    }
 
     // ---- on a login page or root while signed in -> go to portal home ----
     if (isPublic || pathname === "/") {
@@ -127,18 +142,20 @@ export async function middleware(req: NextRequest) {
       return redirectTo(home);
     }
 
-    // ---- portal isolation ----
-    const inManager = pathname === "/manager" || pathname.startsWith("/manager/");
-    const inEmployee = pathname === "/employee" || pathname.startsWith("/employee/");
+    // ---- portal isolation (skip for the shared change-password screen) ----
+    if (!onChangePw) {
+      const inManager = pathname === "/manager" || pathname.startsWith("/manager/");
+      const inEmployee = pathname === "/employee" || pathname.startsWith("/employee/");
 
-    if (role === "employee" && !inEmployee) {
-      return redirectTo(PORTAL_HOME.employee);
-    }
-    if (role === "manager" && !inManager) {
-      return redirectTo(PORTAL_HOME.manager);
-    }
-    if (role === "admin" && (inManager || inEmployee)) {
-      return redirectTo(PORTAL_HOME.admin);
+      if (role === "employee" && !inEmployee) {
+        return redirectTo(PORTAL_HOME.employee);
+      }
+      if (role === "manager" && !inManager) {
+        return redirectTo(PORTAL_HOME.manager);
+      }
+      if (role === "admin" && (inManager || inEmployee)) {
+        return redirectTo(PORTAL_HOME.admin);
+      }
     }
 
     // ---- authenticated, whitelisted, correct portal ----

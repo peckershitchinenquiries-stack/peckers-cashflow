@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import { EmployeesView } from "@/components/employees/EmployeesView";
+import { getAppSettings } from "@/app/actions/settings";
 import { addDays, groupClockEventsByWeek, startOfISOWeek, toISODate } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
 
@@ -9,6 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function EmployeesPage() {
   const user = await requireUser();
   const supabase = createServerSupabase();
+  const settings = await getAppSettings();
 
   const eightWeeksBack = toISODate(addDays(startOfISOWeek(new Date()), -56));
 
@@ -55,6 +57,7 @@ export default async function EmployeesPage() {
         clockSummaries={clockSummaries}
         stores={storesRes.data ?? []}
         defaultStoreId={user.allowed?.store_id ?? null}
+        minWageBands={settings.min_wage_bands}
       />
     </>
   );

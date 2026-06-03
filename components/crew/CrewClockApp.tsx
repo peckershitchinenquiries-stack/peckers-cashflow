@@ -19,11 +19,13 @@ import {
   startOfISOWeek,
   toISODate,
   todayISO,
+  weekdayIndex,
 } from "@/lib/utils";
 import { ClockIcon } from "@/components/ui/icons";
 import type {
   ClockEvent,
   Employee,
+  EmployeeScheduleDay,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -32,6 +34,7 @@ type Props = {
   employee: Employee;
   store: Store | null;
   weekShifts: RotaShift[];
+  schedules?: EmployeeScheduleDay[];
   todayClock: ClockEvent | null;
 };
 
@@ -45,6 +48,7 @@ export function CrewClockApp({
   employee,
   store,
   weekShifts,
+  schedules = [],
   todayClock,
 }: Props) {
   const router = useRouter();
@@ -56,9 +60,40 @@ export function CrewClockApp({
   );
 
   const today = todayISO();
-  const todayShift = weekShifts.find((s) => s.shift_date === today);
   const isDriver = employee.position === "Driver";
   const weekStart = startOfISOWeek(new Date());
+
+  const scheduleByWeekday = React.useMemo(() => {
+    const m = new Map<number, EmployeeScheduleDay>();
+    for (const s of schedules) m.set(s.weekday, s);
+    return m;
+  }, [schedules]);
+
+  // Effective shift for a date: published rota row first, else the employee's
+  // recurring schedule template for that weekday.
+  function effFor(dateIso: string, weekdayIdx: number) {
+    const real = weekShifts.find((s) => s.shift_date === dateIso);
+    if (real)
+      return {
+        is_day_off: real.is_day_off,
+        start: real.start_time,
+        end: real.end_time,
+        reason: real.same_day_edit_reason,
+        fromTemplate: false,
+      };
+    const tmpl = scheduleByWeekday.get(weekdayIdx);
+    if (tmpl && tmpl.is_working && tmpl.start_time)
+      return {
+        is_day_off: false,
+        start: tmpl.start_time,
+        end: tmpl.end_time,
+        reason: null,
+        fromTemplate: true,
+      };
+    return null;
+  }
+
+  const todayEff = effFor(today, weekdayIndex(new Date()));
 
   const storeConfigured = store?.latitude != null && store?.longitude != null;
 
@@ -186,10 +221,10 @@ export function CrewClockApp({
           <div>
             <CardTitle>Today &mdash; {formatDDMMYYYY(new Date())}</CardTitle>
             <CardDescription>
-              {todayShift
-                ? todayShift.is_day_off
+              {todayEff
+                ? todayEff.is_day_off
                   ? `Marked as Day Off${store?.name ? ` at ${store.name}` : ""} — clock in only if you're covering.`
-                  : `Scheduled ${formatShiftRange(false, todayShift.start_time, todayShift.end_time)} at ${store?.name ?? "your store"}`
+                  : `Scheduled ${formatShiftRange(false, todayEff.start, todayEff.end)} at ${store?.name ?? "your store"}${todayEff.fromTemplate ? " (your default schedule)" : ""}`
                 : `No shift scheduled today${store?.name ? ` at ${store.name}` : ""}. You can still clock in if you're working.`}
             </CardDescription>
           </div>
@@ -334,7 +369,7 @@ export function CrewClockApp({
           {Array.from({ length: 7 }, (_, i) => {
             const date = addDays(weekStart, i);
             const dateIso = toISODate(date);
-            const shift = weekShifts.find((s) => s.shift_date === dateIso);
+            const eff = effFor(dateIso, i);
             const isToday = dateIso === today;
             return (
               <div
@@ -352,15 +387,20 @@ export function CrewClockApp({
                     </span>
                   </div>
                 </div>
-                <div className="text-sm text-text-subtle">
-                  {shift
-                    ? shift.is_day_off
+                <div className="text-sm text-text-subtle text-right">
+                  {eff
+                    ? eff.is_day_off
                       ? <span className="text-danger">Day Off</span>
                       : <>
-                          {formatShiftRange(false, shift.start_time, shift.end_time)}
-                          {shift.same_day_edit_reason && (
+                          {formatShiftRange(false, eff.start, eff.end)}
+                          {eff.reason && (
                             <span className="block text-[10px] text-warning mt-0.5">
-                              {shift.same_day_edit_reason}
+                              {eff.reason}
+                            </span>
+                          )}
+                          {eff.fromTemplate && (
+                            <span className="block text-[10px] text-text-muted mt-0.5">
+                              default schedule
                             </span>
                           )}
                         </>

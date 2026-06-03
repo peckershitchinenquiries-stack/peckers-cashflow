@@ -673,3 +673,97 @@ grant select on public.employee_weekly_summary to authenticated;
 -- App-side provisioning requires SUPABASE_SERVICE_ROLE_KEY in the server env
 -- (Project Settings > API > service_role key). Never expose it to the browser.
 -- =============================================================
+
+-- =============================================================
+-- =============================================================
+-- STAGE 1 POLISH: SCHEDULES, SETTINGS, FORCED PASSWORD CHANGE
+-- (All idempotent — safe to re-run.)
+-- =============================================================
+-- =============================================================
+
+-- =============================================================
+-- TABLE: employee_schedules
+-- The employee's RECURRING weekly pattern (the "contracted" default), one row
+-- per weekday (0=Mon .. 6=Sun). This is the baseline the rota is built from and
+-- that actual clock-in/out is measured against (planned vs actual, missed shift).
+-- Distinct from rota_shifts, which is the actual published rota for real dates.
+-- =============================================================
+create table if not exists public.employee_schedules (
+  id          uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  weekday     smallint not null check (weekday between 0 and 6),
+  is_working  boolean not null default true,
+  start_time  time,
+  end_time    time,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  created_by  uuid references auth.users(id) on delete set null,
+  updated_by  uuid references auth.users(id) on delete set null,
+  unique (employee_id, weekday)
+);
+
+create index if not exists employee_schedules_emp_idx on public.employee_schedules (employee_id);
+
+drop trigger if exists set_employee_schedules_updated_at on public.employee_schedules;
+create trigger set_employee_schedules_updated_at
+  before update on public.employee_schedules
+  for each row execute function public.set_updated_at();
+
+-- =============================================================
+-- TABLE: app_settings
+-- Key/JSONB store for configurable alert thresholds, minimum-wage bands, and
+-- email-notification config. App code (lib/settings.ts) supplies defaults and
+-- merges any rows here over them, so an empty table still works.
+-- =============================================================
+create table if not exists public.app_settings (
+  key         text primary key,
+  value       jsonb not null,
+  updated_at  timestamptz not null default now(),
+  updated_by  uuid references auth.users(id) on delete set null
+);
+
+drop trigger if exists set_app_settings_updated_at on public.app_settings;
+create trigger set_app_settings_updated_at
+  before update on public.app_settings
+  for each row execute function public.set_updated_at();
+
+-- =============================================================
+-- ROW LEVEL SECURITY for the new tables
+-- =============================================================
+alter table public.employee_schedules enable row level security;
+alter table public.app_settings        enable row level security;
+
+drop policy if exists "employee_schedules_select" on public.employee_schedules;
+drop policy if exists "employee_schedules_modify" on public.employee_schedules;
+drop policy if exists "app_settings_select"       on public.app_settings;
+drop policy if exists "app_settings_modify"       on public.app_settings;
+
+-- Staff see/edit all schedules; an employee may read only their own.
+create policy "employee_schedules_select" on public.employee_schedules
+  for select to authenticated
+  using (public.is_staff() or employee_id = public.current_employee_id());
+
+create policy "employee_schedules_modify" on public.employee_schedules
+  for all to authenticated
+  using (public.is_staff())
+  with check (public.is_staff());
+
+-- Any staff member may read settings (managers need thresholds/min-wage bands);
+-- only admins may change them.
+create policy "app_settings_select" on public.app_settings
+  for select to authenticated
+  using (public.is_staff());
+
+create policy "app_settings_modify" on public.app_settings
+  for all to authenticated
+  using (public.is_admin(auth.jwt() ->> 'email'))
+  with check (public.is_admin(auth.jwt() ->> 'email'));
+
+-- =============================================================
+-- FORCED PASSWORD CHANGE — backfill
+-- must_change_password defaults to true, but existing live accounts have been
+-- in use without enforcement. Only force accounts still sitting on an
+-- admin-shared temp password; anyone with a null temp_password (real-email
+-- admins, or users who already changed) is left untouched.
+-- =============================================================
+update public.allowed_users set must_change_password = false where temp_password is null;

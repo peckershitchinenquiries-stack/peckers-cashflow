@@ -7,6 +7,7 @@ import { PlusIcon } from "@/components/ui/icons";
 import { EmployeeCard } from "./EmployeeCard";
 import { AddEmployeeModal } from "./AddEmployeeModal";
 import { EditEmployeeModal } from "./EditEmployeeModal";
+import { ScheduleEditModal } from "./ScheduleEditModal";
 import { LogHoursForm } from "./LogHoursForm";
 import { HoursTable } from "./HoursTable";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
@@ -14,6 +15,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { UsersIcon } from "@/components/ui/icons";
 import { Select } from "@/components/ui/Input";
 import type { ClockWeeklySummary, Employee, EmployeeHoursComputed, Store } from "@/lib/types";
+import type { MinWageBands } from "@/lib/settings";
 
 type Props = {
   initialEmployees: Employee[];
@@ -21,6 +23,7 @@ type Props = {
   clockSummaries?: ClockWeeklySummary[];
   stores: Store[];
   defaultStoreId?: string | null;
+  minWageBands?: MinWageBands;
   /** Manager portal: lock everything to a single store, hide cross-store UI. */
   lockToStore?: boolean;
 };
@@ -31,11 +34,13 @@ export function EmployeesView({
   clockSummaries = [],
   stores,
   defaultStoreId,
+  minWageBands,
   lockToStore = false,
 }: Props) {
   const router = useRouter();
   const [showAdd, setShowAdd] = React.useState(false);
   const [editing, setEditing] = React.useState<Employee | null>(null);
+  const [scheduling, setScheduling] = React.useState<Employee | null>(null);
   const [showArchived, setShowArchived] = React.useState(false);
   const [storeFilter, setStoreFilter] = React.useState<string>(
     lockToStore && defaultStoreId ? defaultStoreId : defaultStoreId ?? "all",
@@ -134,7 +139,9 @@ export function EmployeesView({
               employee={emp}
               stores={stores}
               onEdit={() => setEditing(emp)}
+              onSchedule={() => setScheduling(emp)}
               onChanged={refresh}
+              minWageBands={minWageBands}
             />
           ))}
         </div>
@@ -190,6 +197,13 @@ export function EmployeesView({
             setEditing(null);
             refresh();
           }}
+        />
+      )}
+      {scheduling && (
+        <ScheduleEditModal
+          employee={scheduling}
+          onClose={() => setScheduling(null)}
+          onSaved={refresh}
         />
       )}
     </div>

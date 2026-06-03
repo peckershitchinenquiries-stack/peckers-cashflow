@@ -5,6 +5,7 @@ import { todayISO } from "@/lib/utils";
 import type {
   ClockEvent,
   Employee,
+  EmployeeScheduleDay,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -16,27 +17,27 @@ export default async function LivePage() {
   const supabase = createServerSupabase();
   const today = todayISO();
 
-  const [storesRes, employeesRes, shiftsRes, clocksRes] = await Promise.all([
-    supabase.from("stores").select("*").order("name"),
-    supabase
-      .from("employees")
-      .select("*")
-      .neq("employment_status", "left"),
-    supabase.from("rota_shifts").select("*").eq("shift_date", today),
-    supabase.from("clock_events").select("*").eq("event_date", today),
-  ]);
+  const [storesRes, employeesRes, shiftsRes, clocksRes, schedulesRes] =
+    await Promise.all([
+      supabase.from("stores").select("*").order("name"),
+      supabase.from("employees").select("*").neq("employment_status", "left"),
+      supabase.from("rota_shifts").select("*").eq("shift_date", today),
+      supabase.from("clock_events").select("*").eq("event_date", today),
+      supabase.from("employee_schedules").select("*"),
+    ]);
 
   return (
     <>
       <PageHeader
         title="Live Daily Dashboard"
-        description="Real-time staffing for today across both stores. Refreshes every 2 minutes."
+        description="Real-time staffing for today across both stores. Refreshes every 30 seconds."
       />
       <LiveDashboard
         stores={(storesRes.data ?? []) as Store[]}
         employees={(employeesRes.data ?? []) as Employee[]}
         shifts={(shiftsRes.data ?? []) as RotaShift[]}
         clocks={(clocksRes.data ?? []) as ClockEvent[]}
+        schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         userRole={user.allowed?.role ?? "manager"}
         userStoreId={user.allowed?.store_id ?? null}
       />

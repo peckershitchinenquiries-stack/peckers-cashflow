@@ -19,11 +19,16 @@ import {
   startOfISOWeek,
   toISODate,
   todayISO,
+  weekdayIndex,
 } from "@/lib/utils";
 import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/icons";
+import { applyScheduleToWeek } from "@/app/actions/schedule";
+import { wageComplianceForEmployee } from "@/lib/compliance";
+import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
 import type {
   ClockEvent,
   Employee,
+  EmployeeScheduleDay,
   RotaShift,
   Store,
   WeeklyDelivery,
@@ -35,6 +40,8 @@ type Props = {
   shifts: RotaShift[];
   clocks: ClockEvent[];
   weeklyDeliveries: WeeklyDelivery[];
+  schedules?: EmployeeScheduleDay[];
+  minWageBands?: MinWageBands;
   weekStartIso: string;
   userRole: string;
   userStoreId: string | null;
@@ -46,6 +53,8 @@ export function RotaView({
   shifts,
   clocks,
   weeklyDeliveries,
+  schedules = [],
+  minWageBands = DEFAULT_SETTINGS.min_wage_bands,
   weekStartIso,
   userRole,
   userStoreId,
@@ -53,6 +62,7 @@ export function RotaView({
   const router = useRouter();
   const toast = useToast();
   const [weekStart, setWeekStart] = React.useState(parseISODate(weekStartIso));
+  const [applying, setApplying] = React.useState(false);
   const [activeStoreId, setActiveStoreId] = React.useState<string>(
     userStoreId && stores.some((s) => s.id === userStoreId)
       ? userStoreId
@@ -101,6 +111,25 @@ export function RotaView({
     return m;
   }, [weeklyDeliveries]);
 
+  // Recurring schedule template indexed by employee + weekday (0=Mon..6=Sun).
+  const scheduleByEmpDay = React.useMemo(() => {
+    const m = new Map<string, EmployeeScheduleDay>();
+    for (const s of schedules) m.set(`${s.employee_id}:${s.weekday}`, s);
+    return m;
+  }, [schedules]);
+
+  // Live deliveries logged at clock-out, summed per driver for the shown week.
+  const liveDeliveriesByEmp = React.useMemo(() => {
+    const weekSet = new Set(weekDays.map((d) => toISODate(d)));
+    const m = new Map<string, number>();
+    for (const c of clocks) {
+      if (c.deliveries_count == null) continue;
+      if (!weekSet.has(c.event_date)) continue;
+      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + Number(c.deliveries_count));
+    }
+    return m;
+  }, [clocks, weekDays]);
+
   // 4-week rolling avg per employee (across all stores) using prior weeks
   const fourWkAvg = React.useMemo(() => {
     const result = new Map<string, number>();
@@ -129,6 +158,33 @@ export function RotaView({
     // Note: this client-side shift; data is already loaded for prior 4 weeks
     // For a full reload to another week, we'd hit the server. Refresh is fine.
     router.refresh();
+  }
+
+  // Generate this week's shifts from each employee's recurring schedule.
+  // Only fills empty cells (existing shifts are kept).
+  async function applyDefaults() {
+    setApplying(true);
+    try {
+      const res = await applyScheduleToWeek({
+        store_id: activeStoreId,
+        week_start: toISODate(weekStart),
+        overwrite: false,
+      });
+      const parts: string[] = [];
+      if (res.created) parts.push(`${res.created} added`);
+      if (res.updated) parts.push(`${res.updated} updated`);
+      if (res.skipped) parts.push(`${res.skipped} kept`);
+      toast.success(
+        parts.length
+          ? `Schedule applied — ${parts.join(", ")}`
+          : "No schedule templates set for this store yet",
+      );
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setApplying(false);
+    }
   }
 
   function weekTotalHours(empId: string): number {
@@ -160,7 +216,7 @@ export function RotaView({
       {/* Store tabs & week nav */}
       <Card>
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             {stores.map((store) => (
               <button
                 key={store.id}
@@ -176,6 +232,15 @@ export function RotaView({
                 {store.name}
               </button>
             ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={applyDefaults}
+              loading={applying}
+              title="Fill this week's empty days from each employee's recurring weekly schedule"
+            >
+              Apply default schedules
+            </Button>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -281,6 +346,9 @@ export function RotaView({
                 const flagVariance = avg > 0 && Math.abs(variance) > 20;
                 const isDriver = emp.position === "Driver";
                 const delivery = deliveryByDriver.get(emp.id);
+                const wage = wageComplianceForEmployee(emp, minWageBands);
+                const underMinWage = wage ? !wage.compliant : false;
+                const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
 
                 return (
                   <tr
@@ -294,7 +362,17 @@ export function RotaView({
                       {emp.position ?? "—"}
                     </td>
                     <td className="px-2 py-2 text-right text-text-subtle">
-                      £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
+                      <span className={underMinWage ? "text-danger font-medium" : ""}>
+                        £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
+                      </span>
+                      {underMinWage && wage && (
+                        <span
+                          className="block text-[9px] text-danger"
+                          title={`Below minimum wage for age ${wage.age}: needs £${wage.required.toFixed(2)}/h (${minWageBands.effective_label})`}
+                        >
+                          ⚠ below min
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right text-text-subtle">
                       {emp.hourly_cash_rate
@@ -306,6 +384,15 @@ export function RotaView({
                       const cell = shiftByKey.get(`${emp.id}:${dateIso}`);
                       const clk = clockByKey.get(`${emp.id}:${dateIso}`);
                       const isToday = dateIso === todayISO();
+                      // Ghost hint: the employee's recurring schedule for this
+                      // weekday, shown faintly in empty cells as a suggestion.
+                      const tmpl = scheduleByEmpDay.get(
+                        `${emp.id}:${weekdayIndex(d)}`,
+                      );
+                      const ghost =
+                        !cell && tmpl && tmpl.is_working && tmpl.start_time
+                          ? `${tmpl.start_time.slice(0, 5)}–${(tmpl.end_time ?? "").slice(0, 5)}`
+                          : null;
                       return (
                         <td
                           key={dateIso}
@@ -328,18 +415,33 @@ export function RotaView({
                                 ? "bg-danger/10 border-danger/30 text-danger"
                                 : cell?.start_time
                                   ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
-                                  : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+                                  : ghost
+                                    ? "border-dashed border-gold/30 text-text-muted hover:bg-gold/5"
+                                    : "border-dashed border-border text-text-muted hover:bg-surface-hover")
                             }
                             title={
                               cell?.same_day_edit_reason
                                 ? `Reason: ${cell.same_day_edit_reason}`
-                                : undefined
+                                : ghost
+                                  ? "Default from recurring schedule — click to add this shift"
+                                  : undefined
                             }
                           >
-                            {formatShiftRange(
-                              cell?.is_day_off ?? false,
-                              cell?.start_time ?? null,
-                              cell?.end_time ?? null,
+                            {cell ? (
+                              formatShiftRange(
+                                cell.is_day_off,
+                                cell.start_time,
+                                cell.end_time,
+                              )
+                            ) : ghost ? (
+                              <span className="opacity-60">
+                                {ghost}
+                                <span className="block text-[9px] uppercase tracking-wide">
+                                  default
+                                </span>
+                              </span>
+                            ) : (
+                              "—"
                             )}
                             {clk?.clock_in_at && (
                               <div className="text-[9px] text-text-muted mt-0.5">
@@ -395,6 +497,12 @@ export function RotaView({
                               Vita {delivery.vita_mojo_count}
                             </span>
                           )}
+                          <span
+                            className="block text-[10px] text-success"
+                            title="Deliveries logged via clock-out this week"
+                          >
+                            Live {liveDeliv}
+                          </span>
                         </button>
                       ) : (
                         <span className="text-text-muted">—</span>

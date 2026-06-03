@@ -14,6 +14,7 @@ import {
 import type {
   ClockEvent,
   Employee,
+  EmployeeScheduleDay,
   LiveDashboardStatus,
   RotaShift,
   Store,
@@ -24,8 +25,18 @@ type Props = {
   employees: Employee[];
   shifts: RotaShift[];
   clocks: ClockEvent[];
+  /** Recurring weekly templates — used as the fallback "expected" shift when no
+   *  rota row is published for today (so missed shifts still show). */
+  schedules?: EmployeeScheduleDay[];
   userRole: string;
   userStoreId: string | null;
+};
+
+/** Minimal shape the dashboard needs from a shift (real or template-derived). */
+type EffShift = {
+  is_day_off: boolean;
+  start_time: string | null;
+  end_time: string | null;
 };
 
 const STATUS_STYLES: Record<LiveDashboardStatus, { label: string; cls: string }> = {
@@ -52,7 +63,7 @@ const ROW_BG: Record<LiveDashboardStatus, string> = {
 };
 
 function computeStatus(
-  shift: RotaShift | null | undefined,
+  shift: EffShift | null | undefined,
   clock: ClockEvent | null | undefined,
   now: Date,
 ): LiveDashboardStatus {
@@ -75,6 +86,7 @@ export function LiveDashboard({
   employees,
   shifts,
   clocks,
+  schedules = [],
   userRole,
   userStoreId,
 }: Props) {
@@ -88,14 +100,14 @@ export function LiveDashboard({
     return () => clearInterval(tick);
   }, []);
 
-  // Server data refresh runs every 2 minutes, and only while the tab is
-  // visible — avoids hammering Supabase (and the middleware) on idle tabs.
+  // Server data refresh runs every 30 seconds, and only while the tab is
+  // visible — keeps the board "live" without hammering Supabase on idle tabs.
   React.useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
 
     const start = () => {
       if (timer) return;
-      timer = setInterval(() => router.refresh(), 120_000);
+      timer = setInterval(() => router.refresh(), 30_000);
     };
     const stop = () => {
       if (timer) {
@@ -127,6 +139,32 @@ export function LiveDashboard({
 
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
+  const scheduleByEmpDay = new Map(
+    schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
+  );
+  const todayWeekday = (now.getDay() + 6) % 7;
+
+  // Real published rota row for today, else the recurring template for today's
+  // weekday — so an expected shift (and late/absent status) still shows even
+  // when the manager hasn't published a rota.
+  function effectiveShiftFor(
+    empId: string,
+  ): { shift: EffShift | null; fromTemplate: boolean } {
+    const real = shiftByEmp.get(empId);
+    if (real) return { shift: real, fromTemplate: false };
+    const tmpl = scheduleByEmpDay.get(`${empId}:${todayWeekday}`);
+    if (tmpl && tmpl.is_working && tmpl.start_time) {
+      return {
+        shift: {
+          is_day_off: false,
+          start_time: tmpl.start_time,
+          end_time: tmpl.end_time,
+        },
+        fromTemplate: true,
+      };
+    }
+    return { shift: null, fromTemplate: false };
+  }
 
   const today = new Date();
   const weekday = WEEKDAY_LONG[(today.getDay() + 6) % 7];
@@ -155,7 +193,7 @@ export function LiveDashboard({
           });
 
           const manager = sorted.find((e) => e.position === "Manager");
-          const managerShift = manager ? shiftByEmp.get(manager.id) : null;
+          const managerShift = manager ? effectiveShiftFor(manager.id).shift : null;
 
           const onShiftCount = sorted.filter((e) => {
             const c = clockByEmp.get(e.id);
@@ -219,7 +257,7 @@ export function LiveDashboard({
                       </tr>
                     )}
                     {sorted.map((emp) => {
-                      const shift = shiftByEmp.get(emp.id);
+                      const { shift, fromTemplate } = effectiveShiftFor(emp.id);
                       const clock = clockByEmp.get(emp.id);
                       const status = computeStatus(shift, clock, now);
                       const style = STATUS_STYLES[status];
@@ -241,6 +279,14 @@ export function LiveDashboard({
                               shift?.is_day_off ?? false,
                               shift?.start_time ?? null,
                               shift?.end_time ?? null,
+                            )}
+                            {fromTemplate && shift && (
+                              <span
+                                className="ml-1 text-[9px] uppercase tracking-wide text-text-muted"
+                                title="From the employee's recurring schedule (no rota published)"
+                              >
+                                default
+                              </span>
                             )}
                           </td>
                           <td className="px-2 py-2 text-center text-xs">

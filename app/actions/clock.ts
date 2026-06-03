@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
+import { scanForAlertsBackground } from "./alerts";
 import { haversineMeters, isWithinGeofence, todayISO } from "@/lib/utils";
 
 async function requireAllowed() {
@@ -129,6 +130,10 @@ export async function clockIn(input: {
     changes: { date: today, location: [input.latitude, input.longitude] },
   });
 
+  // Auto-scan so late/variance alerts surface without a manual "Scan now".
+  // Best-effort: never let a scan failure block the clock-in.
+  await scanForAlertsBackground();
+
   revalidatePath("/employee/attendance");
   revalidatePath("/live");
   revalidatePath("/manager/live");
@@ -199,6 +204,9 @@ export async function clockOut(input: {
       deliveries: input.deliveries_count ?? null,
     },
   });
+
+  // Auto-scan so early-out / scheduled-vs-actual variance surfaces immediately.
+  await scanForAlertsBackground();
 
   revalidatePath("/employee/attendance");
   revalidatePath("/live");

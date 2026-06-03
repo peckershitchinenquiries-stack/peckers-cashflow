@@ -6,6 +6,7 @@ import { LogoutIcon } from "@/components/ui/icons";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { signOutAction } from "@/app/actions/auth";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
+import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,9 @@ export default async function ManagerSettingsPage() {
             </Button>
           </form>
         </Card>
+      </div>
+      <div className="mt-5">
+        <ChangePasswordCard />
       </div>
     </>
   );

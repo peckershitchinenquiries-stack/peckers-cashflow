@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 
 async function currentEmployee() {
@@ -49,14 +50,31 @@ export async function updateOwnProfile(input: {
   return { ok: true };
 }
 
-/** Clear the must-change-password flag after a user changes their own password. */
+/**
+ * Clear the must-change-password flag after a user changes their own password.
+ *
+ * allowed_users writes are admin-only under RLS, so a manager/employee clearing
+ * their OWN flag with the anon client would silently affect 0 rows — leaving
+ * must_change_password=true and trapping them on /change-password. We use the
+ * service-role client, scoped strictly to the authenticated user's own email,
+ * to bypass RLS for this one safe self-update. Falls back to the RLS client
+ * (works for admins) if provisioning isn't configured.
+ */
 export async function clearMustChangePassword() {
   const user = await getSessionUser();
   if (!user || !user.email) return { ok: false };
-  const supabase = createServerSupabase();
-  await supabase
-    .from("allowed_users")
-    .update({ must_change_password: false, temp_password: null })
-    .ilike("email", user.email);
+  try {
+    const client = isProvisioningConfigured()
+      ? createAdminClient()
+      : createServerSupabase();
+    const { error } = await client
+      .from("allowed_users")
+      .update({ must_change_password: false, temp_password: null })
+      .ilike("email", user.email);
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error("[self] clearMustChangePassword failed:", err);
+    return { ok: false };
+  }
   return { ok: true };
 }

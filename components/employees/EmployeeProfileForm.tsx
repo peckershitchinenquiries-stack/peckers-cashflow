@@ -3,6 +3,8 @@
 import * as React from "react";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { POSITION_OPTIONS } from "@/lib/types";
+import { ageFromDOB, minWageForAge } from "@/lib/compliance";
+import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type {
   Employee,
   EmployeePosition,
@@ -124,6 +126,14 @@ export function EmployeeProfileForm({
 
   const service = calcLengthOfService(form.employment_start_date);
 
+  // Indicative minimum-wage check (uses default bands; the configured bands
+  // drive the authoritative alert/badge). Advisory only — never blocks saving.
+  const mwBands = DEFAULT_SETTINGS.min_wage_bands;
+  const mwAge = ageFromDOB(form.date_of_birth);
+  const mwRequired = minWageForAge(mwAge, mwBands);
+  const mwRate = Number(form.hourly_ni_rate || 0);
+  const belowMinWage = mwRequired != null && mwRate > 0 && mwRate < mwRequired;
+
   return (
     <div className="flex flex-col gap-5">
       <div>
@@ -244,6 +254,13 @@ export function EmployeeProfileForm({
             hint="Leave blank if not applicable"
           />
         </div>
+        {belowMinWage && mwAge != null && mwRequired != null && (
+          <p className="text-xs text-danger mt-2">
+            ⚠ £{mwRate.toFixed(2)}/h is below the minimum wage for age {mwAge}{" "}
+            (£{mwRequired.toFixed(2)}/h, {mwBands.effective_label}). Allowed, but
+            please confirm this is intentional.
+          </p>
+        )}
       </div>
 
       <div>

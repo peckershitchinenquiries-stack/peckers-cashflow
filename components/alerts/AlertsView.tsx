@@ -13,6 +13,7 @@ import { CheckIcon } from "@/components/ui/icons";
 
 const ALERT_LABELS: Record<string, { title: string; variant: "warning" | "danger" | "neutral" | "gold" }> = {
   wage_variance: { title: "Wage variance", variant: "warning" },
+  min_wage_violation: { title: "Minimum wage", variant: "danger" },
   delivery_payout_high: { title: "High delivery payout", variant: "warning" },
   delivery_unassigned: { title: "Unassigned deliveries", variant: "warning" },
   late_clock_in: { title: "Late clock-in", variant: "warning" },

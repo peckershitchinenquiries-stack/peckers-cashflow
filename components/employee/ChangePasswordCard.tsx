@@ -38,7 +38,7 @@ export function ChangePasswordCard() {
       <CardHeader>
         <CardTitle>Change Password</CardTitle>
         <CardDescription>
-          Set your own password to replace the one your manager gave you.
+          Choose a new password for your account.
         </CardDescription>
       </CardHeader>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
