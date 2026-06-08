@@ -767,3 +767,230 @@ create policy "app_settings_modify" on public.app_settings
 -- admins, or users who already changed) is left untouched.
 -- =============================================================
 update public.allowed_users set must_change_password = false where temp_password is null;
+
+-- =============================================================
+-- =============================================================
+-- STAGE 2: CASH FLOW MANAGEMENT MODULE (PRG-CF-001)
+-- Daily envelope reconciliation, Saturday cash + delivery wage payout,
+-- weekly payout summaries, running cash balance & cash alerts.
+-- (All idempotent — safe to re-run.)
+-- =============================================================
+-- =============================================================
+
+-- Per-driver fixed rate paid per completed delivery (£). Drives delivery wages
+-- in the Saturday payout. Only meaningful for employees whose position = Driver.
+alter table public.employees
+  add column if not exists delivery_rate numeric(8,2);
+
+-- Store of the currently-authenticated login account (for manager scoping).
+create or replace function public.current_user_store_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select store_id from public.allowed_users
+  where lower(email) = lower(auth.jwt() ->> 'email')
+  limit 1;
+$$;
+
+-- True if the current user may see/act on a given store: admins see all,
+-- managers see only their assigned store.
+create or replace function public.can_access_store(p_store_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    public.is_admin(auth.jwt() ->> 'email')
+    or (public.is_staff() and p_store_id = public.current_user_store_id());
+$$;
+
+-- =============================================================
+-- TABLE: daily_cash_entries
+-- One reconciliation row per store per day: Vita Mojo cash sales vs the cash
+-- physically placed in the envelope, the auto-computed difference, and a reason
+-- (mandatory when a difference exists — enforced in the app + a CHECK below).
+-- =============================================================
+create table if not exists public.daily_cash_entries (
+  id                 uuid primary key default gen_random_uuid(),
+  store_id           uuid not null references public.stores(id) on delete cascade,
+  entry_date         date not null,
+  vita_mojo_sales    numeric(10,2) not null,
+  envelope_amount    numeric(10,2) not null,
+  -- Positive = shortfall (Vita > envelope); negative = surplus.
+  difference         numeric(10,2) generated always as (vita_mojo_sales - envelope_amount) stored,
+  reason             text,
+  is_late            boolean not null default false,
+  submitted_by       uuid references auth.users(id) on delete set null,
+  submitted_by_name  text,
+  submitted_by_email text,
+  edited_by_name     text,
+  edited_at          timestamptz,
+  created_at         timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  -- Reason is required whenever there is any difference.
+  constraint daily_cash_entries_reason_required
+    check (vita_mojo_sales = envelope_amount or (reason is not null and length(btrim(reason)) > 0))
+);
+
+-- One entry per store per day (the app upserts; no duplicate days).
+create unique index if not exists daily_cash_entries_store_day_unique
+  on public.daily_cash_entries (store_id, entry_date);
+create index if not exists daily_cash_entries_date_idx
+  on public.daily_cash_entries (entry_date desc);
+
+drop trigger if exists set_daily_cash_entries_updated_at on public.daily_cash_entries;
+create trigger set_daily_cash_entries_updated_at
+  before update on public.daily_cash_entries
+  for each row execute function public.set_updated_at();
+
+-- =============================================================
+-- TABLE: cash_payouts
+-- One header row per store per week (Monday-anchored) capturing the Saturday
+-- pre-payment summary and confirmation/locking state.
+-- =============================================================
+create table if not exists public.cash_payouts (
+  id                     uuid primary key default gen_random_uuid(),
+  store_id               uuid not null references public.stores(id) on delete cascade,
+  week_start_date        date not null,          -- Monday of the pay week
+  payment_date           date,                   -- the Saturday wages were paid
+  status                 text not null default 'draft'
+                           check (status in ('draft','confirmed')),
+  opening_balance        numeric(10,2) not null default 0,  -- carried-forward surplus
+  cash_collected         numeric(10,2) not null default 0,  -- sum of envelopes
+  logged_differences     numeric(10,2) not null default 0,  -- vita - envelopes
+  actual_cash_available  numeric(10,2) not null default 0,
+  total_cash_wages       numeric(10,2) not null default 0,
+  total_delivery_wages   numeric(10,2) not null default 0,
+  grand_total_wages      numeric(10,2) not null default 0,
+  post_office_draw       numeric(10,2) not null default 0,  -- shortfall to draw
+  surplus_carry_forward  numeric(10,2) not null default 0,
+  locked                 boolean not null default false,
+  confirmed_by           uuid references auth.users(id) on delete set null,
+  confirmed_by_name      text,
+  confirmed_at           timestamptz,
+  created_at             timestamptz not null default now(),
+  updated_at             timestamptz not null default now()
+);
+
+create unique index if not exists cash_payouts_store_week_unique
+  on public.cash_payouts (store_id, week_start_date);
+create index if not exists cash_payouts_week_idx
+  on public.cash_payouts (week_start_date desc);
+
+drop trigger if exists set_cash_payouts_updated_at on public.cash_payouts;
+create trigger set_cash_payouts_updated_at
+  before update on public.cash_payouts
+  for each row execute function public.set_updated_at();
+
+-- =============================================================
+-- TABLE: cash_payout_lines
+-- One row per employee paid in a given weekly payout (snapshot of the wage
+-- breakdown so historical records never drift if rates/hours change later).
+-- =============================================================
+create table if not exists public.cash_payout_lines (
+  id               uuid primary key default gen_random_uuid(),
+  payout_id        uuid not null references public.cash_payouts(id) on delete cascade,
+  employee_id      uuid references public.employees(id) on delete set null,
+  employee_name    text not null,
+  role             text,
+  cash_hours       numeric(6,2) not null default 0,
+  cash_rate        numeric(8,2) not null default 0,
+  cash_wage        numeric(10,2) not null default 0,
+  deliveries_count integer not null default 0,
+  delivery_rate    numeric(8,2) not null default 0,
+  delivery_wages   numeric(10,2) not null default 0,
+  total_payment    numeric(10,2) not null default 0,
+  is_paid          boolean not null default false,
+  paid_at          timestamptz,
+  paid_by_name     text,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+
+create unique index if not exists cash_payout_lines_unique
+  on public.cash_payout_lines (payout_id, employee_id);
+create index if not exists cash_payout_lines_payout_idx
+  on public.cash_payout_lines (payout_id);
+
+drop trigger if exists set_cash_payout_lines_updated_at on public.cash_payout_lines;
+create trigger set_cash_payout_lines_updated_at
+  before update on public.cash_payout_lines
+  for each row execute function public.set_updated_at();
+
+-- =============================================================
+-- ROW LEVEL SECURITY — cash flow tables
+-- Admins see/act on all stores; managers only on their assigned store.
+-- =============================================================
+alter table public.daily_cash_entries enable row level security;
+alter table public.cash_payouts        enable row level security;
+alter table public.cash_payout_lines   enable row level security;
+
+drop policy if exists "daily_cash_entries_select" on public.daily_cash_entries;
+drop policy if exists "daily_cash_entries_modify" on public.daily_cash_entries;
+drop policy if exists "daily_cash_entries_delete" on public.daily_cash_entries;
+drop policy if exists "cash_payouts_select"       on public.cash_payouts;
+drop policy if exists "cash_payouts_modify"       on public.cash_payouts;
+drop policy if exists "cash_payouts_delete"       on public.cash_payouts;
+drop policy if exists "cash_payout_lines_select"  on public.cash_payout_lines;
+drop policy if exists "cash_payout_lines_modify"  on public.cash_payout_lines;
+
+-- ----- daily_cash_entries -----
+create policy "daily_cash_entries_select" on public.daily_cash_entries
+  for select to authenticated
+  using (public.can_access_store(store_id));
+
+-- Insert/update allowed for staff scoped to their store; locked weeks are still
+-- editable here (the lock is enforced on payouts, not daily entries).
+create policy "daily_cash_entries_modify" on public.daily_cash_entries
+  for all to authenticated
+  using (public.can_access_store(store_id))
+  with check (public.can_access_store(store_id));
+
+-- Only Super Admins may delete a submitted cash entry (deletion logged in app).
+create policy "daily_cash_entries_delete" on public.daily_cash_entries
+  for delete to authenticated
+  using (public.is_admin(auth.jwt() ->> 'email'));
+
+-- ----- cash_payouts -----
+create policy "cash_payouts_select" on public.cash_payouts
+  for select to authenticated
+  using (public.can_access_store(store_id));
+
+create policy "cash_payouts_modify" on public.cash_payouts
+  for all to authenticated
+  using (public.can_access_store(store_id))
+  with check (public.can_access_store(store_id));
+
+create policy "cash_payouts_delete" on public.cash_payouts
+  for delete to authenticated
+  using (public.is_admin(auth.jwt() ->> 'email'));
+
+-- ----- cash_payout_lines (scoped through the parent payout's store) -----
+create policy "cash_payout_lines_select" on public.cash_payout_lines
+  for select to authenticated
+  using (
+    exists (
+      select 1 from public.cash_payouts p
+      where p.id = payout_id and public.can_access_store(p.store_id)
+    )
+  );
+
+create policy "cash_payout_lines_modify" on public.cash_payout_lines
+  for all to authenticated
+  using (
+    exists (
+      select 1 from public.cash_payouts p
+      where p.id = payout_id and public.can_access_store(p.store_id)
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.cash_payouts p
+      where p.id = payout_id and public.can_access_store(p.store_id)
+    )
+  );

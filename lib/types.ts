@@ -100,6 +100,8 @@ export type Employee = {
   employment_status: EmploymentStatus;
   auth_user_id: string | null;
   email: string | null;
+  /** Per-driver fixed £/delivery rate (cash-flow module). Null for non-drivers. */
+  delivery_rate: number | null;
 };
 
 export type EmployeeHoursRow = {
@@ -206,7 +208,14 @@ export type AlertType =
   | "unexpected_absence"
   | "early_clock_out"
   // Variance
-  | "scheduled_vs_actual";
+  | "scheduled_vs_actual"
+  // Cash flow (Stage 2)
+  | "missing_daily_entry"
+  | "unresolved_discrepancy"
+  | "post_office_draw"
+  | "negative_cash_balance"
+  | "wages_not_confirmed"
+  | "unconfirmed_payment";
 
 export type SystemAlert = {
   id: string;
@@ -277,3 +286,120 @@ export type LiveDashboardStatus =
   | "tbc"
   | "late"
   | "absent";
+
+// =============================================================
+// CASH FLOW MODULE (Stage 2)
+// =============================================================
+
+/** One day's envelope reconciliation for a store. */
+export type DailyCashEntry = {
+  id: string;
+  store_id: string;
+  entry_date: string;
+  vita_mojo_sales: number;
+  envelope_amount: number;
+  /** Auto-computed: vita_mojo_sales − envelope_amount. +ve = shortfall. */
+  difference: number;
+  reason: string | null;
+  is_late: boolean;
+  submitted_by: string | null;
+  submitted_by_name: string | null;
+  submitted_by_email: string | null;
+  edited_by_name: string | null;
+  edited_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DailyCashEntryWithStore = DailyCashEntry & {
+  store_name: string | null;
+};
+
+export type CashPayoutStatus = "draft" | "confirmed";
+
+/** Weekly payout header (one per store per week). */
+export type CashPayout = {
+  id: string;
+  store_id: string;
+  week_start_date: string;
+  payment_date: string | null;
+  status: CashPayoutStatus;
+  opening_balance: number;
+  cash_collected: number;
+  logged_differences: number;
+  actual_cash_available: number;
+  total_cash_wages: number;
+  total_delivery_wages: number;
+  grand_total_wages: number;
+  post_office_draw: number;
+  surplus_carry_forward: number;
+  locked: boolean;
+  confirmed_by: string | null;
+  confirmed_by_name: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Per-employee line within a weekly payout. */
+export type CashPayoutLine = {
+  id: string;
+  payout_id: string;
+  employee_id: string | null;
+  employee_name: string;
+  role: string | null;
+  cash_hours: number;
+  cash_rate: number;
+  cash_wage: number;
+  deliveries_count: number;
+  delivery_rate: number;
+  delivery_wages: number;
+  total_payment: number;
+  is_paid: boolean;
+  paid_at: string | null;
+  paid_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CashPayoutWithLines = CashPayout & {
+  lines: CashPayoutLine[];
+  store_name: string | null;
+};
+
+/**
+ * A computed wage line for an employee for a week (before persistence). Shape
+ * mirrors CashPayoutLine's wage fields so the live preview and saved sheet
+ * render identically.
+ */
+export type WageLine = {
+  employee_id: string;
+  employee_name: string;
+  role: string | null;
+  cash_hours: number;
+  cash_rate: number;
+  cash_wage: number;
+  deliveries_count: number;
+  delivery_rate: number;
+  delivery_wages: number;
+  total_payment: number;
+};
+
+/** The Saturday pre-payment summary (§3.4 of the spec). */
+export type PrePaymentSummary = {
+  store_id: string;
+  week_start_date: string;
+  opening_balance: number;
+  vita_mojo_total: number;
+  cash_collected: number;
+  logged_differences: number;
+  actual_cash_available: number;
+  total_cash_wages: number;
+  total_delivery_wages: number;
+  grand_total_wages: number;
+  /** grand_total_wages − actual_cash_available, clamped ≥ 0 (Post Office draw). */
+  post_office_draw: number;
+  /** actual_cash_available − grand_total_wages, clamped ≥ 0. */
+  surplus: number;
+  lines: WageLine[];
+};

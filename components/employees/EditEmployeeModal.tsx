@@ -53,6 +53,7 @@ export function EditEmployeeModal({
         joined_date: form.employment_start_date || null,
         hourly_ni_rate: form.hourly_ni_rate ? Number(form.hourly_ni_rate) : null,
         hourly_cash_rate: form.hourly_cash_rate ? Number(form.hourly_cash_rate) : null,
+        delivery_rate: form.delivery_rate ? Number(form.delivery_rate) : null,
         hourly_rate: Number(form.hourly_ni_rate || 0),
         store_id: form.store_id || null,
         bank_account_name: form.bank_account_name || null,

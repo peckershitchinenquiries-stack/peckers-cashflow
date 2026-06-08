@@ -40,10 +40,21 @@ export type EmailAlertSettings = {
   recipients: string[];
 };
 
+/** Cash-flow module configuration (daily entries, payout, carry-forward). */
+export type CashFlowSettings = {
+  /** Carry last week's surplus into next week's opening balance. */
+  carry_forward_surplus: boolean;
+  /** Hour (0–23) after which a store with no daily entry is flagged missing. */
+  missing_entry_hour: number;
+  /** Hour (0–23) on Saturday after which unconfirmed wages are flagged. */
+  wages_confirm_hour: number;
+};
+
 export type AppSettings = {
   alert_thresholds: AlertThresholds;
   min_wage_bands: MinWageBands;
   email_alerts: EmailAlertSettings;
+  cash_flow: CashFlowSettings;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -67,12 +78,18 @@ export const DEFAULT_SETTINGS: AppSettings = {
     enabled: false,
     recipients: [],
   },
+  cash_flow: {
+    carry_forward_surplus: true,
+    missing_entry_hour: 23,
+    wages_confirm_hour: 18,
+  },
 };
 
 export const SETTINGS_KEYS = [
   "alert_thresholds",
   "min_wage_bands",
   "email_alerts",
+  "cash_flow",
 ] as const;
 export type SettingsKey = (typeof SETTINGS_KEYS)[number];
 
@@ -95,5 +112,6 @@ export function mergeSettings(
     alert_thresholds: pick("alert_thresholds"),
     min_wage_bands: pick("min_wage_bands"),
     email_alerts: pick("email_alerts"),
+    cash_flow: pick("cash_flow"),
   };
 }

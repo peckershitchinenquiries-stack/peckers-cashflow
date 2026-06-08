@@ -15,6 +15,11 @@ import {
   weekdayIndex,
 } from "@/lib/utils";
 import { mergeSettings, type AppSettings } from "@/lib/settings";
+import {
+  aggregateWorked,
+  buildPrePaymentSummary,
+  buildWageLines,
+} from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { isCredentialEmail } from "@/lib/credentials";
 import { sendAlertDigest } from "@/lib/email";
@@ -161,8 +166,18 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
   const weekStart = toISODate(startOfISOWeek(new Date()));
   const fourWeeksAgo = toISODate(addDays(new Date(), -28));
 
-  const [shiftsRes, clocksRes, employeesRes, deliveriesRes, schedulesRes, settingsRes] =
-    await Promise.all([
+  const [
+    shiftsRes,
+    clocksRes,
+    employeesRes,
+    deliveriesRes,
+    schedulesRes,
+    settingsRes,
+    storesRes,
+    cashEntriesRes,
+    payoutsRes,
+    priorPayoutsRes,
+  ] = await Promise.all([
       supabase
         .from("rota_shifts")
         .select("*")
@@ -181,6 +196,21 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
         .gte("week_start_date", fourWeeksAgo),
       supabase.from("employee_schedules").select("*"),
       supabase.from("app_settings").select("key, value"),
+      supabase.from("stores").select("id, name"),
+      supabase
+        .from("daily_cash_entries")
+        .select("store_id, entry_date, vita_mojo_sales, envelope_amount, difference, reason")
+        .gte("entry_date", weekStart),
+      supabase
+        .from("cash_payouts")
+        .select("id, store_id, week_start_date, status, locked")
+        .eq("week_start_date", weekStart),
+      supabase
+        .from("cash_payouts")
+        .select("store_id, surplus_carry_forward, week_start_date")
+        .eq("status", "confirmed")
+        .lt("week_start_date", weekStart)
+        .order("week_start_date", { ascending: false }),
     ]);
 
   const shifts = shiftsRes.data ?? [];
@@ -472,6 +502,200 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
               title: `${emp.name}: scheduled vs actual variance`,
               message: `Worked ${actualHours.toFixed(1)}h vs ${scheduled.toFixed(1)}h scheduled (${delta > 0 ? "+" : ""}${delta.toFixed(0)}%).`,
               payload: { actual: actualHours, scheduled, delta_percent: delta },
+            },
+            newAlerts,
+          );
+        }
+      }
+    }
+  }
+
+  // =============================================================
+  // CASH FLOW ALERTS (Stage 2)
+  // =============================================================
+  const stores = (storesRes.data ?? []) as Array<{ id: string; name: string }>;
+  const cashEntries = (cashEntriesRes.data ?? []) as Array<{
+    store_id: string;
+    entry_date: string;
+    vita_mojo_sales: number;
+    envelope_amount: number;
+    difference: number;
+    reason: string | null;
+  }>;
+  const weekPayouts = (payoutsRes.data ?? []) as Array<{
+    id: string;
+    store_id: string;
+    status: string;
+    locked: boolean;
+  }>;
+  const priorPayouts = (priorPayoutsRes.data ?? []) as Array<{
+    store_id: string;
+    surplus_carry_forward: number;
+    week_start_date: string;
+  }>;
+
+  // Latest confirmed surplus per store = this week's opening balance.
+  const openingByStore = new Map<string, number>();
+  if (settings.cash_flow.carry_forward_surplus) {
+    for (const p of priorPayouts) {
+      if (!openingByStore.has(p.store_id)) {
+        openingByStore.set(p.store_id, Number(p.surplus_carry_forward) || 0);
+      }
+    }
+  }
+
+  const payoutByStore = new Map(weekPayouts.map((p) => [p.store_id, p]));
+  const todayWd = weekdayIndex(now); // 0=Mon .. 5=Sat .. 6=Sun
+  const nowHour = now.getHours();
+
+  for (const store of stores) {
+    const storeEntries = cashEntries.filter((e) => e.store_id === store.id);
+    const todayEntry = storeEntries.find((e) => e.entry_date === today);
+
+    // ----- Missing daily entry -----
+    if (!todayEntry && nowHour >= settings.cash_flow.missing_entry_hour) {
+      await upsertAlert(
+        supabase,
+        {
+          alert_type: "missing_daily_entry",
+          severity: "warning",
+          store_id: store.id,
+          title: `${store.name}: daily cash entry missing`,
+          message: `No cash entry has been submitted for ${store.name} today. Please complete the daily reconciliation.`,
+          payload: { date: today },
+        },
+        newAlerts,
+      );
+    }
+
+    // ----- Unresolved discrepancy (difference logged without a reason) -----
+    for (const e of storeEntries) {
+      const diff = Number(e.difference) || 0;
+      if (Math.abs(diff) > 0.001 && !e.reason) {
+        await upsertAlert(
+          supabase,
+          {
+            alert_type: "unresolved_discrepancy",
+            severity: "warning",
+            store_id: store.id,
+            title: `${store.name}: unresolved discrepancy (£${Math.abs(diff).toFixed(2)})`,
+            message: `A £${Math.abs(diff).toFixed(2)} ${diff > 0 ? "shortfall" : "surplus"} on ${e.entry_date} has no reason recorded.`,
+            payload: { date: e.entry_date, difference: diff },
+          },
+          newAlerts,
+        );
+      }
+    }
+
+    // ----- Running balance below zero (more cash used than collected) -----
+    const opening = openingByStore.get(store.id) ?? 0;
+    const envelopes = storeEntries.reduce((s, e) => s + (Number(e.envelope_amount) || 0), 0);
+    const cashUsed = storeEntries.reduce((s, e) => s + Math.max(Number(e.difference) || 0, 0), 0);
+    const netOfUsage = opening + envelopes - cashUsed;
+    if (netOfUsage < -0.001) {
+      await upsertAlert(
+        supabase,
+        {
+          alert_type: "negative_cash_balance",
+          severity: "critical",
+          store_id: store.id,
+          title: `${store.name}: cash balance negative`,
+          message: `Running cash balance is £${netOfUsage.toFixed(2)} — more cash has been used (£${cashUsed.toFixed(2)}) than collected this week.`,
+          payload: { net: netOfUsage, opening, envelopes, cash_used: cashUsed },
+        },
+        newAlerts,
+      );
+    }
+
+    // ----- Saturday wage forecast: Post Office draw -----
+    const storeEmployees = employees.filter(
+      (e) => e.store_id === store.id && e.employment_status !== "left",
+    );
+    const weekClocks = clocks.filter(
+      (c) => c.store_id === store.id && c.event_date >= weekStart && c.event_date <= today,
+    );
+    const weekShifts = shifts.filter(
+      (s) => s.store_id === store.id && s.shift_date >= weekStart && s.shift_date <= today,
+    );
+    const worked = aggregateWorked(weekClocks, weekShifts);
+    const lines = buildWageLines(storeEmployees, worked);
+    const summary = buildPrePaymentSummary({
+      store_id: store.id,
+      week_start_date: weekStart,
+      opening_balance: opening,
+      entries: storeEntries,
+      lines,
+    });
+
+    const payout = payoutByStore.get(store.id);
+
+    // Post Office draw required — flag from Friday onward.
+    if (summary.post_office_draw > 0.001 && todayWd >= 4) {
+      await upsertAlert(
+        supabase,
+        {
+          alert_type: "post_office_draw",
+          severity: "critical",
+          store_id: store.id,
+          title: `${store.name}: draw £${summary.post_office_draw.toFixed(2)} from the Post Office`,
+          message: `You need to draw £${summary.post_office_draw.toFixed(2)} from the Post Office before paying wages this Saturday. Wages due £${summary.grand_total_wages.toFixed(2)}; cash available £${summary.actual_cash_available.toFixed(2)}.`,
+          payload: {
+            draw: summary.post_office_draw,
+            wages_due: summary.grand_total_wages,
+            available: summary.actual_cash_available,
+          },
+        },
+        newAlerts,
+      );
+    }
+
+    // Saturday after the confirm deadline: wages / payments not finalised.
+    if (todayWd === 5 && nowHour >= settings.cash_flow.wages_confirm_hour) {
+      if (!payout || payout.status !== "confirmed") {
+        await upsertAlert(
+          supabase,
+          {
+            alert_type: "wages_not_confirmed",
+            severity: "warning",
+            store_id: store.id,
+            title: `${store.name}: wages not yet confirmed`,
+            message: `Saturday wage payments for ${store.name} have not been confirmed in the system. Please confirm once all employees are paid.`,
+            payload: { week_start: weekStart },
+          },
+          newAlerts,
+        );
+      }
+    }
+  }
+
+  // ----- Unconfirmed payment for an employee (some paid, some not) on Saturday -----
+  if (todayWd === 5 && nowHour >= settings.cash_flow.wages_confirm_hour) {
+    const draftPayoutIds = weekPayouts.filter((p) => !p.locked).map((p) => p.id);
+    if (draftPayoutIds.length) {
+      const { data: lineRows } = await supabase
+        .from("cash_payout_lines")
+        .select("payout_id, employee_name, is_paid")
+        .in("payout_id", draftPayoutIds);
+      const byPayout = new Map<string, { paid: number; unpaid: number }>();
+      for (const l of lineRows ?? []) {
+        const agg = byPayout.get(l.payout_id) ?? { paid: 0, unpaid: 0 };
+        if (l.is_paid) agg.paid += 1;
+        else agg.unpaid += 1;
+        byPayout.set(l.payout_id, agg);
+      }
+      for (const p of weekPayouts) {
+        const agg = byPayout.get(p.id);
+        if (agg && agg.paid > 0 && agg.unpaid > 0) {
+          const store = stores.find((s) => s.id === p.store_id);
+          await upsertAlert(
+            supabase,
+            {
+              alert_type: "unconfirmed_payment",
+              severity: "warning",
+              store_id: p.store_id,
+              title: `${store?.name ?? "Store"}: ${agg.unpaid} employee${agg.unpaid === 1 ? "" : "s"} unpaid`,
+              message: `${agg.paid} employee${agg.paid === 1 ? "" : "s"} marked paid but ${agg.unpaid} still unconfirmed for this Saturday.`,
+              payload: { paid: agg.paid, unpaid: agg.unpaid },
             },
             newAlerts,
           );

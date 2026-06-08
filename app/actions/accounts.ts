@@ -138,6 +138,7 @@ export async function createEmployeeWithAccount(input: {
   employment_start_date?: string | null;
   hourly_ni_rate: number;
   hourly_cash_rate?: number | null;
+  delivery_rate?: number | null;
   store_id: string;
   bank_account_name?: string | null;
   bank_name?: string | null;
@@ -192,6 +193,8 @@ export async function createEmployeeWithAccount(input: {
     hourly_ni_rate: Number(input.hourly_ni_rate),
     hourly_cash_rate:
       input.hourly_cash_rate != null ? Number(input.hourly_cash_rate) : null,
+    delivery_rate:
+      input.delivery_rate != null ? Number(input.delivery_rate) : null,
     hourly_rate: Number(input.hourly_ni_rate),
     store_id,
     bank_account_name: input.bank_account_name?.trim() || null,

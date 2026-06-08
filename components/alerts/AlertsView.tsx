@@ -20,6 +20,12 @@ const ALERT_LABELS: Record<string, { title: string; variant: "warning" | "danger
   unexpected_absence: { title: "Unexpected absence", variant: "danger" },
   early_clock_out: { title: "Early clock-out", variant: "warning" },
   scheduled_vs_actual: { title: "Scheduled vs actual", variant: "neutral" },
+  missing_daily_entry: { title: "Missing cash entry", variant: "warning" },
+  unresolved_discrepancy: { title: "Cash discrepancy", variant: "warning" },
+  post_office_draw: { title: "Post Office draw", variant: "danger" },
+  negative_cash_balance: { title: "Negative cash balance", variant: "danger" },
+  wages_not_confirmed: { title: "Wages not confirmed", variant: "warning" },
+  unconfirmed_payment: { title: "Unconfirmed payment", variant: "warning" },
 };
 
 export function AlertsView({

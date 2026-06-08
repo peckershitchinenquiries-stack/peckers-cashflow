@@ -12,6 +12,7 @@ import {
   SettingsIcon,
   UserCircleIcon,
   UsersIcon,
+  WalletIcon,
 } from "@/components/ui/icons";
 import type { Portal } from "@/lib/types";
 
@@ -30,7 +31,10 @@ export const adminNav: NavItem[] = [
   { href: "/alerts", label: "Alerts", icon: AlertIcon, group: "Operations" },
   { href: "/employees", label: "Employees", icon: UsersIcon, group: "People" },
   { href: "/managers", label: "Managers", icon: KeyIcon, group: "People" },
-  { href: "/entries", label: "Cash Entries", icon: ListIcon, group: "Finance" },
+  { href: "/cash-flow", label: "Cash Flow", icon: WalletIcon, group: "Finance" },
+  { href: "/cash-flow/payout", label: "Saturday Payout", icon: CalendarIcon, group: "Finance" },
+  { href: "/cash-flow/history", label: "Payout History", icon: ListIcon, group: "Finance" },
+  { href: "/entries", label: "Cash Entries (legacy)", icon: ListIcon, group: "Finance" },
   { href: "/analytics", label: "Analytics", icon: ChartIcon, group: "Finance" },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -41,7 +45,10 @@ export const managerNav: NavItem[] = [
   { href: "/manager/rota", label: "Rota", icon: GridIcon },
   { href: "/manager/employees", label: "Employees", icon: UsersIcon },
   { href: "/manager/alerts", label: "Alerts", icon: AlertIcon },
-  { href: "/manager/entries", label: "Cash Entries", icon: ListIcon, group: "Finance" },
+  { href: "/manager/cash-flow", label: "Cash Flow", icon: WalletIcon, group: "Finance" },
+  { href: "/manager/cash-flow/payout", label: "Saturday Payout", icon: CalendarIcon, group: "Finance" },
+  { href: "/manager/cash-flow/history", label: "Payout History", icon: ListIcon, group: "Finance" },
+  { href: "/manager/entries", label: "Cash Entries (legacy)", icon: ListIcon, group: "Finance" },
   { href: "/manager/analytics", label: "Analytics", icon: ChartIcon, group: "Finance" },
   { href: "/manager/settings", label: "Settings", icon: SettingsIcon },
 ];

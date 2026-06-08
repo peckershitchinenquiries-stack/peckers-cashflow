@@ -1,0 +1,466 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { writeAudit } from "./audit";
+import { scanForAlertsBackground } from "./alerts";
+import { addDays, parseISODate, startOfISOWeek, toISODate } from "@/lib/utils";
+import { mergeSettings } from "@/lib/settings";
+import {
+  aggregateWorked,
+  buildPrePaymentSummary,
+  buildWageLines,
+} from "@/lib/cash-flow";
+import type {
+  CashPayoutWithLines,
+  DailyCashEntry,
+  Employee,
+  PrePaymentSummary,
+} from "@/lib/types";
+
+type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
+
+async function requireStaff(): Promise<SessionUser> {
+  const user = await getSessionUser();
+  if (!user || !user.allowed) throw new Error("Not authorised");
+  if (user.allowed.role !== "admin" && user.allowed.role !== "manager") {
+    throw new Error("Cash flow module is restricted to managers and admins.");
+  }
+  return user;
+}
+
+function assertStoreAccess(user: SessionUser, storeId: string) {
+  if (user.allowed!.role === "manager") {
+    if (!user.allowed!.store_id) throw new Error("No store assigned to your account.");
+    if (storeId !== user.allowed!.store_id) {
+      throw new Error("You can only manage payouts for your own store.");
+    }
+  }
+}
+
+function revalidateCashFlow() {
+  for (const p of [
+    "/cash-flow",
+    "/cash-flow/payout",
+    "/cash-flow/history",
+    "/manager/cash-flow",
+    "/manager/cash-flow/payout",
+    "/manager/cash-flow/history",
+    "/alerts",
+    "/manager/alerts",
+    "/dashboard",
+  ]) {
+    revalidatePath(p);
+  }
+}
+
+/** Monday → that week's Saturday (payment day). */
+function saturdayOf(weekStartISO: string): string {
+  return toISODate(addDays(parseISODate(weekStartISO), 5));
+}
+
+/**
+ * Opening balance for a store's week = the surplus carried forward from the most
+ * recent confirmed payout in an earlier week (0 if carry-forward is disabled or
+ * there is no prior confirmed payout).
+ */
+async function loadOpeningBalance(
+  supabase: SupabaseClient,
+  storeId: string,
+  weekStartISO: string,
+  carryForward: boolean,
+): Promise<number> {
+  if (!carryForward) return 0;
+  const { data } = await supabase
+    .from("cash_payouts")
+    .select("surplus_carry_forward, week_start_date")
+    .eq("store_id", storeId)
+    .eq("status", "confirmed")
+    .lt("week_start_date", weekStartISO)
+    .order("week_start_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return Number(data?.surplus_carry_forward ?? 0) || 0;
+}
+
+/** Compute the live pre-payment summary for a store + week from current data. */
+async function computeSummary(
+  supabase: SupabaseClient,
+  storeId: string,
+  weekStartISO: string,
+): Promise<PrePaymentSummary> {
+  const weekStart = weekStartISO;
+  const weekEnd = toISODate(addDays(parseISODate(weekStartISO), 6));
+
+  const [entriesRes, employeesRes, clocksRes, shiftsRes, settingsRes] = await Promise.all([
+    supabase
+      .from("daily_cash_entries")
+      .select("*")
+      .eq("store_id", storeId)
+      .gte("entry_date", weekStart)
+      .lte("entry_date", weekEnd),
+    supabase
+      .from("employees")
+      .select("*")
+      .eq("store_id", storeId)
+      .neq("employment_status", "left"),
+    supabase
+      .from("clock_events")
+      .select("employee_id, clock_in_at, clock_out_at, deliveries_count")
+      .eq("store_id", storeId)
+      .gte("event_date", weekStart)
+      .lte("event_date", weekEnd),
+    supabase
+      .from("rota_shifts")
+      .select("employee_id, is_day_off, scheduled_hours")
+      .eq("store_id", storeId)
+      .gte("shift_date", weekStart)
+      .lte("shift_date", weekEnd),
+    supabase.from("app_settings").select("key, value"),
+  ]);
+
+  const settings = mergeSettings(settingsRes.data ?? []);
+  const entries = (entriesRes.data ?? []) as DailyCashEntry[];
+  const employees = (employeesRes.data ?? []) as Employee[];
+  const worked = aggregateWorked(clocksRes.data ?? [], shiftsRes.data ?? []);
+  const lines = buildWageLines(employees, worked);
+  const opening = await loadOpeningBalance(
+    supabase,
+    storeId,
+    weekStartISO,
+    settings.cash_flow.carry_forward_surplus,
+  );
+
+  return buildPrePaymentSummary({
+    store_id: storeId,
+    week_start_date: weekStartISO,
+    opening_balance: opening,
+    entries,
+    lines,
+  });
+}
+
+/** Read-only live pre-payment summary (for the payout screen / dashboard forecast). */
+export async function getPrePaymentSummary(input: {
+  store_id: string;
+  week_start: string;
+}): Promise<PrePaymentSummary> {
+  const user = await requireStaff();
+  assertStoreAccess(user, input.store_id);
+  const supabase = createServerSupabase();
+  const weekStart = toISODate(startOfISOWeek(parseISODate(input.week_start)));
+  return computeSummary(supabase, input.store_id, weekStart);
+}
+
+/**
+ * Generate (or refresh) the persisted payout sheet for a store + week. Creates a
+ * draft cash_payouts header plus one line per employee receiving cash. Re-running
+ * recomputes amounts while preserving each line's "paid" flag. A confirmed
+ * (locked) payout cannot be regenerated until a Super Admin unlocks it.
+ */
+export async function generatePayout(input: {
+  store_id: string;
+  week_start: string;
+}): Promise<{ ok: true; payout_id: string }> {
+  const user = await requireStaff();
+  assertStoreAccess(user, input.store_id);
+  const supabase = createServerSupabase();
+  const weekStart = toISODate(startOfISOWeek(parseISODate(input.week_start)));
+
+  const summary = await computeSummary(supabase, input.store_id, weekStart);
+
+  // Existing header?
+  const { data: existing } = await supabase
+    .from("cash_payouts")
+    .select("id, locked")
+    .eq("store_id", input.store_id)
+    .eq("week_start_date", weekStart)
+    .maybeSingle();
+
+  if (existing?.locked) {
+    throw new Error("This payout is confirmed and locked. A Super Admin must unlock it to regenerate.");
+  }
+
+  const headerPayload = {
+    store_id: input.store_id,
+    week_start_date: weekStart,
+    payment_date: saturdayOf(weekStart),
+    status: "draft" as const,
+    opening_balance: summary.opening_balance,
+    cash_collected: summary.cash_collected,
+    logged_differences: summary.logged_differences,
+    actual_cash_available: summary.actual_cash_available,
+    total_cash_wages: summary.total_cash_wages,
+    total_delivery_wages: summary.total_delivery_wages,
+    grand_total_wages: summary.grand_total_wages,
+    post_office_draw: summary.post_office_draw,
+    surplus_carry_forward: summary.surplus,
+  };
+
+  let payoutId: string;
+  if (existing) {
+    const { error } = await supabase
+      .from("cash_payouts")
+      .update(headerPayload)
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+    payoutId = existing.id;
+  } else {
+    const { data, error } = await supabase
+      .from("cash_payouts")
+      .insert(headerPayload)
+      .select("id")
+      .maybeSingle();
+    if (error || !data) throw new Error(error?.message ?? "Failed to create payout");
+    payoutId = data.id;
+  }
+
+  // Preserve existing paid flags across regeneration.
+  const { data: priorLines } = await supabase
+    .from("cash_payout_lines")
+    .select("id, employee_id, is_paid, paid_at, paid_by_name")
+    .eq("payout_id", payoutId);
+  const priorByEmp = new Map(
+    (priorLines ?? []).map((l) => [l.employee_id, l]),
+  );
+
+  const keepEmployeeIds = new Set(summary.lines.map((l) => l.employee_id));
+
+  // Upsert each computed line.
+  for (const line of summary.lines) {
+    const prior = priorByEmp.get(line.employee_id);
+    const payload = {
+      payout_id: payoutId,
+      employee_id: line.employee_id,
+      employee_name: line.employee_name,
+      role: line.role,
+      cash_hours: line.cash_hours,
+      cash_rate: line.cash_rate,
+      cash_wage: line.cash_wage,
+      deliveries_count: line.deliveries_count,
+      delivery_rate: line.delivery_rate,
+      delivery_wages: line.delivery_wages,
+      total_payment: line.total_payment,
+      is_paid: prior?.is_paid ?? false,
+      paid_at: prior?.paid_at ?? null,
+      paid_by_name: prior?.paid_by_name ?? null,
+    };
+    const { error } = await supabase
+      .from("cash_payout_lines")
+      .upsert(payload, { onConflict: "payout_id,employee_id" });
+    if (error) throw new Error(error.message);
+  }
+
+  // Remove lines for employees no longer in the payout.
+  const staleIds = (priorLines ?? [])
+    .filter((l) => !keepEmployeeIds.has(l.employee_id))
+    .map((l) => l.id);
+  if (staleIds.length) {
+    await supabase.from("cash_payout_lines").delete().in("id", staleIds);
+  }
+
+  await writeAudit({
+    action: existing ? "regenerate" : "generate",
+    entity: "cash_payout",
+    entity_id: payoutId,
+    changes: { store_id: input.store_id, week_start: weekStart, grand_total: summary.grand_total_wages },
+  });
+
+  revalidateCashFlow();
+  return { ok: true, payout_id: payoutId };
+}
+
+/** Mark one payout line as paid / unpaid. Blocked once the payout is locked. */
+export async function markLinePaid(input: {
+  line_id: string;
+  paid: boolean;
+}): Promise<{ ok: true }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+
+  const { data: line } = await supabase
+    .from("cash_payout_lines")
+    .select("id, payout_id, cash_payouts!inner(store_id, locked)")
+    .eq("id", input.line_id)
+    .maybeSingle();
+  if (!line) throw new Error("Payout line not found");
+  const parent = (line as unknown as { cash_payouts: { store_id: string; locked: boolean } }).cash_payouts;
+  assertStoreAccess(user, parent.store_id);
+  if (parent.locked) throw new Error("This payout is locked.");
+
+  const { error } = await supabase
+    .from("cash_payout_lines")
+    .update({
+      is_paid: input.paid,
+      paid_at: input.paid ? new Date().toISOString() : null,
+      paid_by_name: input.paid ? (user.allowed!.name ?? user.email) : null,
+    })
+    .eq("id", input.line_id);
+  if (error) throw new Error(error.message);
+
+  await writeAudit({
+    action: input.paid ? "mark_paid" : "mark_unpaid",
+    entity: "cash_payout_line",
+    entity_id: input.line_id,
+  });
+  revalidateCashFlow();
+  return { ok: true };
+}
+
+/**
+ * Confirm all wage payments for a payout: requires every line marked paid, then
+ * records confirmation, locks the record, and finalises the carry-forward
+ * surplus (§3.7). Re-reads the live summary so the locked snapshot is final.
+ */
+export async function confirmPayout(input: { payout_id: string }): Promise<{ ok: true }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+
+  const { data: payout } = await supabase
+    .from("cash_payouts")
+    .select("id, store_id, week_start_date, locked")
+    .eq("id", input.payout_id)
+    .maybeSingle();
+  if (!payout) throw new Error("Payout not found");
+  assertStoreAccess(user, payout.store_id);
+  if (payout.locked) throw new Error("This payout is already confirmed.");
+
+  const { data: lines } = await supabase
+    .from("cash_payout_lines")
+    .select("id, is_paid")
+    .eq("payout_id", input.payout_id);
+  if (!lines || lines.length === 0) throw new Error("No wage lines to confirm.");
+  const unpaid = lines.filter((l) => !l.is_paid).length;
+  if (unpaid > 0) {
+    throw new Error(`${unpaid} employee${unpaid === 1 ? "" : "s"} not yet marked as paid. Mark all as paid before confirming.`);
+  }
+
+  // Finalise the financial snapshot from live data.
+  const summary = await computeSummary(supabase, payout.store_id, payout.week_start_date);
+
+  const { error } = await supabase
+    .from("cash_payouts")
+    .update({
+      status: "confirmed",
+      locked: true,
+      payment_date: saturdayOf(payout.week_start_date),
+      opening_balance: summary.opening_balance,
+      cash_collected: summary.cash_collected,
+      logged_differences: summary.logged_differences,
+      actual_cash_available: summary.actual_cash_available,
+      total_cash_wages: summary.total_cash_wages,
+      total_delivery_wages: summary.total_delivery_wages,
+      grand_total_wages: summary.grand_total_wages,
+      post_office_draw: summary.post_office_draw,
+      surplus_carry_forward: summary.surplus,
+      confirmed_by: user.id,
+      confirmed_by_name: user.allowed!.name ?? user.email,
+      confirmed_at: new Date().toISOString(),
+    })
+    .eq("id", input.payout_id);
+  if (error) throw new Error(error.message);
+
+  await writeAudit({
+    action: "confirm",
+    entity: "cash_payout",
+    entity_id: input.payout_id,
+    changes: { grand_total: summary.grand_total_wages, surplus: summary.surplus, draw: summary.post_office_draw },
+  });
+  void scanForAlertsBackground();
+  revalidateCashFlow();
+  return { ok: true };
+}
+
+/** Unlock a confirmed payout for amendment — Super Admins only. */
+export async function unlockPayout(input: { payout_id: string }): Promise<{ ok: true }> {
+  const user = await getSessionUser();
+  if (!user || user.allowed?.role !== "admin") {
+    throw new Error("Only Super Admins can unlock a confirmed payout.");
+  }
+  const supabase = createServerSupabase();
+  const { error } = await supabase
+    .from("cash_payouts")
+    .update({
+      status: "draft",
+      locked: false,
+      confirmed_by: null,
+      confirmed_by_name: null,
+      confirmed_at: null,
+    })
+    .eq("id", input.payout_id);
+  if (error) throw new Error(error.message);
+  await writeAudit({ action: "unlock", entity: "cash_payout", entity_id: input.payout_id });
+  revalidateCashFlow();
+  return { ok: true };
+}
+
+/** Delete a payout record (and its lines) — Super Admins only. */
+export async function deletePayout(input: { payout_id: string; reason?: string | null }): Promise<{ ok: true }> {
+  const user = await getSessionUser();
+  if (!user || user.allowed?.role !== "admin") {
+    throw new Error("Only Super Admins can delete a payout record.");
+  }
+  const supabase = createServerSupabase();
+  const { error } = await supabase.from("cash_payouts").delete().eq("id", input.payout_id);
+  if (error) throw new Error(error.message);
+  await writeAudit({
+    action: "delete",
+    entity: "cash_payout",
+    entity_id: input.payout_id,
+    changes: { reason: input.reason ?? null },
+  });
+  revalidateCashFlow();
+  return { ok: true };
+}
+
+/** Find the stored payout (with lines) for a store + week, if one exists. */
+export async function getPayoutForWeek(input: {
+  store_id: string;
+  week_start: string;
+}): Promise<CashPayoutWithLines | null> {
+  const user = await requireStaff();
+  assertStoreAccess(user, input.store_id);
+  const supabase = createServerSupabase();
+  const weekStart = toISODate(startOfISOWeek(parseISODate(input.week_start)));
+  const { data } = await supabase
+    .from("cash_payouts")
+    .select("*, stores(name), cash_payout_lines(*)")
+    .eq("store_id", input.store_id)
+    .eq("week_start_date", weekStart)
+    .maybeSingle();
+  if (!data) return null;
+  const { stores, cash_payout_lines, ...header } = data as Record<string, unknown> & {
+    stores: { name: string } | null;
+    cash_payout_lines: unknown[];
+  };
+  return {
+    ...(header as unknown as CashPayoutWithLines),
+    store_name: stores?.name ?? null,
+    lines: ((cash_payout_lines ?? []) as CashPayoutWithLines["lines"]).sort(
+      (a, b) => b.total_payment - a.total_payment,
+    ),
+  };
+}
+
+/** Load a stored payout with its lines (for the history detail / confirmation screen). */
+export async function loadPayout(input: { payout_id: string }): Promise<CashPayoutWithLines | null> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+  const { data } = await supabase
+    .from("cash_payouts")
+    .select("*, stores(name), cash_payout_lines(*)")
+    .eq("id", input.payout_id)
+    .maybeSingle();
+  if (!data) return null;
+  assertStoreAccess(user, data.store_id);
+  const { stores, cash_payout_lines, ...header } = data as Record<string, unknown> & {
+    stores: { name: string } | null;
+    cash_payout_lines: unknown[];
+  };
+  return {
+    ...(header as unknown as CashPayoutWithLines),
+    store_name: stores?.name ?? null,
+    lines: (cash_payout_lines ?? []) as CashPayoutWithLines["lines"],
+  };
+}

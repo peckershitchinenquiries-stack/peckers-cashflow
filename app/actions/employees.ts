@@ -23,6 +23,7 @@ export type EmployeeInput = {
   joined_date?: string | null;
   hourly_ni_rate?: number | null;
   hourly_cash_rate?: number | null;
+  delivery_rate?: number | null;
   hourly_rate?: number;
   store_id?: string | null;
   bank_account_name?: string | null;
@@ -51,6 +52,10 @@ function buildPayload(input: EmployeeInput) {
     hourly_cash_rate:
       input.hourly_cash_rate != null && input.hourly_cash_rate !== ("" as unknown as number)
         ? Number(input.hourly_cash_rate)
+        : null,
+    delivery_rate:
+      input.delivery_rate != null && input.delivery_rate !== ("" as unknown as number)
+        ? Number(input.delivery_rate)
         : null,
     hourly_rate: niRate || Number(input.hourly_rate ?? 0),
     store_id: input.store_id || null,

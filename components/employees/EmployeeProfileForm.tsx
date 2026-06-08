@@ -22,6 +22,7 @@ export type EmployeeFormState = {
   employment_start_date: string;
   hourly_ni_rate: string;
   hourly_cash_rate: string;
+  delivery_rate: string;
   store_id: string;
   bank_account_name: string;
   bank_name: string;
@@ -42,6 +43,7 @@ export function emptyEmployeeForm(): EmployeeFormState {
     employment_start_date: "",
     hourly_ni_rate: "",
     hourly_cash_rate: "",
+    delivery_rate: "",
     store_id: "",
     bank_account_name: "",
     bank_name: "",
@@ -70,6 +72,7 @@ export function employeeToForm(emp: Employee): EmployeeFormState {
           : "",
     hourly_cash_rate:
       emp.hourly_cash_rate != null ? String(emp.hourly_cash_rate) : "",
+    delivery_rate: emp.delivery_rate != null ? String(emp.delivery_rate) : "",
     store_id: emp.store_id ?? "",
     bank_account_name: emp.bank_account_name ?? "",
     bank_name: emp.bank_name ?? "",
@@ -253,6 +256,18 @@ export function EmployeeProfileForm({
             onChange={(e) => set("hourly_cash_rate", e.target.value)}
             hint="Leave blank if not applicable"
           />
+          {form.position === "Driver" && (
+            <Input
+              type="number"
+              step="0.01"
+              min="0"
+              label="Delivery rate (per delivery)"
+              prefix="£"
+              value={form.delivery_rate}
+              onChange={(e) => set("delivery_rate", e.target.value)}
+              hint="Paid per completed delivery, on top of hourly pay"
+            />
+          )}
         </div>
         {belowMinWage && mwAge != null && mwRequired != null && (
           <p className="text-xs text-danger mt-2">
