@@ -14,6 +14,8 @@ type Props = {
   storeId: string;
   shiftDate: string;
   existing: RotaShift | null;
+  /** Previous day's times, used to pre-fill a brand-new shift for fast entry. */
+  prefill?: { start: string; end: string } | null;
   onClose: () => void;
   onSaved: () => void;
 };
@@ -23,15 +25,20 @@ export function ShiftEditModal({
   storeId,
   shiftDate,
   existing,
+  prefill = null,
   onClose,
   onSaved,
 }: Props) {
   const toast = useToast();
+  // For a brand-new shift, seed times from the previous day's shift.
+  const usingPrefill = !existing && !!prefill;
   const [isDayOff, setIsDayOff] = React.useState(existing?.is_day_off ?? false);
   const [start, setStart] = React.useState(
-    existing?.start_time?.slice(0, 5) ?? "",
+    existing?.start_time?.slice(0, 5) ?? prefill?.start ?? "",
   );
-  const [end, setEnd] = React.useState(existing?.end_time?.slice(0, 5) ?? "");
+  const [end, setEnd] = React.useState(
+    existing?.end_time?.slice(0, 5) ?? prefill?.end ?? "",
+  );
   const [notes, setNotes] = React.useState(existing?.manager_notes ?? "");
   const [reason, setReason] = React.useState(existing?.same_day_edit_reason ?? "");
   const [busy, setBusy] = React.useState(false);
@@ -136,6 +143,12 @@ export function ShiftEditModal({
               onChange={(e) => setEnd(e.target.value)}
             />
           </div>
+        )}
+
+        {usingPrefill && !isDayOff && (
+          <p className="text-xs text-gold">
+            Pre-filled from the previous day — adjust if needed.
+          </p>
         )}
 
         {calculated > 0 && (

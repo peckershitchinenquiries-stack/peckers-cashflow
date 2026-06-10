@@ -104,6 +104,8 @@ export type Employee = {
   delivery_rate: number | null;
 };
 
+export type EmployeeHoursSource = "manual" | "clocked";
+
 export type EmployeeHoursRow = {
   id: string;
   employee_id: string;
@@ -112,6 +114,10 @@ export type EmployeeHoursRow = {
   hourly_rate_snapshot: number;
   notes: string | null;
   logged_by: string | null;
+  approved: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  source: EmployeeHoursSource;
   created_at: string;
 };
 
@@ -128,6 +134,9 @@ export type EmployeeHoursComputed = {
   hourly_rate_snapshot: number;
   notes: string | null;
   logged_by: string | null;
+  approved: boolean;
+  approved_at: string | null;
+  source: EmployeeHoursSource;
   created_at: string;
 };
 
@@ -178,6 +187,8 @@ export type ClockEvent = {
   clock_out_lat: number | null;
   clock_out_lng: number | null;
   deliveries_count: number | null;
+  extra_deliveries: number;
+  extra_delivery_reason: string | null;
   created_at: string;
 };
 
@@ -298,6 +309,8 @@ export type DailyCashEntry = {
   entry_date: string;
   vita_mojo_sales: number;
   envelope_amount: number;
+  /** Cash spent on supermarket / supplies for the day. */
+  supermarket_expenses: number;
   /** Auto-computed: vita_mojo_sales − envelope_amount. +ve = shortfall. */
   difference: number;
   reason: string | null;

@@ -1,0 +1,23 @@
+name: Missing cash-entry reminder
+
+# Reminds Rishi if a manager forgot to log the previous day's cash entry.
+# Runs daily at ~3pm UK time. GitHub cron is in UTC, so 14:00 UTC ≈ 15:00 BST
+# (British Summer Time). Adjust to '0 15 * * *' for GMT (winter) if needed.
+on:
+  schedule:
+    - cron: "0 14 * * *"
+  # Allow manual runs from the Actions tab for testing.
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reminder endpoint
+        # Requires two repository secrets:
+        #   APP_URL      — e.g. https://peckers.vercel.app
+        #   CRON_SECRET  — must match CRON_SECRET in the app's server env
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "${{ secrets.APP_URL }}/api/cron/missing-cash-entry" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

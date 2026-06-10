@@ -34,6 +34,7 @@ export const adminNav: NavItem[] = [
   { href: "/cash-flow", label: "Cash Flow", icon: WalletIcon, group: "Finance" },
   { href: "/cash-flow/payout", label: "Saturday Payout", icon: CalendarIcon, group: "Finance" },
   { href: "/cash-flow/history", label: "Payout History", icon: ListIcon, group: "Finance" },
+  { href: "/ni-monthly", label: "NI (Monthly)", icon: CalendarIcon, group: "Finance" },
   { href: "/entries", label: "Cash Entries (legacy)", icon: ListIcon, group: "Finance" },
   { href: "/analytics", label: "Analytics", icon: ChartIcon, group: "Finance" },
   { href: "/settings", label: "Settings", icon: SettingsIcon },

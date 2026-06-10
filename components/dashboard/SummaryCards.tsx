@@ -1,17 +1,18 @@
 import { Card } from "@/components/ui/Card";
-import { cn, formatINR } from "@/lib/utils";
+import { cn, formatGBP } from "@/lib/utils";
 import {
   ShoppingBagIcon,
-  TrendDownIcon,
   TrendUpIcon,
   WalletIcon,
 } from "@/components/ui/icons";
 
 type Props = {
-  todaySales: number;
-  todayExp: number;
-  todayNet: number;
-  weekNet: number;
+  yesterdaySales: number;
+  yesterdayExp: number;
+  remainingCash: number;
+  weekCash: number;
+  /** Short label for yesterday, e.g. "12/06". */
+  yesterdayLabel: string;
 };
 
 function StatCard({
@@ -66,31 +67,37 @@ function StatCard({
   );
 }
 
-export function SummaryCards({ todaySales, todayExp, todayNet, weekNet }: Props) {
+export function SummaryCards({
+  yesterdaySales,
+  yesterdayExp,
+  remainingCash,
+  weekCash,
+  yesterdayLabel,
+}: Props) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <StatCard
-        label="Today's Sales"
-        value={formatINR(todaySales)}
+        label={`Sales · ${yesterdayLabel}`}
+        value={formatGBP(yesterdaySales)}
         icon={<ShoppingBagIcon size={18} />}
         tone="gold"
       />
       <StatCard
-        label="Today's Expenses"
-        value={formatINR(todayExp)}
+        label={`Expenses · ${yesterdayLabel}`}
+        value={formatGBP(yesterdayExp)}
         icon={<WalletIcon size={18} />}
       />
       <StatCard
-        label="Today's Net"
-        value={formatINR(todayNet)}
-        icon={todayNet >= 0 ? <TrendUpIcon size={18} /> : <TrendDownIcon size={18} />}
-        tone={todayNet >= 0 ? "success" : "danger"}
+        label="Remaining Cash"
+        value={formatGBP(remainingCash)}
+        icon={<WalletIcon size={18} />}
+        tone="gold"
       />
       <StatCard
-        label="This Week's Net"
-        value={formatINR(weekNet)}
-        icon={weekNet >= 0 ? <TrendUpIcon size={18} /> : <TrendDownIcon size={18} />}
-        tone={weekNet >= 0 ? "success" : "danger"}
+        label="This Week's Cash"
+        value={formatGBP(weekCash)}
+        icon={<TrendUpIcon size={18} />}
+        tone="success"
       />
     </div>
   );

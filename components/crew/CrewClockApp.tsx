@@ -58,6 +58,12 @@ export function CrewClockApp({
   const [deliveries, setDeliveries] = React.useState<string>(
     todayClock?.deliveries_count?.toString() ?? "",
   );
+  const [extraDeliveries, setExtraDeliveries] = React.useState<string>(
+    todayClock?.extra_deliveries ? String(todayClock.extra_deliveries) : "",
+  );
+  const [extraReason, setExtraReason] = React.useState<string>(
+    todayClock?.extra_delivery_reason ?? "",
+  );
 
   const today = todayISO();
   const isDriver = employee.position === "Driver";
@@ -169,6 +175,10 @@ export function CrewClockApp({
       toast.error("Enter your delivery count before clocking out.");
       return;
     }
+    if (isDriver && Number(extraDeliveries) > 0 && !extraReason.trim()) {
+      toast.error("Please give a reason for the extra deliveries.");
+      return;
+    }
     setBusy(true);
     try {
       await clockOut({
@@ -176,6 +186,8 @@ export function CrewClockApp({
         longitude: geo.lng,
         accuracy: geo.accuracy,
         deliveries_count: isDriver ? Number(deliveries) : null,
+        extra_deliveries: isDriver ? Number(extraDeliveries) || 0 : null,
+        extra_delivery_reason: isDriver ? extraReason.trim() || null : null,
       });
       toast.success("Clocked out. Thanks!");
       router.refresh();
@@ -188,9 +200,17 @@ export function CrewClockApp({
 
   async function saveLiveDeliveries() {
     if (!deliveries.trim()) return;
+    if (Number(extraDeliveries) > 0 && !extraReason.trim()) {
+      toast.error("Please give a reason for the extra deliveries.");
+      return;
+    }
     setBusy(true);
     try {
-      await updateDeliveryCount({ count: Number(deliveries) });
+      await updateDeliveryCount({
+        count: Number(deliveries),
+        extra_deliveries: Number(extraDeliveries) || 0,
+        extra_delivery_reason: extraReason.trim() || null,
+      });
       toast.success("Live delivery count updated.");
       router.refresh();
     } catch (err) {
@@ -291,14 +311,33 @@ export function CrewClockApp({
               <div className="flex flex-col gap-3">
                 {/* Drivers enter deliveries before clocking out */}
                 {phase === "out" && isDriver && (
-                  <Input
-                    type="number"
-                    min="0"
-                    label="Deliveries today *"
-                    value={deliveries}
-                    onChange={(e) => setDeliveries(e.target.value)}
-                    placeholder="0"
-                  />
+                  <>
+                    <Input
+                      type="number"
+                      min="0"
+                      label="Deliveries today *"
+                      value={deliveries}
+                      onChange={(e) => setDeliveries(e.target.value)}
+                      placeholder="0"
+                    />
+                    <Input
+                      type="number"
+                      min="0"
+                      label="Extra deliveries (beyond your normal round)"
+                      value={extraDeliveries}
+                      onChange={(e) => setExtraDeliveries(e.target.value)}
+                      placeholder="0"
+                    />
+                    {Number(extraDeliveries) > 0 && (
+                      <Input
+                        label="Reason for extra deliveries *"
+                        value={extraReason}
+                        onChange={(e) => setExtraReason(e.target.value)}
+                        placeholder="e.g. covered a second area after a no-show"
+                        maxLength={200}
+                      />
+                    )}
+                  </>
                 )}
 
                 <Button
@@ -345,10 +384,28 @@ export function CrewClockApp({
                     onChange={(e) => setDeliveries(e.target.value)}
                     containerClassName="flex-1"
                   />
+                  <Input
+                    type="number"
+                    min="0"
+                    label="Extra"
+                    value={extraDeliveries}
+                    onChange={(e) => setExtraDeliveries(e.target.value)}
+                    containerClassName="w-24"
+                  />
                   <Button onClick={saveLiveDeliveries} loading={busy}>
                     Update
                   </Button>
                 </div>
+                {Number(extraDeliveries) > 0 && (
+                  <Input
+                    label="Reason for extra deliveries *"
+                    value={extraReason}
+                    onChange={(e) => setExtraReason(e.target.value)}
+                    placeholder="e.g. covered a second area after a no-show"
+                    maxLength={200}
+                    containerClassName="mt-2"
+                  />
+                )}
               </div>
             )}
           </div>

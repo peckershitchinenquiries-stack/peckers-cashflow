@@ -1,18 +1,25 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { upsertWeeklyDelivery } from "@/app/actions/rota";
-import type { Employee, WeeklyDelivery } from "@/lib/types";
+import { setClockDeliveries } from "@/app/actions/clock";
+import { formatDDMMYYYY } from "@/lib/utils";
+import type { ClockEvent, Employee, WeeklyDelivery } from "@/lib/types";
 
 type Props = {
   driver: Employee;
   storeId: string;
   weekStartIso: string;
   existing: WeeklyDelivery | null;
+  /** ISO dates (Mon–Sun) of the displayed week. */
+  weekDays?: string[];
+  /** The driver's clock events for the displayed week. */
+  events?: ClockEvent[];
   onClose: () => void;
   onSaved: () => void;
 };
@@ -22,10 +29,13 @@ export function DeliveryEditModal({
   storeId,
   weekStartIso,
   existing,
+  weekDays = [],
+  events = [],
   onClose,
   onSaved,
 }: Props) {
   const toast = useToast();
+  const router = useRouter();
   const [avg, setAvg] = React.useState(
     existing?.manager_avg_4wk?.toString() ?? "",
   );
@@ -35,6 +45,52 @@ export function DeliveryEditModal({
   const [notes, setNotes] = React.useState(existing?.notes ?? "");
   const [reason, setReason] = React.useState(existing?.reason ?? "");
   const [busy, setBusy] = React.useState(false);
+
+  // Per-day clocked deliveries (editable by manager/admin).
+  const [dayEdits, setDayEdits] = React.useState<
+    Record<string, { count: string; extra: string; reason: string }>
+  >(() => {
+    const init: Record<string, { count: string; extra: string; reason: string }> = {};
+    for (const d of weekDays) {
+      const ev = events.find((e) => e.event_date === d);
+      init[d] = {
+        count: ev?.deliveries_count != null ? String(ev.deliveries_count) : "",
+        extra: ev?.extra_deliveries ? String(ev.extra_deliveries) : "",
+        reason: ev?.extra_delivery_reason ?? "",
+      };
+    }
+    return init;
+  });
+  const [savingDay, setSavingDay] = React.useState<string | null>(null);
+
+  function setDay(date: string, patch: Partial<{ count: string; extra: string; reason: string }>) {
+    setDayEdits((prev) => ({ ...prev, [date]: { ...prev[date], ...patch } }));
+  }
+
+  async function saveDay(date: string) {
+    const edit = dayEdits[date];
+    if (!edit) return;
+    if (Number(edit.extra) > 0 && !edit.reason.trim()) {
+      toast.error("Reason required for extra deliveries.");
+      return;
+    }
+    setSavingDay(date);
+    try {
+      await setClockDeliveries({
+        employee_id: driver.id,
+        event_date: date,
+        deliveries_count: Number(edit.count) || 0,
+        extra_deliveries: Number(edit.extra) || 0,
+        extra_delivery_reason: edit.reason.trim() || null,
+      });
+      toast.success(`Saved ${formatDDMMYYYY(date)}`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setSavingDay(null);
+    }
+  }
 
   const needsReason =
     Number(avg) > 0 &&
@@ -115,6 +171,65 @@ export function DeliveryEditModal({
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
         />
+
+        {weekDays.length > 0 && (
+          <div className="border-t border-border pt-4">
+            <p className="text-sm font-medium text-text-primary">Clocked deliveries (per day)</p>
+            <p className="text-xs text-text-muted mb-3">
+              Drivers normally enter these at clock-out. You can correct the count or
+              log extra deliveries (with a reason) here.
+            </p>
+            <div className="flex flex-col gap-3">
+              {weekDays.map((d) => {
+                const edit = dayEdits[d];
+                const showReason = Number(edit?.extra) > 0;
+                return (
+                  <div key={d} className="rounded-lg border border-border p-3">
+                    <div className="flex items-end gap-2 flex-wrap">
+                      <span className="text-xs text-text-muted w-20 shrink-0">
+                        {formatDDMMYYYY(d)}
+                      </span>
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Deliveries"
+                        value={edit?.count ?? ""}
+                        onChange={(e) => setDay(d, { count: e.target.value })}
+                        containerClassName="w-24"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Extra"
+                        value={edit?.extra ?? ""}
+                        onChange={(e) => setDay(d, { extra: e.target.value })}
+                        containerClassName="w-20"
+                      />
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => saveDay(d)}
+                        loading={savingDay === d}
+                      >
+                        Save
+                      </Button>
+                    </div>
+                    {showReason && (
+                      <Input
+                        label="Reason for extra *"
+                        value={edit?.reason ?? ""}
+                        onChange={(e) => setDay(d, { reason: e.target.value })}
+                        placeholder="e.g. covered a second area"
+                        maxLength={200}
+                        containerClassName="mt-2"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </Modal>
   );

@@ -16,10 +16,17 @@ const PORTAL_TAG: Record<Portal, string> = {
   employee: "Crew",
 };
 
-export function Sidebar({ portal }: { portal: Portal }) {
+export function Sidebar({ portal, userName }: { portal: Portal; userName?: string | null }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
   const items = NAV_FOR_PORTAL[portal];
+  const initials = (userName ?? "")
+    .split(" ")
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   return (
     <aside
@@ -82,9 +89,28 @@ export function Sidebar({ portal }: { portal: Portal }) {
         })}
       </nav>
 
+      {/* Signed-in user */}
+      {userName && (
+        <div
+          className={cn(
+            "px-3 pt-3 flex items-center gap-2",
+            collapsed ? "justify-center" : "justify-start",
+          )}
+        >
+          <span className="h-8 w-8 shrink-0 rounded-full bg-gold/15 text-gold border border-gold/30 flex items-center justify-center text-xs font-semibold">
+            {initials || "•"}
+          </span>
+          {!collapsed && (
+            <span className="text-sm font-medium text-text-primary truncate" title={userName}>
+              {userName}
+            </span>
+          )}
+        </div>
+      )}
+
       <div
         className={cn(
-          "p-3 border-t border-border flex items-center gap-2",
+          "p-3 border-t border-border mt-2 flex items-center gap-2",
           collapsed ? "justify-center" : "justify-between",
         )}
       >

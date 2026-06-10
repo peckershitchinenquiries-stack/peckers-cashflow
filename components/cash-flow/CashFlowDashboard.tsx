@@ -70,16 +70,23 @@ export function CashFlowDashboard({
                 {v.payoutStatus === "confirmed" && <Badge variant="success">Wages paid</Badge>}
                 {v.payoutStatus === "draft" && <Badge variant="gold">Payout in progress</Badge>}
               </div>
-              <div className="flex items-center gap-2 text-sm">
-                <Link href={`${basePath}/daily?week=${weekStart}`} className="text-gold hover:underline">
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                <Link
+                  href={`${basePath}/daily?week=${weekStart}`}
+                  className="btn-base outline-none bg-gold text-black hover:bg-gold-300 h-9 px-3 text-sm"
+                >
                   Daily entries
                 </Link>
-                <span className="text-text-muted">·</span>
-                <Link href={`${basePath}/payout?week=${weekStart}&store=${v.store.id}`} className="text-gold hover:underline">
+                <Link
+                  href={`${basePath}/payout?week=${weekStart}&store=${v.store.id}`}
+                  className="btn-base outline-none bg-surface text-text-primary border border-border hover:bg-surface-hover h-9 px-3 text-sm"
+                >
                   Saturday payout
                 </Link>
-                <span className="text-text-muted">·</span>
-                <Link href={`${basePath}/history`} className="text-gold hover:underline">
+                <Link
+                  href={`${basePath}/history`}
+                  className="btn-base outline-none bg-surface text-text-primary border border-border hover:bg-surface-hover h-9 px-3 text-sm"
+                >
                   History
                 </Link>
               </div>
@@ -100,7 +107,7 @@ export function CashFlowDashboard({
               )}
 
               {/* Stat tiles */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Stat label="Running cash balance" value={formatGBP(v.runningBalance)} tone="gold" />
                 <Stat
                   label="Saturday wage forecast"
@@ -111,11 +118,6 @@ export function CashFlowDashboard({
                   label="Post Office draw"
                   value={formatGBP(draw)}
                   tone={draw > 0.001 ? "bad" : "good"}
-                />
-                <Stat
-                  label="Days with discrepancies"
-                  value={String(v.discrepancyDays)}
-                  tone={v.discrepancyDays > 0 ? "bad" : "good"}
                 />
               </div>
 

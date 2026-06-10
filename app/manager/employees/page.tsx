@@ -62,6 +62,7 @@ export default async function ManagerEmployeesPage() {
         defaultStoreId={storeId || null}
         minWageBands={settings.min_wage_bands}
         lockToStore
+        canManualLog={false}
       />
     </>
   );

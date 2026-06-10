@@ -5,58 +5,47 @@ import {
   endOfISOWeek,
   formatDDMMYYYY,
   startOfISOWeek,
-  todayISO,
   toISODate,
 } from "@/lib/utils";
+import { buildDashboardViews } from "@/lib/cash-flow-data";
 import { SummaryCards } from "@/components/dashboard/SummaryCards";
-import { QuickEntryForm } from "@/components/dashboard/QuickEntryForm";
 import { RecentEntriesTable } from "@/components/dashboard/RecentEntriesTable";
 
 export const dynamic = "force-dynamic";
 
-async function loadDashboardData(userId: string) {
+type RecentRow = {
+  id: string;
+  entry_date: string;
+  vita_mojo_sales: number;
+  supermarket_expenses: number;
+  difference: number;
+  is_late: boolean;
+  stores: { name: string | null } | null;
+};
+
+async function loadDashboardData() {
   const supabase = createServerSupabase();
-  const today = todayISO();
+  const yesterday = toISODate(addDays(new Date(), -1));
   const weekStart = toISODate(startOfISOWeek(new Date()));
   const weekEnd = toISODate(endOfISOWeek(new Date()));
   const sevenDaysAgo = toISODate(addDays(new Date(), -6));
 
-  const [
-    todayEntryRes,
-    todayTotalsRes,
-    weekEntriesRes,
-    weekHoursRes,
-    recentRes,
-    allowedRes,
-    alertsRes,
-  ] = await Promise.all([
+  const { data: stores } = await supabase.from("stores").select("id, name").order("name");
+
+  const [views, yesterdayRes, recentRes, alertsRes] = await Promise.all([
+    buildDashboardViews(stores ?? [], weekStart),
     supabase
-      .from("cash_entries")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("entry_date", today)
-      .maybeSingle(),
+      .from("daily_cash_entries")
+      .select("vita_mojo_sales, supermarket_expenses")
+      .eq("entry_date", yesterday),
     supabase
-      .from("cash_entries")
-      .select("cash_sales, supermarket_expenses")
-      .eq("entry_date", today),
-    supabase
-      .from("cash_entries")
-      .select("cash_sales, supermarket_expenses, entry_date")
-      .gte("entry_date", weekStart)
-      .lte("entry_date", weekEnd),
-    supabase
-      .from("employee_hours_computed")
-      .select("cash_amount_due, week_start_date")
-      .eq("week_start_date", weekStart),
-    supabase
-      .from("cash_entries")
-      .select("id, entry_date, cash_sales, supermarket_expenses, notes, user_id, user_email, created_at")
+      .from("daily_cash_entries")
+      .select("id, entry_date, vita_mojo_sales, supermarket_expenses, difference, is_late, stores(name)")
       .gte("entry_date", sevenDaysAgo)
+      .lte("entry_date", weekEnd)
       .order("entry_date", { ascending: false })
       .order("created_at", { ascending: false })
       .limit(50),
-    supabase.from("allowed_users").select("email, name"),
     supabase
       .from("alerts")
       .select("*")
@@ -65,48 +54,56 @@ async function loadDashboardData(userId: string) {
       .limit(5),
   ]);
 
-  const allowedMap = new Map<string, string | null>();
-  for (const u of allowedRes.data ?? []) {
-    allowedMap.set(u.email.toLowerCase(), u.name ?? null);
-  }
+  // Remaining cash in hand = sum of each store's running balance this week.
+  const remainingCash = views.reduce((s, v) => s + v.runningBalance, 0);
+  // This week's cash = total Vita Mojo cash sales across stores this week.
+  const weekCash = views.reduce(
+    (s, v) => s + v.rows.reduce((t, r) => t + Number(r.vita_mojo_sales || 0), 0),
+    0,
+  );
+
+  const yesterdaySales = (yesterdayRes.data ?? []).reduce(
+    (s, r) => s + Number(r.vita_mojo_sales || 0),
+    0,
+  );
+  const yesterdayExp = (yesterdayRes.data ?? []).reduce(
+    (s, r) => s + Number(r.supermarket_expenses || 0),
+    0,
+  );
+
+  const recent = ((recentRes.data ?? []) as unknown as RecentRow[]).map((r) => ({
+    id: r.id,
+    entry_date: r.entry_date,
+    store_name: r.stores?.name ?? null,
+    vita_mojo_sales: Number(r.vita_mojo_sales || 0),
+    supermarket_expenses: Number(r.supermarket_expenses || 0),
+    difference: Number(r.difference || 0),
+    is_late: !!r.is_late,
+  }));
 
   return {
-    todayEntry: todayEntryRes.data ?? null,
-    todayTotals: todayTotalsRes.data ?? [],
-    weekEntries: weekEntriesRes.data ?? [],
-    weekHours: weekHoursRes.data ?? [],
-    recent: recentRes.data ?? [],
-    allowedMap,
+    yesterday,
+    yesterdaySales,
+    yesterdayExp,
+    remainingCash,
+    weekCash,
+    recent,
     openAlerts: alertsRes.data ?? [],
   };
 }
 
 export default async function DashboardPage() {
   const user = await requireUser();
-  const data = await loadDashboardData(user.id);
+  const data = await loadDashboardData();
 
-  const todaySales = data.todayTotals.reduce((s, r) => s + Number(r.cash_sales || 0), 0);
-  const todayExp = data.todayTotals.reduce((s, r) => s + Number(r.supermarket_expenses || 0), 0);
-  const todayNet = todaySales - todayExp;
-
-  const weekSales = data.weekEntries.reduce((s, r) => s + Number(r.cash_sales || 0), 0);
-  const weekExp = data.weekEntries.reduce((s, r) => s + Number(r.supermarket_expenses || 0), 0);
-  const weekEmpCash = data.weekHours.reduce((s, r) => s + Number(r.cash_amount_due || 0), 0);
-  const weekNet = weekSales - weekExp - weekEmpCash;
-
-  const recentRows = data.recent.map((r) => ({
-    ...r,
-    manager_name:
-      (r.user_email && data.allowedMap.get(r.user_email.toLowerCase())) ||
-      r.user_email ||
-      "—",
-  }));
+  // Short "12/06" label for yesterday.
+  const yLabel = formatDDMMYYYY(data.yesterday).slice(0, 5);
 
   return (
     <>
       <PageHeader
         title={`Hello, ${user.allowed?.name?.split(" ")[0] || "there"}`}
-        description={`Today is ${formatDDMMYYYY(new Date())}. Here's your cash flow at a glance.`}
+        description={`Today is ${formatDDMMYYYY(new Date())}. Yesterday's figures (${formatDDMMYYYY(data.yesterday)}) and this week's cash at a glance.`}
       />
 
       {data.openAlerts.length > 0 && (
@@ -125,19 +122,15 @@ export default async function DashboardPage() {
       )}
 
       <SummaryCards
-        todaySales={todaySales}
-        todayExp={todayExp}
-        todayNet={todayNet}
-        weekNet={weekNet}
+        yesterdaySales={data.yesterdaySales}
+        yesterdayExp={data.yesterdayExp}
+        remainingCash={data.remainingCash}
+        weekCash={data.weekCash}
+        yesterdayLabel={yLabel}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 mt-6">
-        <div className="lg:col-span-2">
-          <QuickEntryForm existing={data.todayEntry} today={todayISO()} />
-        </div>
-        <div className="lg:col-span-3">
-          <RecentEntriesTable rows={recentRows} currentUserId={user.id} />
-        </div>
+      <div className="mt-6">
+        <RecentEntriesTable rows={data.recent} />
       </div>
     </>
   );

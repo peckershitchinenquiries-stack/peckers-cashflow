@@ -22,6 +22,8 @@ import {
   todayISO,
   weekLabel,
   parseISODate,
+  startOfISOWeek,
+  toISODate,
 } from "@/lib/utils";
 import type { DailyCashEntry } from "@/lib/types";
 
@@ -53,7 +55,6 @@ export function DailyCashView({
 
   const [storeId, setStoreId] = React.useState<string>(defaultStoreId);
   const weekEndDate = new Date(parseISODate(weekStart).getTime() + 6 * 86400000);
-  const weekEndISO = `${weekEndDate.getFullYear()}-${String(weekEndDate.getMonth() + 1).padStart(2, "0")}-${String(weekEndDate.getDate()).padStart(2, "0")}`;
   const weekEnd = formatDDMMYYYY(weekEndDate);
 
   const inWeek = (iso: string) => {
@@ -67,8 +68,19 @@ export function DailyCashView({
   const [date, setDate] = React.useState<string>(defaultDate);
   const [vita, setVita] = React.useState("");
   const [envelope, setEnvelope] = React.useState("");
+  const [supermarket, setSupermarket] = React.useState("");
   const [reason, setReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+
+  // The date picker is a full calendar. If a date outside the loaded week is
+  // chosen, jump to that week so its entries (and any existing row) load.
+  function onDateChange(next: string) {
+    setDate(next);
+    if (next && !inWeek(next)) {
+      const wk = toISODate(startOfISOWeek(parseISODate(next)));
+      router.push(`${basePath}/daily?week=${wk}`);
+    }
+  }
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   const storeEntries = React.useMemo(
@@ -86,10 +98,14 @@ export function DailyCashView({
     if (existing) {
       setVita(String(existing.vita_mojo_sales));
       setEnvelope(String(existing.envelope_amount));
+      setSupermarket(
+        existing.supermarket_expenses ? String(existing.supermarket_expenses) : "",
+      );
       setReason(existing.reason ?? "");
     } else {
       setVita("");
       setEnvelope("");
+      setSupermarket("");
       setReason("");
     }
   }, [existing]);
@@ -116,6 +132,7 @@ export function DailyCashView({
         entry_date: date,
         vita_mojo_sales: vitaNum,
         envelope_amount: envNum,
+        supermarket_expenses: Number(supermarket) || 0,
         reason: reason.trim() || null,
       });
       toast.success(
@@ -209,9 +226,7 @@ export function DailyCashView({
               type="date"
               label="Date"
               value={date}
-              min={weekStart}
-              max={weekEndISO}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(e) => onDateChange(e.target.value)}
               required
             />
             <Input
@@ -235,6 +250,17 @@ export function DailyCashView({
               placeholder="0.00"
               value={envelope}
               onChange={(e) => setEnvelope(e.target.value)}
+            />
+            <Input
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0"
+              label="Supermarket expenses"
+              prefix="£"
+              placeholder="0.00"
+              value={supermarket}
+              onChange={(e) => setSupermarket(e.target.value)}
             />
 
             <div className="rounded-xl bg-bg border border-border px-4 py-3 flex items-center justify-between">

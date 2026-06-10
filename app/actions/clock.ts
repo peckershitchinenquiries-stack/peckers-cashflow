@@ -145,6 +145,8 @@ export async function clockOut(input: {
   longitude: number;
   accuracy?: number | null;
   deliveries_count?: number | null;
+  extra_deliveries?: number | null;
+  extra_delivery_reason?: string | null;
 }) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
@@ -179,6 +181,13 @@ export async function clockOut(input: {
   if (isDriver && (input.deliveries_count == null || Number.isNaN(input.deliveries_count))) {
     throw new Error("Drivers must enter the number of deliveries before clocking out.");
   }
+  if (
+    isDriver &&
+    Number(input.extra_deliveries) > 0 &&
+    !input.extra_delivery_reason?.trim()
+  ) {
+    throw new Error("Please give a reason for the extra deliveries.");
+  }
 
   const now = new Date().toISOString();
   const payload: Record<string, unknown> = {
@@ -186,7 +195,12 @@ export async function clockOut(input: {
     clock_out_lat: input.latitude,
     clock_out_lng: input.longitude,
   };
-  if (isDriver) payload.deliveries_count = Number(input.deliveries_count);
+  if (isDriver) {
+    payload.deliveries_count = Number(input.deliveries_count);
+    const extra = Math.max(0, Number(input.extra_deliveries) || 0);
+    payload.extra_deliveries = extra;
+    payload.extra_delivery_reason = extra > 0 ? input.extra_delivery_reason?.trim() || null : null;
+  }
 
   const { error } = await supabase
     .from("clock_events")
@@ -214,7 +228,11 @@ export async function clockOut(input: {
   return { ok: true };
 }
 
-export async function updateDeliveryCount(input: { count: number }) {
+export async function updateDeliveryCount(input: {
+  count: number;
+  extra_deliveries?: number | null;
+  extra_delivery_reason?: string | null;
+}) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
 
@@ -222,6 +240,11 @@ export async function updateDeliveryCount(input: { count: number }) {
   if (!employee) throw new Error("Your account is not linked to a crew profile.");
   if (employee.position !== "Driver") {
     throw new Error("Only drivers can update deliveries.");
+  }
+
+  const extra = Math.max(0, Number(input.extra_deliveries) || 0);
+  if (extra > 0 && !input.extra_delivery_reason?.trim()) {
+    throw new Error("Please give a reason for the extra deliveries.");
   }
 
   const today = todayISO();
@@ -235,7 +258,11 @@ export async function updateDeliveryCount(input: { count: number }) {
 
   const { error } = await supabase
     .from("clock_events")
-    .update({ deliveries_count: Number(input.count) })
+    .update({
+      deliveries_count: Number(input.count),
+      extra_deliveries: extra,
+      extra_delivery_reason: extra > 0 ? input.extra_delivery_reason!.trim() : null,
+    })
     .eq("id", existing.id);
   if (error) throw new Error(error.message);
 
@@ -243,12 +270,88 @@ export async function updateDeliveryCount(input: { count: number }) {
     action: "update_deliveries",
     entity: "clock_event",
     entity_id: existing.id,
-    changes: { count: input.count },
+    changes: { count: input.count, extra },
   });
 
   revalidatePath("/employee/attendance");
   revalidatePath("/live");
   revalidatePath("/manager/live");
   revalidatePath("/rota");
+  return { ok: true };
+}
+
+/**
+ * Staff (manager/admin) edit of a driver's clocked deliveries for a given day.
+ * Drivers usually enter these themselves at clock-out; managers and admins can
+ * correct the count or log extra deliveries (with a reason) after the fact.
+ */
+export async function setClockDeliveries(input: {
+  employee_id: string;
+  event_date: string;
+  deliveries_count: number;
+  extra_deliveries?: number | null;
+  extra_delivery_reason?: string | null;
+}) {
+  const user = await requireAllowed();
+  if (user.allowed!.role !== "admin" && user.allowed!.role !== "manager") {
+    throw new Error("Only managers and admins can edit clocked deliveries.");
+  }
+  const supabase = createServerSupabase();
+
+  // Managers are limited to their own store's drivers.
+  const { data: employee } = await supabase
+    .from("employees")
+    .select("id, store_id")
+    .eq("id", input.employee_id)
+    .maybeSingle();
+  if (!employee) throw new Error("Employee not found.");
+  if (user.allowed!.role === "manager" && employee.store_id !== user.allowed!.store_id) {
+    throw new Error("You can only edit drivers at your own store.");
+  }
+
+  const count = Math.max(0, Number(input.deliveries_count) || 0);
+  const extra = Math.max(0, Number(input.extra_deliveries) || 0);
+  if (extra > 0 && !input.extra_delivery_reason?.trim()) {
+    throw new Error("Please give a reason for the extra deliveries.");
+  }
+
+  const { data: existing } = await supabase
+    .from("clock_events")
+    .select("id")
+    .eq("employee_id", input.employee_id)
+    .eq("event_date", input.event_date)
+    .maybeSingle();
+
+  const fields = {
+    deliveries_count: count,
+    extra_deliveries: extra,
+    extra_delivery_reason: extra > 0 ? input.extra_delivery_reason!.trim() : null,
+  };
+
+  if (existing) {
+    const { error } = await supabase.from("clock_events").update(fields).eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    if (!employee.store_id) throw new Error("Driver has no store assigned.");
+    const { error } = await supabase.from("clock_events").insert({
+      employee_id: input.employee_id,
+      store_id: employee.store_id,
+      event_date: input.event_date,
+      ...fields,
+    });
+    if (error) throw new Error(error.message);
+  }
+
+  await writeAudit({
+    action: "staff_edit_deliveries",
+    entity: "clock_event",
+    entity_id: existing?.id ?? input.employee_id,
+    changes: { event_date: input.event_date, ...fields, by: user.email },
+  });
+
+  revalidatePath("/rota");
+  revalidatePath("/manager/rota");
+  revalidatePath("/live");
+  revalidatePath("/manager/live");
   return { ok: true };
 }

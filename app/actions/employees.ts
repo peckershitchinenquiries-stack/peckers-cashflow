@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
+import { addDays, parseISODate, toISODate } from "@/lib/utils";
 import type { EmployeeHoursComputed, EmployeePosition, EmploymentStatus } from "@/lib/types";
 
 async function requireAllowed() {
@@ -216,6 +217,10 @@ export async function logEmployeeHours(input: {
     hourly_rate_snapshot: rate,
     notes: input.notes?.trim() || null,
     logged_by: user.id,
+    source: "manual" as const,
+    approved: true,
+    approved_by: user.id,
+    approved_at: new Date().toISOString(),
   };
 
   if (existing) {
@@ -238,6 +243,99 @@ export async function logEmployeeHours(input: {
 
   // Fetch the fresh computed rows so the client can update state immediately
   // without waiting for the router cache to clear.
+  const { data: freshHours } = await supabase
+    .from("employee_hours_computed")
+    .select("*")
+    .order("week_start_date", { ascending: false })
+    .limit(500);
+
+  revalidatePath("/employees");
+  revalidatePath("/manager/employees");
+  revalidatePath("/analytics");
+  return { ok: true, hours: (freshHours ?? []) as EmployeeHoursComputed[] };
+}
+
+/**
+ * Approve the hours an employee actually clocked for a week. The clocked total
+ * is recomputed server-side from clock_events (not trusted from the client),
+ * then persisted as an employee_hours row stamped approved + source 'clocked'.
+ * This replaces manual weekly-hours logging for managers.
+ */
+export async function approveClockedHours(input: {
+  employee_id: string;
+  week_start_date: string;
+}) {
+  const user = await requireAllowed();
+  const supabase = createServerSupabase();
+
+  if (!input.employee_id) throw new Error("Select an employee");
+  if (!input.week_start_date) throw new Error("Week start date required");
+
+  const { data: emp, error: empErr } = await supabase
+    .from("employees")
+    .select("hourly_rate, hourly_ni_rate")
+    .eq("id", input.employee_id)
+    .maybeSingle();
+  if (empErr || !emp) throw new Error("Employee not found");
+  const rate = Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0);
+
+  // Recompute the week's clocked total from completed clock sessions.
+  const weekEnd = toISODate(addDays(parseISODate(input.week_start_date), 6));
+  const { data: events } = await supabase
+    .from("clock_events")
+    .select("clock_in_at, clock_out_at")
+    .eq("employee_id", input.employee_id)
+    .gte("event_date", input.week_start_date)
+    .lte("event_date", weekEnd)
+    .not("clock_out_at", "is", null);
+
+  const clockedHours = (events ?? []).reduce((sum, ev) => {
+    if (!ev.clock_in_at || !ev.clock_out_at) return sum;
+    const ms = new Date(ev.clock_out_at).getTime() - new Date(ev.clock_in_at).getTime();
+    return sum + Math.max(0, ms) / 3_600_000;
+  }, 0);
+  const totalHours = Math.round(clockedHours * 100) / 100;
+  if (totalHours <= 0) {
+    throw new Error("No completed clock-in/out sessions to approve for this week.");
+  }
+
+  const { data: existing } = await supabase
+    .from("employee_hours")
+    .select("id")
+    .eq("employee_id", input.employee_id)
+    .eq("week_start_date", input.week_start_date)
+    .maybeSingle();
+
+  const payload = {
+    employee_id: input.employee_id,
+    week_start_date: input.week_start_date,
+    total_hours_worked: totalHours,
+    hourly_rate_snapshot: rate,
+    logged_by: user.id,
+    source: "clocked" as const,
+    approved: true,
+    approved_by: user.id,
+    approved_at: new Date().toISOString(),
+  };
+
+  if (existing) {
+    const { error } = await supabase
+      .from("employee_hours")
+      .update(payload)
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("employee_hours").insert(payload);
+    if (error) throw new Error(error.message);
+  }
+
+  await writeAudit({
+    action: "approve_hours",
+    entity: "employee_hours",
+    entity_id: existing?.id ?? input.employee_id,
+    changes: payload,
+  });
+
   const { data: freshHours } = await supabase
     .from("employee_hours_computed")
     .select("*")

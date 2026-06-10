@@ -26,6 +26,11 @@ type Props = {
   minWageBands?: MinWageBands;
   /** Manager portal: lock everything to a single store, hide cross-store UI. */
   lockToStore?: boolean;
+  /**
+   * Whether the manual weekly-hours log form is shown. Managers approve clocked
+   * hours instead of logging them, so this is false in the manager portal.
+   */
+  canManualLog?: boolean;
 };
 
 export function EmployeesView({
@@ -36,6 +41,7 @@ export function EmployeesView({
   defaultStoreId,
   minWageBands,
   lockToStore = false,
+  canManualLog = true,
 }: Props) {
   const router = useRouter();
   const [showAdd, setShowAdd] = React.useState(false);
@@ -147,25 +153,27 @@ export function EmployeesView({
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Log Weekly Hours</CardTitle>
-          <CardDescription>
-            Quick log for a single employee/week. The rota tab handles per-day
-            scheduling.
-          </CardDescription>
-        </CardHeader>
-        <LogHoursForm
-          employees={employees.filter((e) => e.employment_status === "active")}
-          onLogged={handleLogged}
-        />
-      </Card>
+      {canManualLog && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Log Weekly Hours (admin correction)</CardTitle>
+            <CardDescription>
+              Manual override for a single employee/week. Managers approve clocked
+              hours instead — see the table below.
+            </CardDescription>
+          </CardHeader>
+          <LogHoursForm
+            employees={employees.filter((e) => e.employment_status === "active")}
+            onLogged={handleLogged}
+          />
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>Hours History</CardTitle>
+          <CardTitle>Hours &amp; Approvals</CardTitle>
           <CardDescription>
-            Manual logs and auto-calculated hours from clock-in/out events.
+            Approve the hours each employee clocked. Approved hours feed payroll.
           </CardDescription>
         </CardHeader>
         <HoursTable
@@ -173,6 +181,7 @@ export function EmployeesView({
           rows={hours}
           clockSummaries={clockSummaries}
           onDeleted={handleDeleted}
+          onApproved={handleLogged}
         />
       </Card>
 

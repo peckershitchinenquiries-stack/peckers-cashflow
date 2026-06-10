@@ -126,6 +126,58 @@ export async function createManagerAccount(input: {
 }
 
 /**
+ * Create an ADMIN login account in one step. There are a few owners who each
+ * get their own admin credential; they all share the same single admin panel
+ * and data — only the display name differs (shown in the sidebar). Creates the
+ * auth user with the given email + a generated password, then whitelists it as
+ * an admin. Returns the credentials to hand over.
+ */
+export async function createAdminAccount(input: {
+  name: string;
+  email: string;
+}): Promise<{ ok: true; email: string; password: string; loginUrl: string }> {
+  await requireAdmin();
+  if (!input.name?.trim()) throw new Error("Name is required");
+  const email = input.email.trim().toLowerCase();
+  if (!email || !email.includes("@")) throw new Error("A valid email is required");
+
+  const admin = createAdminClient();
+  const password = generatePassword(12);
+
+  const { data: created, error: authErr } = await admin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+    user_metadata: { name: input.name.trim(), role: "admin" },
+  });
+  if (authErr || !created?.user) {
+    throw new Error(authErr?.message || "Failed to create login account");
+  }
+
+  const { error: rowErr } = await admin.from("allowed_users").insert({
+    email,
+    name: input.name.trim(),
+    role: "admin",
+    store_id: null,
+    must_change_password: true,
+  });
+  if (rowErr) {
+    await admin.auth.admin.deleteUser(created.user.id);
+    throw new Error(rowErr.message);
+  }
+
+  await writeAudit({
+    action: "create_admin_account",
+    entity: "allowed_user",
+    entity_id: created.user.id,
+    changes: { email, name: input.name.trim() },
+  });
+
+  revalidatePath("/settings");
+  return { ok: true, email, password, loginUrl: "/login" };
+}
+
+/**
  * Create an EMPLOYEE record AND its login account in one step.
  * Builds the HR profile (employees row) and a username/password login.
  */

@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { PlusIcon, TrashIcon } from "@/components/ui/icons";
-import { addAllowedUser, removeAllowedUser } from "@/app/actions/admin";
+import { removeAllowedUser } from "@/app/actions/admin";
+import { createAdminAccount } from "@/app/actions/accounts";
 import type { AllowedUser } from "@/lib/types";
 
 /**
@@ -31,17 +32,20 @@ export function AllowedUsersAdmin({
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [removingId, setRemovingId] = React.useState<string | null>(null);
+  const [created, setCreated] = React.useState<{ email: string; password: string } | null>(null);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!name.trim()) return setError("Name is required");
     if (!email.trim()) return setError("Email is required");
     setBusy(true);
     try {
-      await addAllowedUser({ email, name: name || null, role: "admin" });
+      const res = await createAdminAccount({ name: name.trim(), email: email.trim() });
+      setCreated({ email: res.email, password: res.password });
       setEmail("");
       setName("");
-      toast.success("Admin added to allow-list");
+      toast.success("Admin login created");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
@@ -73,32 +77,48 @@ export function AllowedUsersAdmin({
       <CardHeader>
         <CardTitle>Admin Users</CardTitle>
         <CardDescription>
-          Admins sign in with a real email. First create the auth user in Supabase
-          Authentication, then whitelist the email here. (Managers &amp; crew are
-          created on their own pages.)
+          Each owner gets their own admin login here — one shared admin panel and
+          the same data for all; only the name (shown in the sidebar) differs. A
+          login is created instantly with a generated password. (Managers &amp;
+          crew are created on their own pages.)
         </CardDescription>
       </CardHeader>
+
+      {created && (
+        <div className="mb-6 rounded-xl border border-gold/30 bg-gold/10 px-4 py-3">
+          <p className="text-sm font-medium text-gold">New admin login created</p>
+          <p className="text-sm text-text-primary mt-1">
+            Email: <span className="font-mono">{created.email}</span>
+          </p>
+          <p className="text-sm text-text-primary">
+            Temporary password: <span className="font-mono">{created.password}</span>
+          </p>
+          <p className="text-xs text-text-muted mt-1">
+            Share these now — the password isn&apos;t shown again. They sign in at /login.
+          </p>
+        </div>
+      )}
 
       <form
         onSubmit={add}
         className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end mb-6"
       >
         <Input
+          label="Name"
+          placeholder="Owner's full name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <Input
           type="email"
           label="Email"
-          placeholder="person@example.com"
+          placeholder="owner@example.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           error={error}
         />
-        <Input
-          label="Name"
-          placeholder="Full name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
         <Button type="submit" loading={busy} iconLeft={<PlusIcon size={16} />}>
-          Add admin
+          Create admin login
         </Button>
       </form>
 

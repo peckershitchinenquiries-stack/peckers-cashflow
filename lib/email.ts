@@ -35,6 +35,49 @@ export function isEmailConfigured(): boolean {
 }
 
 /**
+ * Send a single plain email via Resend. Best-effort — never throws; returns
+ * {sent:false, reason} when not configured / no recipients / API error.
+ */
+export async function sendEmail(input: {
+  recipients: string[];
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<EmailResult> {
+  try {
+    const apiKey = process.env.RESEND_API_KEY;
+    const from =
+      process.env.ALERT_EMAIL_FROM ||
+      "Peckers Alerts <alerts@peckers-app.co.uk>";
+    if (!apiKey) return { sent: false, reason: "RESEND_API_KEY not set" };
+    const to = Array.from(new Set(input.recipients.filter(Boolean)));
+    if (to.length === 0) return { sent: false, reason: "no recipients" };
+
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from,
+        to,
+        subject: input.subject,
+        html: input.html,
+        text: input.text ?? input.subject,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { sent: false, reason: `Resend ${res.status}: ${body.slice(0, 200)}` };
+    }
+    return { sent: true };
+  } catch (err) {
+    return { sent: false, reason: err instanceof Error ? err.message : "email error" };
+  }
+}
+
+/**
  * Send one digest email summarising new alerts. Returns {sent:false, reason}
  * (never throws) when not configured, no recipients, or the API rejects it.
  */

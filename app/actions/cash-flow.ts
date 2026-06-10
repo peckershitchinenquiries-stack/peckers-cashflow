@@ -46,6 +46,7 @@ export async function upsertDailyCashEntry(input: {
   entry_date: string;
   vita_mojo_sales: number;
   envelope_amount: number;
+  supermarket_expenses?: number | null;
   reason?: string | null;
 }) {
   const user = await requireStaff();
@@ -63,6 +64,7 @@ export async function upsertDailyCashEntry(input: {
 
   const vita = Number(input.vita_mojo_sales);
   const envelope = Number(input.envelope_amount);
+  const supermarketExpenses = Math.max(0, Number(input.supermarket_expenses) || 0);
   if (isNaN(vita) || input.vita_mojo_sales === ("" as unknown as number))
     throw new Error("Vita Mojo cash sales figure is required");
   if (isNaN(envelope) || input.envelope_amount === ("" as unknown as number))
@@ -93,6 +95,7 @@ export async function upsertDailyCashEntry(input: {
       .update({
         vita_mojo_sales: vita,
         envelope_amount: envelope,
+        supermarket_expenses: supermarketExpenses,
         reason: Math.abs(difference) > 0.001 ? reason : null,
         is_late: isLate,
         edited_by_name: submitterName,
@@ -114,6 +117,7 @@ export async function upsertDailyCashEntry(input: {
         entry_date: input.entry_date,
         vita_mojo_sales: vita,
         envelope_amount: envelope,
+        supermarket_expenses: supermarketExpenses,
         reason: Math.abs(difference) > 0.001 ? reason : null,
         is_late: isLate,
         submitted_by: user.id,

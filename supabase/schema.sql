@@ -91,6 +91,12 @@ create table if not exists public.employee_hours (
   hourly_rate_snapshot   numeric(8,2) not null,
   notes                  text,
   logged_by              uuid references auth.users(id) on delete set null,
+  -- Manager approval of clocked hours (see migration 002).
+  approved               boolean not null default false,
+  approved_by            uuid references auth.users(id) on delete set null,
+  approved_at            timestamptz,
+  source                 text not null default 'manual'
+                           check (source in ('manual', 'clocked')),
   created_at             timestamptz not null default now()
 );
 
@@ -102,8 +108,10 @@ create index if not exists employee_hours_week_idx on public.employee_hours (wee
 -- =============================================================
 -- VIEW: employee_hours_computed
 -- Adds bank_hours, cash_hours, cash_amount_due.
+-- (Dropped first so re-runs can change the column set/order.)
 -- =============================================================
-create or replace view public.employee_hours_computed as
+drop view if exists public.employee_hours_computed;
+create view public.employee_hours_computed as
 select
   eh.id,
   eh.employee_id,
@@ -118,6 +126,9 @@ select
   eh.hourly_rate_snapshot,
   eh.notes,
   eh.logged_by,
+  eh.approved,
+  eh.approved_at,
+  eh.source,
   eh.created_at
 from public.employee_hours eh
 join public.employees e on e.id = eh.employee_id;
@@ -432,6 +443,9 @@ create table if not exists public.clock_events (
   clock_out_lat       numeric(10,7),
   clock_out_lng       numeric(10,7),
   deliveries_count    integer,
+  -- Deliveries beyond the normal round, with a reason (see migration 003).
+  extra_deliveries      integer not null default 0,
+  extra_delivery_reason text,
   created_at          timestamptz not null default now()
 );
 
@@ -821,6 +835,9 @@ create table if not exists public.daily_cash_entries (
   entry_date         date not null,
   vita_mojo_sales    numeric(10,2) not null,
   envelope_amount    numeric(10,2) not null,
+  -- Cash spent on supermarket / supplies for the day (informational; not part
+  -- of the Vita-vs-envelope reconciliation difference).
+  supermarket_expenses numeric(10,2) not null default 0,
   -- Positive = shortfall (Vita > envelope); negative = surplus.
   difference         numeric(10,2) generated always as (vita_mojo_sales - envelope_amount) stored,
   reason             text,

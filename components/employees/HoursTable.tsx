@@ -6,9 +6,14 @@ import { Input, Select } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
-import { TrashIcon, ClockIcon } from "@/components/ui/icons";
-import { deleteEmployeeHours } from "@/app/actions/employees";
-import type { ClockWeeklySummary, Employee, EmployeeHoursComputed } from "@/lib/types";
+import { TrashIcon, ClockIcon, CheckIcon } from "@/components/ui/icons";
+import { deleteEmployeeHours, approveClockedHours } from "@/app/actions/employees";
+import type {
+  ClockWeeklySummary,
+  Employee,
+  EmployeeHoursComputed,
+  EmployeeHoursSource,
+} from "@/lib/types";
 import { formatDDMMYYYY, formatINR } from "@/lib/utils";
 
 // One row = one employee + one week.
@@ -26,6 +31,8 @@ type MergedRow = {
     cash_hours: number;
     cash_amount: number;
     logged_at: string;
+    approved: boolean;
+    source: EmployeeHoursSource;
   } | null;
   // Weekly total from clock-in/out events (sum of all sessions that week)
   clocked: {
@@ -55,6 +62,8 @@ function buildMergedRows(
         cash_hours: Number(r.cash_hours),
         cash_amount: Number(r.cash_amount_due),
         logged_at: r.created_at,
+        approved: !!r.approved,
+        source: r.source,
       },
       clocked: null,
     });
@@ -96,17 +105,33 @@ export function HoursTable({
   rows,
   clockSummaries = [],
   onDeleted,
+  onApproved,
 }: {
   employees: Employee[];
   rows: EmployeeHoursComputed[];
   clockSummaries?: ClockWeeklySummary[];
   onDeleted: (deletedId: string) => void;
+  onApproved?: (freshHours: EmployeeHoursComputed[]) => void;
 }) {
   const toast = useToast();
   const [filterEmp, setFilterEmp] = React.useState<string>("");
   const [from, setFrom] = React.useState<string>("");
   const [to, setTo] = React.useState<string>("");
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
+  const [approvingKey, setApprovingKey] = React.useState<string | null>(null);
+
+  async function handleApprove(employee_id: string, week_start_date: string, key: string) {
+    setApprovingKey(key);
+    try {
+      const res = await approveClockedHours({ employee_id, week_start_date });
+      toast.success("Clocked hours approved");
+      onApproved?.(res.hours);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to approve");
+    } finally {
+      setApprovingKey(null);
+    }
+  }
 
   const allMerged = React.useMemo(
     () => buildMergedRows(rows, clockSummaries),
@@ -145,8 +170,9 @@ export function HoursTable({
     <div className="flex flex-col gap-4">
       {/* Legend */}
       <p className="text-xs text-text-muted">
-        <span className="font-medium text-text-primary">Entered</span> = manager logs weekly hours manually.{" "}
-        <span className="font-medium text-text-primary">Clocked</span> = sum of all daily clock-in/out sessions for that week (auto-calculated).
+        <span className="font-medium text-text-primary">Clocked</span> = sum of all daily clock-in/out sessions for that week.{" "}
+        Managers <span className="font-medium text-text-primary">approve</span> clocked hours to confirm them for payroll.{" "}
+        <span className="font-medium text-text-primary">Entered</span> = an admin manual correction.
       </p>
 
       {/* Filters */}
@@ -202,6 +228,7 @@ export function HoursTable({
                 <th className="px-3 py-2 font-medium text-right">Cash hrs</th>
                 <th className="px-3 py-2 font-medium text-right">Cash £</th>
                 <th className="px-3 py-2 font-medium text-right">Logged</th>
+                <th className="px-3 py-2 font-medium text-center">Status</th>
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
@@ -290,6 +317,28 @@ export function HoursTable({
                         ? formatDDMMYYYY(r.manual.logged_at)
                         : <span className="text-text-muted">—</span>}
                     </td>
+
+                    {/* Approval status */}
+                    <td className="px-3 py-3 text-center whitespace-nowrap">
+                      {r.manual?.approved ? (
+                        <Badge variant="success">
+                          <CheckIcon size={12} />
+                          {r.manual.source === "clocked" ? "Approved" : "Logged"}
+                        </Badge>
+                      ) : r.clocked ? (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => handleApprove(r.employee_id, r.week_start_date, r.key)}
+                          loading={approvingKey === r.key}
+                        >
+                          Approve {r.clocked.total_hours.toFixed(1)}h
+                        </Button>
+                      ) : (
+                        <span className="text-text-muted">—</span>
+                      )}
+                    </td>
+
                     <td className="px-3 py-3 text-right">
                       {r.manual ? (
                         <Button

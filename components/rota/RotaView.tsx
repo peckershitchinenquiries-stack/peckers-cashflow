@@ -72,10 +72,13 @@ export function RotaView({
     employee: Employee;
     date: string;
     existing: RotaShift | null;
+    prefill: { start: string; end: string } | null;
   } | null>(null);
   const [editingDelivery, setEditingDelivery] = React.useState<{
     driver: Employee;
     existing: WeeklyDelivery | null;
+    weekDays: string[];
+    events: ClockEvent[];
   } | null>(null);
 
   const isSuperAdmin = userRole === "admin";
@@ -126,6 +129,18 @@ export function RotaView({
       if (c.deliveries_count == null) continue;
       if (!weekSet.has(c.event_date)) continue;
       m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + Number(c.deliveries_count));
+    }
+    return m;
+  }, [clocks, weekDays]);
+
+  // Extra deliveries (beyond the normal round) summed per driver for the week.
+  const liveExtraByEmp = React.useMemo(() => {
+    const weekSet = new Set(weekDays.map((d) => toISODate(d)));
+    const m = new Map<string, number>();
+    for (const c of clocks) {
+      if (!c.extra_deliveries) continue;
+      if (!weekSet.has(c.event_date)) continue;
+      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + Number(c.extra_deliveries));
     }
     return m;
   }, [clocks, weekDays]);
@@ -349,6 +364,7 @@ export function RotaView({
                 const wage = wageComplianceForEmployee(emp, minWageBands);
                 const underMinWage = wage ? !wage.compliant : false;
                 const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
+                const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
 
                 return (
                   <tr
@@ -393,6 +409,17 @@ export function RotaView({
                         !cell && tmpl && tmpl.is_working && tmpl.start_time
                           ? `${tmpl.start_time.slice(0, 5)}–${(tmpl.end_time ?? "").slice(0, 5)}`
                           : null;
+                      // Previous day's shift — used to pre-fill a new shift.
+                      const prevShift = shiftByKey.get(
+                        `${emp.id}:${toISODate(addDays(d, -1))}`,
+                      );
+                      const prefill =
+                        !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
+                          ? {
+                              start: prevShift.start_time.slice(0, 5),
+                              end: (prevShift.end_time ?? "").slice(0, 5),
+                            }
+                          : null;
                       return (
                         <td
                           key={dateIso}
@@ -407,6 +434,7 @@ export function RotaView({
                                 employee: emp,
                                 date: dateIso,
                                 existing: cell ?? null,
+                                prefill,
                               })
                             }
                             className={
@@ -454,6 +482,14 @@ export function RotaView({
                     })}
                     <td className="px-2 py-2 text-right font-medium">
                       {total.toFixed(1)}h
+                      {total > 20 && (
+                        <span
+                          className="block text-[10px] font-normal text-text-muted"
+                          title="First 20h are paid on NI/PAYE; hours above 20 are paid in cash."
+                        >
+                          20 NI + {(total - 20).toFixed(1)} cash
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-right text-text-subtle">
                       <span className={flagVariance ? "text-warning" : ""}>
@@ -467,15 +503,14 @@ export function RotaView({
                       </span>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <div
-                        className="font-medium text-text-primary group relative inline-block cursor-help"
-                        title={`NI: ${formatGBP(wages.ni)}  ·  Cash: ${formatGBP(wages.cash)}`}
-                      >
+                      <div className="font-medium text-text-primary">
                         {formatGBP(wages.total)}
-                        <span className="hidden group-hover:flex absolute right-0 top-full mt-1 z-20 flex-col gap-1 bg-surface border border-border rounded-lg p-2 shadow-xl text-xs text-text-subtle whitespace-nowrap">
-                          <span>NI: {formatGBP(wages.ni)}</span>
-                          <span>Cash: {formatGBP(wages.cash)}</span>
-                        </span>
+                      </div>
+                      <div className="text-[10px] text-text-muted leading-tight mt-0.5">
+                        <span>NI {formatGBP(wages.ni)}</span>
+                        {wages.cash > 0 && (
+                          <span className="block text-success">Cash {formatGBP(wages.cash)}</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-2 py-2 text-center text-xs">
@@ -485,6 +520,12 @@ export function RotaView({
                             setEditingDelivery({
                               driver: emp,
                               existing: delivery ?? null,
+                              weekDays: weekDays.map((d) => toISODate(d)),
+                              events: clocks.filter(
+                                (c) =>
+                                  c.employee_id === emp.id &&
+                                  weekDays.some((d) => toISODate(d) === c.event_date),
+                              ),
                             })
                           }
                           className="text-text-subtle hover:text-text-primary underline-offset-2 hover:underline"
@@ -502,6 +543,9 @@ export function RotaView({
                             title="Deliveries logged via clock-out this week"
                           >
                             Live {liveDeliv}
+                            {liveExtra > 0 && (
+                              <span className="text-gold"> (+{liveExtra} extra)</span>
+                            )}
                           </span>
                         </button>
                       ) : (
@@ -523,6 +567,7 @@ export function RotaView({
           storeId={activeStoreId}
           shiftDate={editingShift.date}
           existing={editingShift.existing}
+          prefill={editingShift.prefill}
           onClose={() => setEditingShift(null)}
           onSaved={() => {
             setEditingShift(null);
@@ -537,6 +582,8 @@ export function RotaView({
           storeId={activeStoreId}
           weekStartIso={toISODate(weekStart)}
           existing={editingDelivery.existing}
+          weekDays={editingDelivery.weekDays}
+          events={editingDelivery.events}
           onClose={() => setEditingDelivery(null)}
           onSaved={() => {
             setEditingDelivery(null);
