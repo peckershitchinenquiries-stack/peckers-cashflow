@@ -7,9 +7,13 @@ import {
 } from "@/components/ui/icons";
 
 type Props = {
-  yesterdaySales: number;
-  yesterdayExp: number;
+  /** Yesterday's cash sales (Vita Mojo) for the selected store. */
+  cashSale: number;
+  /** Yesterday's supermarket expenses for the selected store. */
+  expenses: number;
+  /** Yesterday's cash sale − expenses. */
   remainingCash: number;
+  /** This week's cash sales up to (and including) yesterday — never today. */
   weekCash: number;
   /** Short label for yesterday, e.g. "12/06". */
   yesterdayLabel: string;
@@ -68,8 +72,8 @@ function StatCard({
 }
 
 export function SummaryCards({
-  yesterdaySales,
-  yesterdayExp,
+  cashSale,
+  expenses,
   remainingCash,
   weekCash,
   yesterdayLabel,
@@ -77,24 +81,24 @@ export function SummaryCards({
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
       <StatCard
-        label={`Sales · ${yesterdayLabel}`}
-        value={formatGBP(yesterdaySales)}
+        label={`Cash Sale · ${yesterdayLabel}`}
+        value={formatGBP(cashSale)}
         icon={<ShoppingBagIcon size={18} />}
         tone="gold"
       />
       <StatCard
         label={`Expenses · ${yesterdayLabel}`}
-        value={formatGBP(yesterdayExp)}
+        value={formatGBP(expenses)}
         icon={<WalletIcon size={18} />}
       />
       <StatCard
-        label="Remaining Cash"
+        label={`Remaining Cash · ${yesterdayLabel}`}
         value={formatGBP(remainingCash)}
         icon={<WalletIcon size={18} />}
-        tone="gold"
+        tone={remainingCash >= 0 ? "gold" : "danger"}
       />
       <StatCard
-        label="This Week's Cash"
+        label={`Week's Cash (to ${yesterdayLabel})`}
         value={formatGBP(weekCash)}
         icon={<TrendUpIcon size={18} />}
         tone="success"

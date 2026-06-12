@@ -46,11 +46,11 @@ export function DeliveryEditModal({
   const [reason, setReason] = React.useState(existing?.reason ?? "");
   const [busy, setBusy] = React.useState(false);
 
-  // Per-day clocked deliveries (editable by manager/admin).
-  const [dayEdits, setDayEdits] = React.useState<
-    Record<string, { count: string; extra: string; reason: string }>
-  >(() => {
-    const init: Record<string, { count: string; extra: string; reason: string }> = {};
+  // Per-day clocked deliveries (editable by manager/admin). All edits are
+  // persisted together by the single Save button at the bottom of the modal.
+  type DayEdit = { count: string; extra: string; reason: string };
+  const initialDayEdits = React.useMemo(() => {
+    const init: Record<string, DayEdit> = {};
     for (const d of weekDays) {
       const ev = events.find((e) => e.event_date === d);
       init[d] = {
@@ -60,36 +60,19 @@ export function DeliveryEditModal({
       };
     }
     return init;
-  });
-  const [savingDay, setSavingDay] = React.useState<string | null>(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [dayEdits, setDayEdits] = React.useState<Record<string, DayEdit>>(initialDayEdits);
 
-  function setDay(date: string, patch: Partial<{ count: string; extra: string; reason: string }>) {
+  function setDay(date: string, patch: Partial<DayEdit>) {
     setDayEdits((prev) => ({ ...prev, [date]: { ...prev[date], ...patch } }));
   }
 
-  async function saveDay(date: string) {
-    const edit = dayEdits[date];
-    if (!edit) return;
-    if (Number(edit.extra) > 0 && !edit.reason.trim()) {
-      toast.error("Reason required for extra deliveries.");
-      return;
-    }
-    setSavingDay(date);
-    try {
-      await setClockDeliveries({
-        employee_id: driver.id,
-        event_date: date,
-        deliveries_count: Number(edit.count) || 0,
-        extra_deliveries: Number(edit.extra) || 0,
-        extra_delivery_reason: edit.reason.trim() || null,
-      });
-      toast.success(`Saved ${formatDDMMYYYY(date)}`);
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
-    } finally {
-      setSavingDay(null);
-    }
+  function dayChanged(date: string): boolean {
+    const a = dayEdits[date];
+    const b = initialDayEdits[date];
+    if (!a || !b) return false;
+    return a.count !== b.count || a.extra !== b.extra || a.reason !== b.reason;
   }
 
   const needsReason =
@@ -102,6 +85,14 @@ export function DeliveryEditModal({
       toast.error("Reason required when live count exceeds Vita Mojo.");
       return;
     }
+    const changedDays = weekDays.filter(dayChanged);
+    for (const d of changedDays) {
+      const edit = dayEdits[d];
+      if (Number(edit.extra) > 0 && !edit.reason.trim()) {
+        toast.error(`Reason required for the extra deliveries on ${formatDDMMYYYY(d)}.`);
+        return;
+      }
+    }
     setBusy(true);
     try {
       await upsertWeeklyDelivery({
@@ -113,6 +104,18 @@ export function DeliveryEditModal({
         notes: notes || null,
         reason: reason || null,
       });
+      // Persist every edited day's clocked deliveries in the same save.
+      for (const d of changedDays) {
+        const edit = dayEdits[d];
+        await setClockDeliveries({
+          employee_id: driver.id,
+          event_date: d,
+          deliveries_count: Number(edit.count) || 0,
+          extra_deliveries: Number(edit.extra) || 0,
+          extra_delivery_reason: edit.reason.trim() || null,
+        });
+      }
+      router.refresh();
       onSaved();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -177,7 +180,8 @@ export function DeliveryEditModal({
             <p className="text-sm font-medium text-text-primary">Clocked deliveries (per day)</p>
             <p className="text-xs text-text-muted mb-3">
               Drivers normally enter these at clock-out. You can correct the count or
-              log extra deliveries (with a reason) here.
+              log extra deliveries (with a reason) — everything is saved together by
+              the Save button below.
             </p>
             <div className="flex flex-col gap-3">
               {weekDays.map((d) => {
@@ -188,6 +192,7 @@ export function DeliveryEditModal({
                     <div className="flex items-end gap-2 flex-wrap">
                       <span className="text-xs text-text-muted w-20 shrink-0">
                         {formatDDMMYYYY(d)}
+                        {dayChanged(d) && <span className="block text-gold">edited</span>}
                       </span>
                       <Input
                         type="number"
@@ -205,14 +210,6 @@ export function DeliveryEditModal({
                         onChange={(e) => setDay(d, { extra: e.target.value })}
                         containerClassName="w-20"
                       />
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => saveDay(d)}
-                        loading={savingDay === d}
-                      >
-                        Save
-                      </Button>
                     </div>
                     {showReason && (
                       <Input

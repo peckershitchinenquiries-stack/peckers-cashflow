@@ -10,18 +10,25 @@ type Row = {
   id: string;
   entry_date: string;
   store_name: string | null;
+  manager_name: string | null;
   vita_mojo_sales: number;
   supermarket_expenses: number;
   difference: number;
   is_late: boolean;
 };
 
-export function RecentEntriesTable({ rows }: { rows: Row[] }) {
+export function RecentEntriesTable({
+  rows,
+  storeName,
+}: {
+  rows: Row[];
+  storeName?: string;
+}) {
   return (
     <Card className="h-full">
       <CardHeader>
         <CardTitle>Recent Entries</CardTitle>
-        <CardDescription>Last 7 days · all stores</CardDescription>
+        <CardDescription>Last 7 days{storeName ? ` · ${storeName}` : ""}</CardDescription>
       </CardHeader>
 
       {rows.length === 0 ? (
@@ -36,7 +43,7 @@ export function RecentEntriesTable({ rows }: { rows: Row[] }) {
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-text-muted">
                 <th className="px-3 py-2 font-medium">Date</th>
-                <th className="px-3 py-2 font-medium">Store</th>
+                <th className="px-3 py-2 font-medium">Manager</th>
                 <th className="px-3 py-2 font-medium text-right">Sales</th>
                 <th className="px-3 py-2 font-medium text-right">Expenses</th>
                 <th className="px-3 py-2 font-medium text-right">Diff</th>
@@ -60,8 +67,8 @@ export function RecentEntriesTable({ rows }: { rows: Row[] }) {
                         </Badge>
                       )}
                     </td>
-                    <td className="px-3 py-3 truncate max-w-[140px]">
-                      {r.store_name || "—"}
+                    <td className="px-3 py-3 truncate max-w-[160px]" title={r.store_name ?? undefined}>
+                      {r.manager_name || "—"}
                     </td>
                     <td className="px-3 py-3 text-right tabular-nums">
                       {formatGBP(r.vita_mojo_sales)}

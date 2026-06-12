@@ -17,8 +17,9 @@ alter table public.employee_hours
 -- Surface the new columns through the computed view.
 -- NOTE: `create or replace view` cannot insert columns in the middle of the
 -- existing column list, so we drop and recreate it.
+-- security_invoker: respect the caller's RLS (see migration 004).
 drop view if exists public.employee_hours_computed;
-create view public.employee_hours_computed as
+create view public.employee_hours_computed with (security_invoker = true) as
 select
   eh.id,
   eh.employee_id,

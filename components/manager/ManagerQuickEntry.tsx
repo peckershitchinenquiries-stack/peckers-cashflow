@@ -30,27 +30,42 @@ export function ManagerQuickEntry({
   const router = useRouter();
   const toast = useToast();
 
+  const initialExp = existing
+    ? Math.max(
+        0,
+        Math.round(
+          (Number(existing.vita_mojo_sales) - Number(existing.supermarket_expenses || 0)) * 100,
+        ) / 100,
+      )
+    : 0;
   const [vita, setVita] = React.useState(existing ? String(existing.vita_mojo_sales) : "");
+  const [supermarket, setSupermarket] = React.useState(
+    existing?.supermarket_expenses ? String(existing.supermarket_expenses) : "",
+  );
   const [envelope, setEnvelope] = React.useState(
     existing ? String(existing.envelope_amount) : "",
   );
-  const [supermarket, setSupermarket] = React.useState(
-    existing?.supermarket_expenses ? String(existing.supermarket_expenses) : "",
+  const [envelopeTouched, setEnvelopeTouched] = React.useState(
+    existing ? Math.abs(Number(existing.envelope_amount) - initialExp) > 0.001 : false,
   );
   const [reason, setReason] = React.useState(existing?.reason ?? "");
   const [busy, setBusy] = React.useState(false);
 
-  const difference = Math.round(((Number(vita) || 0) - (Number(envelope) || 0)) * 100) / 100;
-  const hasDiff = Math.abs(difference) > 0.001;
+  const vitaNum = Number(vita) || 0;
+  const superNum = Number(supermarket) || 0;
+  // The envelope is expected to equal sales − supermarket expenses.
+  const expectedEnvelope = Math.max(0, Math.round((vitaNum - superNum) * 100) / 100);
+  const envNum = envelopeTouched ? Number(envelope) || 0 : expectedEnvelope;
+  const overridden = envelopeTouched && Math.abs(envNum - expectedEnvelope) > 0.001;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (vita === "" || envelope === "") {
-      toast.error("Vita Mojo figure and envelope amount are both required.");
+    if (vita === "") {
+      toast.error("Vita Mojo cash sales is required.");
       return;
     }
-    if (hasDiff && !reason.trim()) {
-      toast.error("A reason is required when there is a difference.");
+    if (overridden && !reason.trim()) {
+      toast.error("Give a reason — the envelope differs from sales − supermarket expenses.");
       return;
     }
     setBusy(true);
@@ -58,10 +73,10 @@ export function ManagerQuickEntry({
       await upsertDailyCashEntry({
         store_id: storeId,
         entry_date: today,
-        vita_mojo_sales: Number(vita) || 0,
-        envelope_amount: Number(envelope) || 0,
-        supermarket_expenses: Number(supermarket) || 0,
-        reason: reason.trim() || null,
+        vita_mojo_sales: vitaNum,
+        envelope_amount: envNum,
+        supermarket_expenses: superNum,
+        reason: overridden ? reason.trim() || null : null,
       });
       toast.success(existing ? "Today's entry updated" : "Today's entry saved");
       router.refresh();
@@ -105,46 +120,51 @@ export function ManagerQuickEntry({
             inputMode="decimal"
             step="0.01"
             min="0"
-            label="Envelope *"
+            label="Supermarket expenses"
             prefix="£"
             placeholder="0.00"
-            value={envelope}
-            onChange={(e) => setEnvelope(e.target.value)}
+            value={supermarket}
+            onChange={(e) => setSupermarket(e.target.value)}
           />
         </div>
-        <Input
-          type="number"
-          inputMode="decimal"
-          step="0.01"
-          min="0"
-          label="Supermarket expenses"
-          prefix="£"
-          placeholder="0.00"
-          value={supermarket}
-          onChange={(e) => setSupermarket(e.target.value)}
-        />
-
-        <div className="rounded-xl bg-bg border border-border px-4 py-2.5 flex items-center justify-between">
-          <span className="text-sm text-text-muted">
-            Difference {difference > 0 ? "(shortfall)" : difference < 0 ? "(surplus)" : ""}
-          </span>
-          <span
-            className={
-              !hasDiff
-                ? "font-semibold text-success"
-                : difference > 0
-                  ? "font-semibold text-danger"
-                  : "font-semibold text-warning"
-            }
-          >
-            {formatGBP(difference)}
-          </span>
+        <div>
+          <Input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            label="Cash in envelope"
+            prefix="£"
+            placeholder="0.00"
+            value={envelopeTouched ? envelope : String(expectedEnvelope.toFixed(2))}
+            onChange={(e) => {
+              setEnvelopeTouched(true);
+              setEnvelope(e.target.value);
+            }}
+          />
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="text-[11px] text-text-muted">
+              Auto = sales − supermarket = {formatGBP(expectedEnvelope)}
+            </span>
+            {envelopeTouched && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEnvelopeTouched(false);
+                  setReason("");
+                }}
+                className="text-[11px] text-gold hover:underline"
+              >
+                Reset to auto
+              </button>
+            )}
+          </div>
         </div>
 
-        {hasDiff && (
+        {overridden && (
           <Input
-            label="Reason for difference *"
-            placeholder="e.g. Supermarket run – £29 used for supplies"
+            label="Reason for overriding the envelope *"
+            placeholder="e.g. £10 float left in till overnight"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             maxLength={200}

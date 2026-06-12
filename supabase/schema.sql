@@ -109,9 +109,11 @@ create index if not exists employee_hours_week_idx on public.employee_hours (wee
 -- VIEW: employee_hours_computed
 -- Adds bank_hours, cash_hours, cash_amount_due.
 -- (Dropped first so re-runs can change the column set/order.)
+-- security_invoker: the view must respect the CALLER's RLS — owner-rights
+-- views bypass employee_hours/employees policies for every authenticated user.
 -- =============================================================
 drop view if exists public.employee_hours_computed;
-create view public.employee_hours_computed as
+create view public.employee_hours_computed with (security_invoker = true) as
 select
   eh.id,
   eh.employee_id,
@@ -529,7 +531,8 @@ create index if not exists audit_log_created_idx on public.audit_log (created_at
 -- For each employee + week_start, total scheduled hrs, total wages (NI + cash),
 -- 4-week rolling average hours from prior weeks.
 -- =============================================================
-create or replace view public.employee_weekly_summary as
+drop view if exists public.employee_weekly_summary;
+create view public.employee_weekly_summary with (security_invoker = true) as
 with weekly_rota as (
   select
     rs.employee_id,
@@ -849,9 +852,13 @@ create table if not exists public.daily_cash_entries (
   edited_at          timestamptz,
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
-  -- Reason is required whenever there is any difference.
+  -- The envelope is expected to equal sales − supermarket expenses; a reason is
+  -- only required when it's overridden to a different figure (see migration 005).
   constraint daily_cash_entries_reason_required
-    check (vita_mojo_sales = envelope_amount or (reason is not null and length(btrim(reason)) > 0))
+    check (
+      envelope_amount = vita_mojo_sales - supermarket_expenses
+      or (reason is not null and length(btrim(reason)) > 0)
+    )
 );
 
 -- One entry per store per day (the app upserts; no duplicate days).
@@ -864,6 +871,36 @@ drop trigger if exists set_daily_cash_entries_updated_at on public.daily_cash_en
 create trigger set_daily_cash_entries_updated_at
   before update on public.daily_cash_entries
   for each row execute function public.set_updated_at();
+
+-- Date-window guard (see migration 004): entries only for today or the past
+-- 2 days (admins may back-date), never the future; is_late is server-derived.
+create or replace function public.enforce_daily_cash_entry_window()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  today date := (now() at time zone 'Europe/London')::date;
+begin
+  if auth.jwt() is null or (auth.jwt() ->> 'role') = 'service_role' then
+    return new;
+  end if;
+  if new.entry_date > today then
+    raise exception 'Cash entries cannot be dated in the future.';
+  end if;
+  if not public.is_admin(auth.jwt() ->> 'email') and new.entry_date < today - 2 then
+    raise exception 'Cash entries can only be added for today or the past 2 days.';
+  end if;
+  new.is_late := new.entry_date < today;
+  return new;
+end;
+$$;
+
+drop trigger if exists daily_cash_entries_date_window on public.daily_cash_entries;
+create trigger daily_cash_entries_date_window
+  before insert or update on public.daily_cash_entries
+  for each row execute function public.enforce_daily_cash_entry_window();
 
 -- =============================================================
 -- TABLE: cash_payouts

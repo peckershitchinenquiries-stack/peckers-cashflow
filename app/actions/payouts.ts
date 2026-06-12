@@ -11,6 +11,7 @@ import {
   aggregateWorked,
   buildPrePaymentSummary,
   buildWageLines,
+  payWeekOf,
 } from "@/lib/cash-flow";
 import type {
   CashPayoutWithLines,
@@ -84,39 +85,53 @@ async function loadOpeningBalance(
   return Number(data?.surplus_carry_forward ?? 0) || 0;
 }
 
-/** Compute the live pre-payment summary for a store + week from current data. */
+/**
+ * Compute the live pre-payment summary for a store + week from current data.
+ *
+ * Pay structure (confirmed with the client): wages paid on this week's Saturday
+ * are for the PREVIOUS week's work (Mon–Sun). So the wage lines (hours +
+ * deliveries) come from LAST week, while the cash available to pay them comes
+ * from the envelopes collected since the last payout — previous Sunday through
+ * this payday Saturday. (The payout is confirmed and locked on Saturday, so the
+ * cash window must END on Saturday; Sunday's envelope rolls into next week's
+ * window instead of being lost after the lock.)
+ */
 async function computeSummary(
   supabase: SupabaseClient,
   storeId: string,
   weekStartISO: string,
 ): Promise<PrePaymentSummary> {
-  const weekStart = weekStartISO;
-  const weekEnd = toISODate(addDays(parseISODate(weekStartISO), 6));
+  // Cash window: previous Sunday → payday Saturday (complete at confirm time).
+  const cashStart = toISODate(addDays(parseISODate(weekStartISO), -1));
+  const cashEnd = toISODate(addDays(parseISODate(weekStartISO), 5));
+  // The week being PAID: the previous Monday–Sunday.
+  const payWeek = payWeekOf(weekStartISO);
 
   const [entriesRes, employeesRes, clocksRes, shiftsRes, settingsRes] = await Promise.all([
     supabase
       .from("daily_cash_entries")
       .select("*")
       .eq("store_id", storeId)
-      .gte("entry_date", weekStart)
-      .lte("entry_date", weekEnd),
+      .gte("entry_date", cashStart)
+      .lte("entry_date", cashEnd),
+    // Leavers stay included — wages are a week in arrears, so someone marked
+    // "left" is still owed for the pay week they worked.
     supabase
       .from("employees")
       .select("*")
-      .eq("store_id", storeId)
-      .neq("employment_status", "left"),
+      .eq("store_id", storeId),
     supabase
       .from("clock_events")
-      .select("employee_id, clock_in_at, clock_out_at, deliveries_count")
+      .select("employee_id, clock_in_at, clock_out_at, deliveries_count, extra_deliveries")
       .eq("store_id", storeId)
-      .gte("event_date", weekStart)
-      .lte("event_date", weekEnd),
+      .gte("event_date", payWeek.start)
+      .lte("event_date", payWeek.end),
     supabase
       .from("rota_shifts")
       .select("employee_id, is_day_off, scheduled_hours")
       .eq("store_id", storeId)
-      .gte("shift_date", weekStart)
-      .lte("shift_date", weekEnd),
+      .gte("shift_date", payWeek.start)
+      .lte("shift_date", payWeek.end),
     supabase.from("app_settings").select("key, value"),
   ]);
 
@@ -328,7 +343,7 @@ export async function confirmPayout(input: { payout_id: string }): Promise<{ ok:
 
   const { data: lines } = await supabase
     .from("cash_payout_lines")
-    .select("id, is_paid")
+    .select("id, is_paid, employee_id, total_payment")
     .eq("payout_id", input.payout_id);
   if (!lines || lines.length === 0) throw new Error("No wage lines to confirm.");
   const unpaid = lines.filter((l) => !l.is_paid).length;
@@ -338,6 +353,22 @@ export async function confirmPayout(input: { payout_id: string }): Promise<{ ok:
 
   // Finalise the financial snapshot from live data.
   const summary = await computeSummary(supabase, payout.store_id, payout.week_start_date);
+
+  // The locked header must match the lines that were actually ticked as paid.
+  // If pay-week data changed after the sheet was generated (hours approved,
+  // deliveries edited), force a regenerate (which preserves paid flags) so the
+  // snapshot and the carried-forward surplus reflect what was really paid out.
+  const storedByEmp = new Map(lines.map((l) => [l.employee_id, Number(l.total_payment)]));
+  const drift =
+    summary.lines.length !== storedByEmp.size ||
+    summary.lines.some(
+      (l) => Math.abs((storedByEmp.get(l.employee_id) ?? Number.NaN) - l.total_payment) > 0.005,
+    );
+  if (drift) {
+    throw new Error(
+      "Wage data for the pay week changed after this sheet was generated. Regenerate the payout sheet, re-check the payments, then confirm.",
+    );
+  }
 
   const { error } = await supabase
     .from("cash_payouts")

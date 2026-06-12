@@ -332,6 +332,9 @@ export function RotaView({
                   </th>
                 ))}
                 <th className="text-right px-2 py-2">Total hrs</th>
+                <th className="text-right px-2 py-2" title="Hours above 20/week are paid in cash">
+                  Cash hrs
+                </th>
                 <th className="text-right px-2 py-2">4-wk avg</th>
                 <th className="text-right px-3 py-2 group relative">
                   Wages
@@ -344,7 +347,7 @@ export function RotaView({
               {storeEmployees.length === 0 && (
                 <tr>
                   <td
-                    colSpan={13}
+                    colSpan={16}
                     className="px-4 py-8 text-center text-text-muted"
                   >
                     No active employees assigned to this store. Add staff in
@@ -482,13 +485,14 @@ export function RotaView({
                     })}
                     <td className="px-2 py-2 text-right font-medium">
                       {total.toFixed(1)}h
-                      {total > 20 && (
-                        <span
-                          className="block text-[10px] font-normal text-text-muted"
-                          title="First 20h are paid on NI/PAYE; hours above 20 are paid in cash."
-                        >
-                          20 NI + {(total - 20).toFixed(1)} cash
+                    </td>
+                    <td className="px-2 py-2 text-right">
+                      {total > 20 ? (
+                        <span className="font-medium text-gold">
+                          {(total - 20).toFixed(1)}h
                         </span>
+                      ) : (
+                        <span className="text-text-muted">—</span>
                       )}
                     </td>
                     <td className="px-2 py-2 text-right text-text-subtle">

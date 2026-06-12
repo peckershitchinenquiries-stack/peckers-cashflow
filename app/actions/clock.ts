@@ -2,9 +2,27 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { createAdminClient } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
-import { haversineMeters, isWithinGeofence, todayISO } from "@/lib/utils";
+import { haversineMeters, isWithinGeofence, shiftHours, todayISO } from "@/lib/utils";
+
+/** Marker note for shifts the system created from a clock-in (no rota entry). */
+const AUTO_SHIFT_NOTE = "Auto-created from clock-in";
+
+/**
+ * HH:MM in UK wall-clock time. Shift times are stored as plain time-of-day, so
+ * they must be derived in Europe/London — the server may run in UTC, which is
+ * an hour behind UK time during BST.
+ */
+function londonHHMM(d: Date): string {
+  return d.toLocaleTimeString("en-GB", {
+    timeZone: "Europe/London",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+}
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -85,7 +103,7 @@ export async function clockIn(input: {
   // shift simply gets attached so the Live board can compare planned vs actual.
   const { data: shift } = await supabase
     .from("rota_shifts")
-    .select("id, is_day_off")
+    .select("id, is_day_off, start_time")
     .eq("employee_id", employee.id)
     .eq("shift_date", today)
     .maybeSingle();
@@ -101,10 +119,57 @@ export async function clockIn(input: {
     throw new Error("You've already clocked in today.");
   }
 
-  const now = new Date().toISOString();
+  const nowDate = new Date();
+  const now = nowDate.toISOString();
+  const startTime = londonHHMM(nowDate);
+
+  // Reflect the clock-in on the rota so the employee shows as present today.
+  // Two cases need a system-managed shift (service-role client — employees
+  // can't write rota_shifts under RLS):
+  //   1. No shift row at all → create one (start = clock-in time).
+  //   2. A row exists but it's a Day Off or has no start time → convert it to a
+  //      working shift starting now. (This is the "clocked in on a day off /
+  //      covering" case.) A real scheduled shift is left untouched.
+  let shiftId = shift?.id ?? null;
+  const needsAutoShift = !shift || shift.is_day_off || !shift.start_time;
+  if (needsAutoShift) {
+    const admin = createAdminClient();
+    if (!shift) {
+      const { data: created, error: shiftErr } = await admin
+        .from("rota_shifts")
+        .insert({
+          employee_id: employee.id,
+          store_id: employee.store_id,
+          shift_date: today,
+          start_time: startTime,
+          end_time: null,
+          is_day_off: false,
+          scheduled_hours: 0,
+          manager_notes: AUTO_SHIFT_NOTE,
+        })
+        .select("id")
+        .maybeSingle();
+      // Best-effort: a failed auto-shift never blocks the clock-in itself.
+      if (!shiftErr && created) shiftId = created.id;
+    } else {
+      // Convert the existing day-off / empty shift into a worked one.
+      await admin
+        .from("rota_shifts")
+        .update({
+          start_time: startTime,
+          end_time: null,
+          is_day_off: false,
+          scheduled_hours: 0,
+          manager_notes: AUTO_SHIFT_NOTE,
+        })
+        .eq("id", shift.id);
+      shiftId = shift.id;
+    }
+  }
+
   const payload = {
     employee_id: employee.id,
-    shift_id: shift?.id ?? null,
+    shift_id: shiftId,
     store_id: employee.store_id,
     event_date: today,
     clock_in_at: now,
@@ -137,6 +202,8 @@ export async function clockIn(input: {
   revalidatePath("/employee/attendance");
   revalidatePath("/live");
   revalidatePath("/manager/live");
+  revalidatePath("/rota");
+  revalidatePath("/manager/rota");
   return { ok: true };
 }
 
@@ -208,6 +275,27 @@ export async function clockOut(input: {
     .eq("id", existing.id);
   if (error) throw new Error(error.message);
 
+  // If the shift was auto-created at clock-in, stamp its end time now so the
+  // rota shows the real worked window (clock-in → clock-out).
+  if (existing.shift_id) {
+    const { data: shift } = await supabase
+      .from("rota_shifts")
+      .select("id, start_time, manager_notes")
+      .eq("id", existing.shift_id)
+      .maybeSingle();
+    if (shift?.manager_notes === AUTO_SHIFT_NOTE && shift.start_time) {
+      const endTime = londonHHMM(new Date());
+      const admin = createAdminClient();
+      await admin
+        .from("rota_shifts")
+        .update({
+          end_time: endTime,
+          scheduled_hours: shiftHours(shift.start_time.slice(0, 5), endTime),
+        })
+        .eq("id", shift.id);
+    }
+  }
+
   await writeAudit({
     action: "clock_out",
     entity: "clock_event",
@@ -225,6 +313,8 @@ export async function clockOut(input: {
   revalidatePath("/employee/attendance");
   revalidatePath("/live");
   revalidatePath("/manager/live");
+  revalidatePath("/rota");
+  revalidatePath("/manager/rota");
   return { ok: true };
 }
 

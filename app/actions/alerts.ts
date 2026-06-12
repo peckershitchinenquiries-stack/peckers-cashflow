@@ -19,6 +19,7 @@ import {
   aggregateWorked,
   buildPrePaymentSummary,
   buildWageLines,
+  payWeekOf,
 } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { isCredentialEmail } from "@/lib/credentials";
@@ -164,6 +165,8 @@ async function resolveRecipients(
 async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: number }> {
   const today = todayISO();
   const weekStart = toISODate(startOfISOWeek(new Date()));
+  // Saturday pays the PREVIOUS Mon–Sun — the wage forecast must use that week.
+  const payWeek = payWeekOf(weekStart);
   const fourWeeksAgo = toISODate(addDays(new Date(), -28));
 
   const [
@@ -608,14 +611,15 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
     }
 
     // ----- Saturday wage forecast: Post Office draw -----
-    const storeEmployees = employees.filter(
-      (e) => e.store_id === store.id && e.employment_status !== "left",
-    );
+    // Wages paid this Saturday are for LAST week's work (Mon–Sun), so the
+    // forecast uses the pay week — keeping it identical to the payout screen.
+    // Leavers stay included: they're still owed for the pay week they worked.
+    const storeEmployees = employees.filter((e) => e.store_id === store.id);
     const weekClocks = clocks.filter(
-      (c) => c.store_id === store.id && c.event_date >= weekStart && c.event_date <= today,
+      (c) => c.store_id === store.id && c.event_date >= payWeek.start && c.event_date <= payWeek.end,
     );
     const weekShifts = shifts.filter(
-      (s) => s.store_id === store.id && s.shift_date >= weekStart && s.shift_date <= today,
+      (s) => s.store_id === store.id && s.shift_date >= payWeek.start && s.shift_date <= payWeek.end,
     );
     const worked = aggregateWorked(weekClocks, weekShifts);
     const lines = buildWageLines(storeEmployees, worked);

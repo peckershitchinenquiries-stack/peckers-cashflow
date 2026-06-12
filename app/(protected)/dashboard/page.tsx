@@ -1,51 +1,37 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
+import { addDays, formatDDMMYYYY, startOfISOWeek, toISODate } from "@/lib/utils";
 import {
-  addDays,
-  endOfISOWeek,
-  formatDDMMYYYY,
-  startOfISOWeek,
-  toISODate,
-} from "@/lib/utils";
-import { buildDashboardViews } from "@/lib/cash-flow-data";
-import { SummaryCards } from "@/components/dashboard/SummaryCards";
-import { RecentEntriesTable } from "@/components/dashboard/RecentEntriesTable";
+  AdminDashboardView,
+  type StoreDashboardData,
+} from "@/components/dashboard/AdminDashboardView";
+import type { DailyCashEntry } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-type RecentRow = {
-  id: string;
-  entry_date: string;
-  vita_mojo_sales: number;
-  supermarket_expenses: number;
-  difference: number;
-  is_late: boolean;
-  stores: { name: string | null } | null;
-};
+type EntryRow = DailyCashEntry & { stores: { name: string | null } | null };
 
+// The dashboard never shows today's figures — everything is yesterday or
+// earlier, and each store is kept completely separate (toggle, no combining).
 async function loadDashboardData() {
   const supabase = createServerSupabase();
+  const today = toISODate(new Date());
   const yesterday = toISODate(addDays(new Date(), -1));
-  const weekStart = toISODate(startOfISOWeek(new Date()));
-  const weekEnd = toISODate(endOfISOWeek(new Date()));
+  // Stat cards are anchored to YESTERDAY, but the Recent Entries table shows
+  // every record up to and including TODAY so a same-day entry is visible.
+  const weekStart = toISODate(startOfISOWeek(addDays(new Date(), -1)));
   const sevenDaysAgo = toISODate(addDays(new Date(), -6));
+  const rangeStart = sevenDaysAgo < weekStart ? sevenDaysAgo : weekStart;
 
-  const { data: stores } = await supabase.from("stores").select("id, name").order("name");
-
-  const [views, yesterdayRes, recentRes, alertsRes] = await Promise.all([
-    buildDashboardViews(stores ?? [], weekStart),
+  const [storesRes, entriesRes, alertsRes] = await Promise.all([
+    supabase.from("stores").select("id, name").order("name"),
     supabase
       .from("daily_cash_entries")
-      .select("vita_mojo_sales, supermarket_expenses")
-      .eq("entry_date", yesterday),
-    supabase
-      .from("daily_cash_entries")
-      .select("id, entry_date, vita_mojo_sales, supermarket_expenses, difference, is_late, stores(name)")
-      .gte("entry_date", sevenDaysAgo)
-      .lte("entry_date", weekEnd)
+      .select("*, stores(name)")
+      .gte("entry_date", rangeStart)
+      .lte("entry_date", today)
       .order("entry_date", { ascending: false })
-      .order("created_at", { ascending: false })
-      .limit(50),
+      .order("created_at", { ascending: false }),
     supabase
       .from("alerts")
       .select("*")
@@ -54,56 +40,52 @@ async function loadDashboardData() {
       .limit(5),
   ]);
 
-  // Remaining cash in hand = sum of each store's running balance this week.
-  const remainingCash = views.reduce((s, v) => s + v.runningBalance, 0);
-  // This week's cash = total Vita Mojo cash sales across stores this week.
-  const weekCash = views.reduce(
-    (s, v) => s + v.rows.reduce((t, r) => t + Number(r.vita_mojo_sales || 0), 0),
-    0,
-  );
+  const stores = storesRes.data ?? [];
+  const entries = (entriesRes.data ?? []) as EntryRow[];
 
-  const yesterdaySales = (yesterdayRes.data ?? []).reduce(
-    (s, r) => s + Number(r.vita_mojo_sales || 0),
-    0,
-  );
-  const yesterdayExp = (yesterdayRes.data ?? []).reduce(
-    (s, r) => s + Number(r.supermarket_expenses || 0),
-    0,
-  );
+  const storeData: StoreDashboardData[] = stores.map((store) => {
+    const storeEntries = entries.filter((e) => e.store_id === store.id);
+    const yest = storeEntries.filter((e) => e.entry_date === yesterday);
+    const cashSale = yest.reduce((s, e) => s + Number(e.vita_mojo_sales || 0), 0);
+    const expenses = yest.reduce((s, e) => s + Number(e.supermarket_expenses || 0), 0);
+    const weekCash = storeEntries
+      .filter((e) => e.entry_date >= weekStart && e.entry_date <= yesterday)
+      .reduce((s, e) => s + Number(e.vita_mojo_sales || 0), 0);
 
-  const recent = ((recentRes.data ?? []) as unknown as RecentRow[]).map((r) => ({
-    id: r.id,
-    entry_date: r.entry_date,
-    store_name: r.stores?.name ?? null,
-    vita_mojo_sales: Number(r.vita_mojo_sales || 0),
-    supermarket_expenses: Number(r.supermarket_expenses || 0),
-    difference: Number(r.difference || 0),
-    is_late: !!r.is_late,
-  }));
+    return {
+      store,
+      cashSale,
+      expenses,
+      remainingCash: cashSale - expenses,
+      weekCash,
+      recent: storeEntries.slice(0, 25).map((e) => ({
+        id: e.id,
+        entry_date: e.entry_date,
+        store_name: e.stores?.name ?? null,
+        manager_name: e.edited_by_name ?? e.submitted_by_name ?? null,
+        vita_mojo_sales: Number(e.vita_mojo_sales || 0),
+        supermarket_expenses: Number(e.supermarket_expenses || 0),
+        difference: Number(e.difference || 0),
+        is_late: !!e.is_late,
+      })),
+    };
+  });
 
-  return {
-    yesterday,
-    yesterdaySales,
-    yesterdayExp,
-    remainingCash,
-    weekCash,
-    recent,
-    openAlerts: alertsRes.data ?? [],
-  };
+  return { yesterday, storeData, openAlerts: alertsRes.data ?? [] };
 }
 
 export default async function DashboardPage() {
   const user = await requireUser();
   const data = await loadDashboardData();
 
-  // Short "12/06" label for yesterday.
+  // Short "10/06" label for yesterday.
   const yLabel = formatDDMMYYYY(data.yesterday).slice(0, 5);
 
   return (
     <>
       <PageHeader
         title={`Hello, ${user.allowed?.name?.split(" ")[0] || "there"}`}
-        description={`Today is ${formatDDMMYYYY(new Date())}. Yesterday's figures (${formatDDMMYYYY(data.yesterday)}) and this week's cash at a glance.`}
+        description={`Today is ${formatDDMMYYYY(new Date())}. Showing yesterday's figures (${formatDDMMYYYY(data.yesterday)}) per store.`}
       />
 
       {data.openAlerts.length > 0 && (
@@ -121,17 +103,7 @@ export default async function DashboardPage() {
         </a>
       )}
 
-      <SummaryCards
-        yesterdaySales={data.yesterdaySales}
-        yesterdayExp={data.yesterdayExp}
-        remainingCash={data.remainingCash}
-        weekCash={data.weekCash}
-        yesterdayLabel={yLabel}
-      />
-
-      <div className="mt-6">
-        <RecentEntriesTable rows={data.recent} />
-      </div>
+      <AdminDashboardView storeData={data.storeData} yesterdayLabel={yLabel} />
     </>
   );
 }

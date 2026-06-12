@@ -17,6 +17,7 @@ import {
 import { upsertDailyCashEntry, deleteDailyCashEntry } from "@/app/actions/cash-flow";
 import { runningBalanceRows } from "@/lib/cash-flow";
 import {
+  addDays,
   formatDDMMYYYY,
   formatGBP,
   todayISO,
@@ -32,6 +33,7 @@ type StoreOpt = { id: string; name: string };
 export function DailyCashView({
   stores,
   entries,
+  recentEntries = [],
   weekStart,
   prevWeek,
   nextWeek,
@@ -42,6 +44,8 @@ export function DailyCashView({
 }: {
   stores: StoreOpt[];
   entries: DailyCashEntry[];
+  /** Entries for the last 3 days (any week) so the quick form can pre-fill. */
+  recentEntries?: DailyCashEntry[];
   weekStart: string;
   prevWeek: string;
   nextWeek: string;
@@ -57,72 +61,97 @@ export function DailyCashView({
   const weekEndDate = new Date(parseISODate(weekStart).getTime() + 6 * 86400000);
   const weekEnd = formatDDMMYYYY(weekEndDate);
 
-  const inWeek = (iso: string) => {
-    const endISO = new Date(parseISODate(weekStart).getTime() + 6 * 86400000);
-    const end = `${endISO.getFullYear()}-${String(endISO.getMonth() + 1).padStart(2, "0")}-${String(endISO.getDate()).padStart(2, "0")}`;
-    return iso >= weekStart && iso <= end;
-  };
-  const today = todayISO();
-  const defaultDate = inWeek(today) ? today : weekStart;
+  const inWeek = (iso: string) => iso >= weekStart && iso <= toISODate(weekEndDate);
 
-  const [date, setDate] = React.useState<string>(defaultDate);
+  const today = todayISO();
+  // The only three dates an entry may be recorded for: today, yesterday, and
+  // the day before. Shown as quick buttons (no free calendar).
+  const dateOptions = React.useMemo(
+    () =>
+      [0, 1, 2].map((d) => {
+        const iso = toISODate(addDays(parseISODate(today), -d));
+        return {
+          iso,
+          label: d === 0 ? "Today" : d === 1 ? "Yesterday" : "Day before",
+          short: formatDDMMYYYY(iso).slice(0, 5),
+        };
+      }),
+    [today],
+  );
+
+  const [date, setDate] = React.useState<string>(today);
   const [vita, setVita] = React.useState("");
-  const [envelope, setEnvelope] = React.useState("");
   const [supermarket, setSupermarket] = React.useState("");
+  const [envelope, setEnvelope] = React.useState("");
+  // Whether the user has manually overridden the auto-computed envelope.
+  const [envelopeTouched, setEnvelopeTouched] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
-  // The date picker is a full calendar. If a date outside the loaded week is
-  // chosen, jump to that week so its entries (and any existing row) load.
-  function onDateChange(next: string) {
+  // Picking a date outside the loaded week jumps to that week so the log + any
+  // existing entry line up (prefill also works via recentEntries).
+  function pickDate(next: string) {
     setDate(next);
-    if (next && !inWeek(next)) {
+    if (!inWeek(next)) {
       const wk = toISODate(startOfISOWeek(parseISODate(next)));
       router.push(`${basePath}/daily?week=${wk}`);
     }
   }
-  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   const storeEntries = React.useMemo(
     () => entries.filter((e) => e.store_id === storeId),
     [entries, storeId],
   );
 
-  // Pre-fill the form when an entry already exists for the chosen store+date.
+  // Existing entry for the chosen store+date — look in the loaded week first,
+  // then in the recent-3-days set (covers dates in the previous week).
   const existing = React.useMemo(
-    () => storeEntries.find((e) => e.entry_date === date) ?? null,
-    [storeEntries, date],
+    () =>
+      storeEntries.find((e) => e.entry_date === date) ??
+      recentEntries.find((e) => e.store_id === storeId && e.entry_date === date) ??
+      null,
+    [storeEntries, recentEntries, storeId, date],
   );
+
+  const vitaNum = Number(vita) || 0;
+  const superNum = Number(supermarket) || 0;
+  // The envelope is expected to equal sales − supermarket expenses.
+  const expectedEnvelope = Math.max(0, Math.round((vitaNum - superNum) * 100) / 100);
+  const envNum = envelopeTouched ? Number(envelope) || 0 : expectedEnvelope;
+  const overridden = envelopeTouched && Math.abs(envNum - expectedEnvelope) > 0.001;
 
   React.useEffect(() => {
     if (existing) {
-      setVita(String(existing.vita_mojo_sales));
-      setEnvelope(String(existing.envelope_amount));
-      setSupermarket(
-        existing.supermarket_expenses ? String(existing.supermarket_expenses) : "",
+      const exp = Math.max(
+        0,
+        Math.round(
+          (Number(existing.vita_mojo_sales) - Number(existing.supermarket_expenses || 0)) * 100,
+        ) / 100,
       );
+      const wasOverridden = Math.abs(Number(existing.envelope_amount) - exp) > 0.001;
+      setVita(String(existing.vita_mojo_sales));
+      setSupermarket(existing.supermarket_expenses ? String(existing.supermarket_expenses) : "");
+      setEnvelope(String(existing.envelope_amount));
+      setEnvelopeTouched(wasOverridden);
       setReason(existing.reason ?? "");
     } else {
       setVita("");
-      setEnvelope("");
       setSupermarket("");
+      setEnvelope("");
+      setEnvelopeTouched(false);
       setReason("");
     }
   }, [existing]);
 
-  const vitaNum = Number(vita) || 0;
-  const envNum = Number(envelope) || 0;
-  const difference = Math.round((vitaNum - envNum) * 100) / 100;
-  const hasDiff = Math.abs(difference) > 0.001;
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (vita === "" || envelope === "") {
-      toast.error("Vita Mojo figure and envelope amount are both required.");
+    if (vita === "") {
+      toast.error("Vita Mojo cash sales is required.");
       return;
     }
-    if (hasDiff && !reason.trim()) {
-      toast.error("A reason is required when there is a difference.");
+    if (overridden && !reason.trim()) {
+      toast.error("Give a reason — the envelope differs from sales − supermarket expenses.");
       return;
     }
     setBusy(true);
@@ -132,8 +161,8 @@ export function DailyCashView({
         entry_date: date,
         vita_mojo_sales: vitaNum,
         envelope_amount: envNum,
-        supermarket_expenses: Number(supermarket) || 0,
-        reason: reason.trim() || null,
+        supermarket_expenses: superNum,
+        reason: overridden ? reason.trim() || null : null,
       });
       toast.success(
         res.is_late
@@ -217,18 +246,40 @@ export function DailyCashView({
           >
             <CardTitle>Daily Cash Entry</CardTitle>
             <CardDescription>
-              Record the Vita Mojo end-of-day figure against the envelope.
+              Record the Vita Mojo cash sales. The envelope auto-fills as sales −
+              supermarket expenses.
             </CardDescription>
           </CardHeader>
 
           <form onSubmit={submit} className="flex flex-col gap-4">
-            <Input
-              type="date"
-              label="Date"
-              value={date}
-              onChange={(e) => onDateChange(e.target.value)}
-              required
-            />
+            {/* Date — today / yesterday / day before only */}
+            <div>
+              <label className="block text-sm font-medium text-text-primary mb-1.5">Date</label>
+              <div className="grid grid-cols-3 gap-2">
+                {dateOptions.map((opt) => {
+                  const active = date === opt.iso;
+                  return (
+                    <button
+                      key={opt.iso}
+                      type="button"
+                      onClick={() => pickDate(opt.iso)}
+                      className={
+                        "h-12 rounded-xl border text-sm font-medium transition-colors flex flex-col items-center justify-center " +
+                        (active
+                          ? "bg-gold text-black border-gold"
+                          : "bg-surface text-text-primary border-border hover:bg-surface-hover")
+                      }
+                    >
+                      <span>{opt.label}</span>
+                      <span className={active ? "text-[11px] text-black/70" : "text-[11px] text-text-muted"}>
+                        {opt.short}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <Input
               type="number"
               inputMode="decimal"
@@ -245,45 +296,50 @@ export function DailyCashView({
               inputMode="decimal"
               step="0.01"
               min="0"
-              label="Cash placed in envelope *"
-              prefix="£"
-              placeholder="0.00"
-              value={envelope}
-              onChange={(e) => setEnvelope(e.target.value)}
-            />
-            <Input
-              type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
               label="Supermarket expenses"
               prefix="£"
               placeholder="0.00"
               value={supermarket}
               onChange={(e) => setSupermarket(e.target.value)}
             />
-
-            <div className="rounded-xl bg-bg border border-border px-4 py-3 flex items-center justify-between">
-              <span className="text-sm text-text-muted">
-                Difference {difference > 0 ? "(shortfall)" : difference < 0 ? "(surplus)" : ""}
-              </span>
-              <span
-                className={
-                  !hasDiff
-                    ? "font-semibold text-success"
-                    : difference > 0
-                      ? "font-semibold text-danger"
-                      : "font-semibold text-warning"
-                }
-              >
-                {formatGBP(difference)}
-              </span>
+            <div>
+              <Input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0"
+                label="Cash placed in envelope"
+                prefix="£"
+                placeholder="0.00"
+                value={envelopeTouched ? envelope : String(expectedEnvelope.toFixed(2))}
+                onChange={(e) => {
+                  setEnvelopeTouched(true);
+                  setEnvelope(e.target.value);
+                }}
+              />
+              <div className="flex items-center justify-between mt-1.5">
+                <span className="text-[11px] text-text-muted">
+                  Auto = sales − supermarket = {formatGBP(expectedEnvelope)}
+                </span>
+                {envelopeTouched && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEnvelopeTouched(false);
+                      setReason("");
+                    }}
+                    className="text-[11px] text-gold hover:underline"
+                  >
+                    Reset to auto
+                  </button>
+                )}
+              </div>
             </div>
 
-            {hasDiff && (
+            {overridden && (
               <Input
-                label="Reason for difference *"
-                placeholder="e.g. Supermarket run – £29 used for supplies"
+                label="Reason for overriding the envelope *"
+                placeholder="e.g. £10 float left in till overnight"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 maxLength={200}
@@ -343,7 +399,7 @@ export function DailyCashView({
                         <td className="px-4 py-3 whitespace-nowrap">
                           <button
                             className="hover:text-gold"
-                            onClick={() => setDate(r.entry_date)}
+                            onClick={() => pickDate(r.entry_date)}
                             title="Edit this day"
                           >
                             {formatDDMMYYYY(r.entry_date)}
@@ -364,12 +420,12 @@ export function DailyCashView({
                           {formatGBP(r.difference)}
                         </td>
                         <td className="px-4 py-3 max-w-[220px]">
-                          {balanced ? (
-                            <Badge variant="success">Balanced</Badge>
-                          ) : (
-                            <span className="text-text-subtle truncate block" title={r.reason ?? ""}>
-                              {r.reason ?? "Discrepancy logged"}
+                          {r.reason ? (
+                            <span className="text-text-subtle truncate block" title={r.reason}>
+                              {r.reason}
                             </span>
+                          ) : (
+                            <Badge variant="success">OK</Badge>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums font-medium">
@@ -381,7 +437,7 @@ export function DailyCashView({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => setDate(r.entry_date)}
+                                onClick={() => pickDate(r.entry_date)}
                                 aria-label="Edit"
                                 className="text-text-muted hover:text-text-primary"
                               >

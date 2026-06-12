@@ -64,10 +64,17 @@ function getMonthWeeks(year: number, monthIdx: number) {
   return out;
 }
 
-export function MonthlyView() {
+export function MonthlyView({
+  storeId,
+  employeeIds,
+}: {
+  storeId: string;
+  employeeIds: string[];
+}) {
   const supabase = React.useMemo(() => createClient(), []);
   const colors = useChartColors();
   const now = new Date();
+  const empKey = employeeIds.join(",");
   const [year, setYear] = React.useState(now.getFullYear());
   const [month, setMonth] = React.useState(now.getMonth()); // 0-11
   const [loading, setLoading] = React.useState(true);
@@ -125,32 +132,39 @@ export function MonthlyView() {
         const prevWeeks = getMonthWeeks(prevTarget.getFullYear(), prevTarget.getMonth());
         const prevWeekStarts = prevWeeks.map((w) => toISODate(w.start));
 
+        const empFilter = employeeIds.length
+          ? employeeIds
+          : ["00000000-0000-0000-0000-000000000000"];
         const [entriesRes, hoursRes, prevEntriesRes, prevHoursRes] = await Promise.all([
           supabase
-            .from("cash_entries")
-            .select("entry_date, cash_sales, supermarket_expenses")
+            .from("daily_cash_entries")
+            .select("entry_date, vita_mojo_sales, supermarket_expenses")
+            .eq("store_id", storeId)
             .gte("entry_date", toISODate(fetchStart))
             .lte("entry_date", toISODate(fetchEnd)),
           supabase
             .from("employee_hours_computed")
-            .select("week_start_date, cash_amount_due")
-            .in("week_start_date", monthWeekStarts),
+            .select("week_start_date, cash_amount_due, employee_id")
+            .in("week_start_date", monthWeekStarts)
+            .in("employee_id", empFilter),
           supabase
-            .from("cash_entries")
-            .select("entry_date, cash_sales, supermarket_expenses")
+            .from("daily_cash_entries")
+            .select("entry_date, vita_mojo_sales, supermarket_expenses")
+            .eq("store_id", storeId)
             .gte("entry_date", toISODate(fetchPrevStart))
             .lte("entry_date", toISODate(fetchPrevEnd)),
           supabase
             .from("employee_hours_computed")
-            .select("week_start_date, cash_amount_due")
-            .in("week_start_date", prevWeekStarts.length ? prevWeekStarts : ["1970-01-01"]),
+            .select("week_start_date, cash_amount_due, employee_id")
+            .in("week_start_date", prevWeekStarts.length ? prevWeekStarts : ["1970-01-01"])
+            .in("employee_id", empFilter),
         ]);
 
         if (!active) return;
 
         const aggregateForWeeks = (
           weekDefs: { start: Date; end: Date }[],
-          entries: Array<{ entry_date: string; cash_sales: number; supermarket_expenses: number }>,
+          entries: Array<{ entry_date: string; vita_mojo_sales: number; supermarket_expenses: number }>,
           hours: Array<{ week_start_date: string; cash_amount_due: number }>,
         ): WeeklyAgg[] => {
           return weekDefs.map((w, idx) => {
@@ -159,7 +173,7 @@ export function MonthlyView() {
             const weekEntries = entries.filter(
               (e) => e.entry_date >= startISO && e.entry_date <= endISO,
             );
-            const sales = weekEntries.reduce((s, r) => s + Number(r.cash_sales || 0), 0);
+            const sales = weekEntries.reduce((s, r) => s + Number(r.vita_mojo_sales || 0), 0);
             const expenses = weekEntries.reduce(
               (s, r) => s + Number(r.supermarket_expenses || 0),
               0,
@@ -209,7 +223,7 @@ export function MonthlyView() {
     return () => {
       active = false;
     };
-  }, [supabase, year, month]);
+  }, [supabase, year, month, storeId, empKey]);
 
   const yearOptions = React.useMemo(() => {
     const arr = [];

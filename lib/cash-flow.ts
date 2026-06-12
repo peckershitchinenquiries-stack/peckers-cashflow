@@ -8,7 +8,10 @@
 //  - Cash wage uses the NI/bank split: the first `bank_weekly_hours_limit` hours
 //    (default 20) of the week are NI/bank wages; only hours ABOVE that are paid
 //    in cash, at the employee's hourly_cash_rate.
-//  - Delivery wages = deliveries completed × the driver's per-delivery rate.
+//  - Drivers are paid hourly like everyone else PLUS £2 per delivery (petrol).
+//    Extra deliveries (logged with a reason) are paid the same £2.
+//  - Wages paid on a Saturday are for the PREVIOUS week's work (Mon–Sun);
+//    the cash used to pay them is what this week's envelopes collected.
 //  - Opening balance carries forward last week's surplus.
 // =============================================================
 
@@ -17,6 +20,18 @@ import { addDays, parseISODate, startOfISOWeek, toISODate } from "./utils";
 
 export function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
+}
+
+/** £2 per delivery covers the driver's petrol; labour is paid hourly. */
+export const DELIVERY_PETROL_RATE = 2;
+
+/**
+ * The pay week for a Saturday payout: wages paid on this week's Saturday are
+ * for the PREVIOUS Monday–Sunday week.
+ */
+export function payWeekOf(weekStartISO: string): { start: string; end: string } {
+  const start = toISODate(addDays(parseISODate(weekStartISO), -7));
+  return { start, end: toISODate(addDays(parseISODate(start), 6)) };
 }
 
 /** Resolve a `?week=` param into the Monday-anchored week + prev/next links. */
@@ -87,6 +102,7 @@ export type RunningBalanceRow = {
   reason: string | null;
   is_late: boolean;
   running_balance: number;
+  manager_name: string | null;
 };
 
 /**
@@ -109,6 +125,7 @@ export function runningBalanceRows(
       reason: e.reason,
       is_late: e.is_late,
       running_balance: round2(balance),
+      manager_name: e.edited_by_name ?? e.submitted_by_name ?? null,
     };
   });
 }
@@ -134,7 +151,9 @@ export function buildWageLines(
 ): WageLine[] {
   const lines: WageLine[] = [];
   for (const emp of employees) {
-    if (emp.employment_status === "left") continue;
+    // Leavers are NOT skipped: wages are a week in arrears, so an employee who
+    // left this week is still owed for the pay week. Anyone with nothing due is
+    // dropped by the total<=0 check below.
     const worked = workedByEmployee.get(emp.id) ?? { hours: 0, deliveries: 0 };
     const bankLimit = emp.bank_weekly_hours_limit ?? 20;
     const { cashHours } = splitHours(worked.hours, bankLimit);
@@ -143,7 +162,12 @@ export function buildWageLines(
 
     const isDriver = emp.position === "Driver";
     const deliveries = isDriver ? Math.max(0, Math.round(worked.deliveries)) : 0;
-    const deliveryRate = isDriver ? Number(emp.delivery_rate ?? 0) || 0 : 0;
+    // £2/delivery petrol allowance unless a custom per-driver rate is set.
+    const deliveryRate = isDriver
+      ? emp.delivery_rate != null
+        ? Number(emp.delivery_rate)
+        : DELIVERY_PETROL_RATE
+      : 0;
     const deliveryWages = round2(deliveries * deliveryRate);
 
     const total = round2(cashWage + deliveryWages);
@@ -205,6 +229,8 @@ type ClockRow = {
   clock_in_at: string | null;
   clock_out_at: string | null;
   deliveries_count: number | null;
+  /** Deliveries beyond the normal round — paid the same per-delivery rate. */
+  extra_deliveries?: number | null;
 };
 
 type ShiftRow = {
@@ -226,8 +252,9 @@ export function aggregateWorked(
   const clockHours = new Map<string, number>();
   const deliveries = new Map<string, number>();
   for (const c of clocks) {
-    if (c.deliveries_count) {
-      deliveries.set(c.employee_id, (deliveries.get(c.employee_id) ?? 0) + Number(c.deliveries_count));
+    const delivered = (Number(c.deliveries_count) || 0) + (Number(c.extra_deliveries) || 0);
+    if (delivered > 0) {
+      deliveries.set(c.employee_id, (deliveries.get(c.employee_id) ?? 0) + delivered);
     }
     if (c.clock_in_at && c.clock_out_at) {
       const ms = new Date(c.clock_out_at).getTime() - new Date(c.clock_in_at).getTime();

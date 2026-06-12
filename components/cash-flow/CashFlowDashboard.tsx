@@ -1,3 +1,5 @@
+"use client";
+
 import * as React from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
@@ -54,13 +56,37 @@ export function CashFlowDashboard({
   weekStart: string;
   basePath: string;
 }) {
+  const [activeId, setActiveId] = React.useState(views[0]?.store.id ?? "");
+  // Each store is a separate business — show one at a time, never combined.
+  const shown = views.length > 1 ? views.filter((v) => v.store.id === activeId) : views;
+
   return (
     <div className="flex flex-col gap-6">
-      <p className="text-sm text-text-muted -mt-2">
-        Week of {weekLabel(parseISODate(weekStart))}
-      </p>
+      <div className="flex items-center justify-between gap-3 flex-wrap -mt-2">
+        <p className="text-sm text-text-muted">
+          Week of {weekLabel(parseISODate(weekStart))}
+        </p>
+        {views.length > 1 && (
+          <div className="flex gap-2 flex-wrap">
+            {views.map((v) => (
+              <button
+                key={v.store.id}
+                onClick={() => setActiveId(v.store.id)}
+                className={
+                  "px-4 h-9 rounded-xl border text-sm font-medium transition-colors " +
+                  (v.store.id === activeId
+                    ? "bg-gold text-black border-gold"
+                    : "bg-surface text-text-primary border-border hover:bg-surface-hover")
+                }
+              >
+                {v.store.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
-      {views.map((v) => {
+      {shown.map((v) => {
         const draw = v.summary.post_office_draw;
         return (
           <Card key={v.store.id} className="p-0 overflow-hidden">
@@ -128,6 +154,7 @@ export function CashFlowDashboard({
                     <thead>
                       <tr className="text-left text-xs uppercase tracking-wider text-text-muted bg-bg/50">
                         <th className="px-4 py-2.5 font-medium">Date</th>
+                        <th className="px-4 py-2.5 font-medium">Manager</th>
                         <th className="px-4 py-2.5 font-medium text-right">Vita Mojo</th>
                         <th className="px-4 py-2.5 font-medium text-right">Envelope</th>
                         <th className="px-4 py-2.5 font-medium text-right">Diff</th>
@@ -145,6 +172,7 @@ export function CashFlowDashboard({
                                 <Badge variant="warning" className="ml-2 text-[10px] py-0 px-1.5">Late</Badge>
                               )}
                             </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-text-subtle">{r.manager_name ?? "—"}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(r.vita_mojo_sales)}</td>
                             <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(r.envelope_amount)}</td>
                             <td className={`px-4 py-2.5 text-right tabular-nums ${balanced ? "text-text-muted" : r.difference > 0 ? "text-danger" : "text-warning"}`}>

@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveWeek } from "@/lib/cash-flow";
-import { loadOpeningBalances, loadWeekEntries } from "@/lib/cash-flow-data";
+import { loadOpeningBalances, loadWeekEntries, loadRecentEntries } from "@/lib/cash-flow-data";
 import { DailyCashView } from "@/components/cash-flow/DailyCashView";
 
 export const dynamic = "force-dynamic";
@@ -34,9 +34,10 @@ export default async function ManagerCashFlowDailyPage({
     .eq("id", storeId)
     .maybeSingle();
   const storeList = store ? [store] : [];
-  const [entries, openingByStore] = await Promise.all([
+  const [entries, openingByStore, recentEntries] = await Promise.all([
     loadWeekEntries([storeId], weekStart),
     loadOpeningBalances([storeId], weekStart),
+    loadRecentEntries([storeId]),
   ]);
 
   return (
@@ -48,6 +49,7 @@ export default async function ManagerCashFlowDailyPage({
       <DailyCashView
         stores={storeList}
         entries={entries}
+        recentEntries={recentEntries}
         weekStart={weekStart}
         prevWeek={prevWeek}
         nextWeek={nextWeek}

@@ -139,6 +139,11 @@ export function PrePaymentView({
   const saturday = formatDDMMYYYY(
     new Date(parseISODate(weekStart).getTime() + 5 * 86400000),
   );
+  // Wages paid this Saturday are for the PREVIOUS Mon–Sun week.
+  const payWeekStartDate = new Date(parseISODate(weekStart).getTime() - 7 * 86400000);
+  const payWeekLabel = `${formatDDMMYYYY(payWeekStartDate)} – ${formatDDMMYYYY(
+    new Date(payWeekStartDate.getTime() + 6 * 86400000),
+  )}`;
 
   return (
     <div className="flex flex-col gap-5">
@@ -187,14 +192,16 @@ export function PrePaymentView({
           }
         >
           <CardTitle>Pre-Payment Summary — {store.name}</CardTitle>
-          <CardDescription>Wages due on Saturday {saturday}</CardDescription>
+          <CardDescription>
+            Wages due on Saturday {saturday} — for last week&apos;s work ({payWeekLabel})
+          </CardDescription>
         </CardHeader>
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <tbody>
               <SummaryRow label="Opening balance (carried forward)" value={formatGBP(fin.opening_balance)} />
-              <SummaryRow label="Total Vita Mojo cash sales this week" value={formatGBP(fin.vita_mojo_total)} />
+              <SummaryRow label="Vita Mojo cash sales (Sun – payday Sat)" value={formatGBP(fin.vita_mojo_total)} />
               <SummaryRow label="Less: logged differences / cash used" value={`(${formatGBP(fin.logged_differences)})`} tone="bad" />
               <SummaryRow label="Actual cash available" value={formatGBP(fin.actual_cash_available)} strong />
               <SummaryRow label="Total cash wages due" value={`(${formatGBP(fin.total_cash_wages)})`} tone="bad" />
@@ -228,9 +235,10 @@ export function PrePaymentView({
           <div>
             <h3 className="text-base font-semibold text-text-primary">Saturday Wage Breakdown</h3>
             <p className="text-sm text-text-muted mt-0.5">
+              Hours &amp; deliveries from {payWeekLabel} ·{" "}
               {payout
                 ? `${paidCount}/${payout.lines.length} marked paid`
-                : "Live forecast — generate the sheet to mark payments"}
+                : "live forecast — generate the sheet to mark payments"}
             </p>
           </div>
           {!locked && (
@@ -242,7 +250,7 @@ export function PrePaymentView({
 
         {lines.length === 0 ? (
           <p className="text-sm text-text-muted text-center py-12">
-            No employees have cash wages or deliveries to pay this week.
+            No employees have cash wages or deliveries to pay for {payWeekLabel}.
           </p>
         ) : (
           <div className="overflow-x-auto">

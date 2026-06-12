@@ -47,7 +47,13 @@ type EmpPay = {
   total_hours_worked: number;
 };
 
-export function WeeklyView() {
+export function WeeklyView({
+  storeId,
+  employeeIds,
+}: {
+  storeId: string;
+  employeeIds: string[];
+}) {
   const supabase = React.useMemo(() => createClient(), []);
   const colors = useChartColors();
   const [weekStart, setWeekStart] = React.useState<Date>(startOfISOWeek(new Date()));
@@ -56,6 +62,8 @@ export function WeeklyView() {
   const [empPay, setEmpPay] = React.useState<EmpPay[]>([]);
 
   const weekEnd = React.useMemo(() => endOfISOWeek(weekStart), [weekStart]);
+  // Stable key so the effect re-runs when the store's employee set changes.
+  const empKey = employeeIds.join(",");
 
   const totals = React.useMemo(() => {
     const sales = daily.reduce((s, r) => s + r.sales, 0);
@@ -74,8 +82,9 @@ export function WeeklyView() {
 
         const [entries, hours] = await Promise.all([
           supabase
-            .from("cash_entries")
-            .select("entry_date, cash_sales, supermarket_expenses")
+            .from("daily_cash_entries")
+            .select("entry_date, vita_mojo_sales, supermarket_expenses")
+            .eq("store_id", storeId)
             .gte("entry_date", startISO)
             .lte("entry_date", endISO),
           supabase
@@ -83,7 +92,8 @@ export function WeeklyView() {
             .select(
               "employee_id, employee_name, cash_hours, cash_amount_due, total_hours_worked, week_start_date",
             )
-            .eq("week_start_date", startISO),
+            .eq("week_start_date", startISO)
+            .in("employee_id", employeeIds.length ? employeeIds : ["00000000-0000-0000-0000-000000000000"]),
         ]);
 
         if (!active) return;
@@ -98,7 +108,7 @@ export function WeeklyView() {
         for (const e of entries.data ?? []) {
           const idx = days.findIndex((x) => x.date === e.entry_date);
           if (idx >= 0) {
-            days[idx].sales += Number(e.cash_sales || 0);
+            days[idx].sales += Number(e.vita_mojo_sales || 0);
             days[idx].expenses += Number(e.supermarket_expenses || 0);
           }
         }
@@ -112,7 +122,7 @@ export function WeeklyView() {
     return () => {
       active = false;
     };
-  }, [supabase, weekStart, weekEnd]);
+  }, [supabase, weekStart, weekEnd, storeId, empKey]);
 
   const isCurrent = isSameDay(weekStart, startOfISOWeek(new Date()));
 

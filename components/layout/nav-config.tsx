@@ -35,7 +35,6 @@ export const adminNav: NavItem[] = [
   { href: "/cash-flow/payout", label: "Saturday Payout", icon: CalendarIcon, group: "Finance" },
   { href: "/cash-flow/history", label: "Payout History", icon: ListIcon, group: "Finance" },
   { href: "/ni-monthly", label: "NI (Monthly)", icon: CalendarIcon, group: "Finance" },
-  { href: "/entries", label: "Cash Entries (legacy)", icon: ListIcon, group: "Finance" },
   { href: "/analytics", label: "Analytics", icon: ChartIcon, group: "Finance" },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -49,7 +48,7 @@ export const managerNav: NavItem[] = [
   { href: "/manager/cash-flow", label: "Cash Flow", icon: WalletIcon, group: "Finance" },
   { href: "/manager/cash-flow/payout", label: "Saturday Payout", icon: CalendarIcon, group: "Finance" },
   { href: "/manager/cash-flow/history", label: "Payout History", icon: ListIcon, group: "Finance" },
-  { href: "/manager/entries", label: "Cash Entries (legacy)", icon: ListIcon, group: "Finance" },
+  { href: "/manager/ni-monthly", label: "NI (Monthly)", icon: CalendarIcon, group: "Finance" },
   { href: "/manager/analytics", label: "Analytics", icon: ChartIcon, group: "Finance" },
   { href: "/manager/settings", label: "Settings", icon: SettingsIcon },
 ];

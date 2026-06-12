@@ -1,7 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveWeek } from "@/lib/cash-flow";
-import { loadOpeningBalances, loadWeekEntries } from "@/lib/cash-flow-data";
+import { loadOpeningBalances, loadWeekEntries, loadRecentEntries } from "@/lib/cash-flow-data";
 import { DailyCashView } from "@/components/cash-flow/DailyCashView";
 
 export const dynamic = "force-dynamic";
@@ -17,9 +17,10 @@ export default async function CashFlowDailyPage({
   const { data: stores } = await supabase.from("stores").select("id, name").order("name");
   const storeList = stores ?? [];
   const storeIds = storeList.map((s) => s.id);
-  const [entries, openingByStore] = await Promise.all([
+  const [entries, openingByStore, recentEntries] = await Promise.all([
     loadWeekEntries(storeIds, weekStart),
     loadOpeningBalances(storeIds, weekStart),
+    loadRecentEntries(storeIds),
   ]);
 
   return (
@@ -31,6 +32,7 @@ export default async function CashFlowDailyPage({
       <DailyCashView
         stores={storeList}
         entries={entries}
+        recentEntries={recentEntries}
         weekStart={weekStart}
         prevWeek={prevWeek}
         nextWeek={nextWeek}

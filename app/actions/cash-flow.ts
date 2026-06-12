@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
-import { todayISO } from "@/lib/utils";
+import { addDays, parseISODate, toISODate, todayISO } from "@/lib/utils";
 
 async function requireStaff() {
   const user = await getSessionUser();
@@ -62,6 +62,30 @@ export async function upsertDailyCashEntry(input: {
   if (!input.store_id) throw new Error("Store is required");
   if (!input.entry_date) throw new Error("Date is required");
 
+  // entry_date must be canonical YYYY-MM-DD — the window comparisons below are
+  // lexicographic and a non-padded date (e.g. "2026-06-1") would slip past them.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entry_date)) {
+    throw new Error("Invalid date format.");
+  }
+  const entryParsed = parseISODate(input.entry_date);
+  if (isNaN(entryParsed.getTime()) || toISODate(entryParsed) !== input.entry_date) {
+    throw new Error("Invalid date.");
+  }
+
+  // Entries can only be made for today or the past two days (e.g. on the 11th
+  // you may enter the 11th, 10th or 9th — not the 8th). No future dates.
+  // Admins are exempt from the lower bound so they can correct history.
+  const today = todayISO();
+  if (input.entry_date > today) {
+    throw new Error("You can't record a cash entry for a future date.");
+  }
+  const earliestAllowed = toISODate(addDays(parseISODate(today), -2));
+  if (user.allowed!.role === "manager" && input.entry_date < earliestAllowed) {
+    throw new Error(
+      "Cash entries can only be added for today or the past 2 days. Ask an admin to correct older dates.",
+    );
+  }
+
   const vita = Number(input.vita_mojo_sales);
   const envelope = Number(input.envelope_amount);
   const supermarketExpenses = Math.max(0, Number(input.supermarket_expenses) || 0);
@@ -72,9 +96,15 @@ export async function upsertDailyCashEntry(input: {
   if (vita < 0 || envelope < 0) throw new Error("Amounts cannot be negative");
 
   const difference = Math.round((vita - envelope) * 100) / 100;
+  // The envelope is EXPECTED to equal sales − supermarket expenses. A reason is
+  // only required when the manager overrides it to something else.
+  const expectedEnvelope = Math.round((vita - supermarketExpenses) * 100) / 100;
+  const envelopeOverridden = Math.abs(envelope - expectedEnvelope) > 0.001;
   const reason = input.reason?.trim() || null;
-  if (Math.abs(difference) > 0.001 && !reason) {
-    throw new Error("A reason is required when there is a difference.");
+  if (envelopeOverridden && !reason) {
+    throw new Error(
+      "The envelope should equal sales − supermarket expenses. Give a reason if it differs.",
+    );
   }
 
   // Late if the entry is being recorded for a day that has already passed.
@@ -96,7 +126,7 @@ export async function upsertDailyCashEntry(input: {
         vita_mojo_sales: vita,
         envelope_amount: envelope,
         supermarket_expenses: supermarketExpenses,
-        reason: Math.abs(difference) > 0.001 ? reason : null,
+        reason: envelopeOverridden ? reason : null,
         is_late: isLate,
         edited_by_name: submitterName,
         edited_at: new Date().toISOString(),
@@ -118,7 +148,7 @@ export async function upsertDailyCashEntry(input: {
         vita_mojo_sales: vita,
         envelope_amount: envelope,
         supermarket_expenses: supermarketExpenses,
-        reason: Math.abs(difference) > 0.001 ? reason : null,
+        reason: envelopeOverridden ? reason : null,
         is_late: isLate,
         submitted_by: user.id,
         submitted_by_name: submitterName,

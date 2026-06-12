@@ -43,6 +43,27 @@ export async function loadOpeningBalances(
   return map;
 }
 
+/**
+ * Entries for the last `days` days (today + previous days) for the given stores.
+ * Used by the quick 3-date entry form so it can pre-fill an existing entry even
+ * when "yesterday"/"day before" fall in the previous week.
+ */
+export async function loadRecentEntries(
+  storeIds: string[],
+  days = 3,
+): Promise<DailyCashEntry[]> {
+  if (storeIds.length === 0) return [];
+  const supabase = createServerSupabase();
+  const start = toISODate(addDays(new Date(), -(days - 1)));
+  const { data } = await supabase
+    .from("daily_cash_entries")
+    .select("*")
+    .in("store_id", storeIds)
+    .gte("entry_date", start)
+    .order("entry_date", { ascending: false });
+  return (data ?? []) as DailyCashEntry[];
+}
+
 /** All daily entries for the given stores within a week. */
 export async function loadWeekEntries(
   storeIds: string[],
