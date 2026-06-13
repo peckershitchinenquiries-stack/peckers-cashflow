@@ -100,6 +100,14 @@ export interface ComparisonRow {
   gross_sales_wow_pct: Num;
 }
 
+export interface LaborCostRow {
+  store: string;
+  week_start_date: string;
+  labour_cost: Num;
+  revenue: Num;
+  labour_pct: Num;
+}
+
 export interface WeekOption {
   week_start: string;
   week_end: string;

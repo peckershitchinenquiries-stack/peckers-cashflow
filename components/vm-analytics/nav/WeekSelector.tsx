@@ -20,20 +20,24 @@ export function WeekSelector({ weeks }: { weeks: WeekOption[] }) {
 
   if (weeks.length === 0) {
     return (
-      <span className="text-sm text-ink-faint">No weeks synced yet</span>
+      <span className="text-sm text-secondary">No weeks synced yet</span>
     );
   }
 
   return (
     <label className="flex items-center gap-2 text-sm">
-      <span className="text-ink-faint">Week</span>
+      <span className="text-secondary">Week</span>
       <select
         value={selected ?? weeks[0].week_start_iso}
         onChange={onChange}
-        className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-ink shadow-sm focus:border-brand focus:outline-none"
+        className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-brand focus:outline-none"
       >
         {weeks.map((w) => (
-          <option key={w.week_start_iso} value={w.week_start_iso}>
+          <option
+            key={w.week_start_iso}
+            value={w.week_start_iso}
+            className="bg-surface text-primary"
+          >
             {weekRange(w.week_start, w.week_end)}
           </option>
         ))}

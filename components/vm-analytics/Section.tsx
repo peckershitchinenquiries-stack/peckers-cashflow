@@ -8,11 +8,11 @@ export function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-3">
+    <section className="vm-section">
       <div>
-        <h2 className="text-lg font-semibold text-ink">{title}</h2>
+        <h2 className="vm-section-title">{title}</h2>
         {description && (
-          <p className="text-sm text-ink-soft">{description}</p>
+          <p className="vm-section-description">{description}</p>
         )}
       </div>
       {children}
@@ -28,8 +28,8 @@ export function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 text-sm font-semibold text-ink">{title}</div>
+    <div className="vm-card p-4">
+      <div className="mb-4 text-sm font-semibold text-primary">{title}</div>
       {children}
     </div>
   );

@@ -13,18 +13,18 @@ export function KpiCard({
 }) {
   const showDelta = delta !== undefined;
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+    <div className="vm-card p-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-secondary">
         {label}
       </div>
-      <div className="mt-1 text-2xl font-semibold text-ink">{value}</div>
-      <div className="mt-1 flex items-center gap-2 text-xs">
+      <div className="mt-2 text-3xl font-bold text-primary">{value}</div>
+      <div className="mt-3 flex items-center gap-2 text-xs">
         {showDelta && (
-          <span className={`font-medium ${deltaClass(delta)}`}>
+          <span className={`font-semibold ${deltaClass(delta)}`}>
             {signedPct(delta)} WoW
           </span>
         )}
-        {hint && <span className="text-ink-faint">{hint}</span>}
+        {hint && <span className="text-tertiary">{hint}</span>}
       </div>
     </div>
   );

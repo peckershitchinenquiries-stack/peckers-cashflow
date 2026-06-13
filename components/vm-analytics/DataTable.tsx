@@ -19,20 +19,20 @@ export function DataTable<T>({
   emptyMessage?: string;
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div className="vm-table-container">
       {caption && (
-        <div className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-ink">
+        <div className="border-b border-line px-4 py-3 text-sm font-semibold bg-surface text-primary">
           {caption}
         </div>
       )}
       <div className="table-scroll overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="vm-table text-sm">
           <thead>
-            <tr className="bg-slate-50 text-ink-soft">
+            <tr className="bg-surface-hover text-secondary">
               {columns.map((c) => (
                 <th
                   key={c.key}
-                  className={`whitespace-nowrap px-4 py-2.5 font-medium ${
+                  className={`whitespace-nowrap px-4 py-3 font-semibold uppercase text-xs tracking-wide border-b border-line ${
                     c.align === "right"
                       ? "text-right"
                       : c.align === "center"
@@ -50,21 +50,18 @@ export function DataTable<T>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="px-4 py-8 text-center text-ink-faint"
+                  className="px-4 py-8 text-center text-tertiary"
                 >
                   {emptyMessage}
                 </td>
               </tr>
             ) : (
               rows.map((row, i) => (
-                <tr
-                  key={i}
-                  className="border-t border-slate-100 hover:bg-slate-50/60"
-                >
+                <tr key={i} className="hover:bg-surface-hover">
                   {columns.map((c) => (
                     <td
                       key={c.key}
-                      className={`whitespace-nowrap px-4 py-2.5 ${
+                      className={`whitespace-nowrap px-4 py-3 text-primary ${
                         c.align === "right"
                           ? "text-right tabular-nums"
                           : c.align === "center"

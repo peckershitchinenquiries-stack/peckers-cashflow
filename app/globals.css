@@ -109,6 +109,83 @@
     @apply inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-all duration-150
            disabled:opacity-50 disabled:cursor-not-allowed select-none;
   }
+
+  /* Theme-aware utilities for VM Dashboard */
+  .bg-surface {
+    @apply transition-colors duration-200;
+    background-color: rgb(var(--color-surface));
+  }
+
+  .bg-surface-hover {
+    background-color: rgb(var(--color-surface-hover));
+  }
+
+  .border-line {
+    border-color: rgb(var(--color-border));
+  }
+
+  .border-line-strong {
+    border-color: rgb(var(--color-border-strong));
+  }
+
+  .text-primary {
+    color: rgb(var(--color-text-primary));
+  }
+
+  .text-secondary {
+    color: rgb(var(--color-text-muted));
+  }
+
+  .text-tertiary {
+    color: rgb(var(--color-text-subtle));
+  }
+
+  /* VM Dashboard card styling */
+  .vm-card {
+    @apply rounded-xl border bg-surface border-line shadow-sm transition-all duration-200;
+  }
+
+  .vm-card:hover {
+    @apply bg-surface-hover;
+  }
+
+  /* VM Dashboard section styling */
+  .vm-section {
+    @apply space-y-4;
+  }
+
+  .vm-section-title {
+    @apply text-lg font-semibold text-primary;
+  }
+
+  .vm-section-description {
+    @apply text-sm text-secondary;
+  }
+
+  /* VM Dashboard table styling */
+  .vm-table-container {
+    @apply overflow-x-auto rounded-xl border border-line;
+  }
+
+  .vm-table {
+    @apply w-full;
+  }
+
+  .vm-table th {
+    @apply bg-surface-hover px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-secondary border-b border-line;
+  }
+
+  .vm-table td {
+    @apply px-4 py-3 border-b border-line text-primary;
+  }
+
+  .vm-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .vm-table tbody tr:hover {
+    @apply bg-surface-hover;
+  }
 }
 
 /* Recharts theme tweaks (use CSS vars so they swap with the theme) */

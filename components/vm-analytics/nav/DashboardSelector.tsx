@@ -30,23 +30,23 @@ export function DashboardSelector() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-left shadow-sm transition hover:border-brand"
+        className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-left shadow-sm transition hover:border-brand"
       >
         <span className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-xs font-bold text-white">
             VM
           </span>
           <span>
-            <span className="block text-xs font-medium text-ink-faint">
+            <span className="block text-xs font-medium text-secondary">
               VM Analytics
             </span>
-            <span className="block text-sm font-semibold text-ink">
+            <span className="block text-sm font-semibold text-primary">
               {active ? active.title : "Select a dashboard"}
             </span>
           </span>
         </span>
         <svg
-          className={`h-4 w-4 text-ink-faint transition-transform ${
+          className={`h-4 w-4 text-secondary transition-transform ${
             open ? "rotate-180" : ""
           }`}
           viewBox="0 0 20 20"
@@ -61,7 +61,7 @@ export function DashboardSelector() {
       </button>
 
       {open && (
-        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
           {DASHBOARDS.map((d) => {
             const isActive = active?.key === d.key;
             return (
@@ -69,14 +69,14 @@ export function DashboardSelector() {
                 key={d.key}
                 href={`${d.href}${qs}`}
                 onClick={() => setOpen(false)}
-                className={`block px-4 py-2.5 transition hover:bg-brand-light ${
-                  isActive ? "bg-brand-light/60" : ""
+                className={`block px-4 py-2.5 transition hover:bg-surface-hover ${
+                  isActive ? "bg-surface-hover" : ""
                 }`}
               >
-                <span className="block text-sm font-medium text-ink">
+                <span className="block text-sm font-medium text-primary">
                   {d.title}
                 </span>
-                <span className="block text-xs text-ink-faint">{d.blurb}</span>
+                <span className="block text-xs text-secondary">{d.blurb}</span>
               </Link>
             );
           })}
