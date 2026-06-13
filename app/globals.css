@@ -131,3 +131,11 @@
 .recharts-legend-item-text {
   color: rgb(var(--color-text-subtle)) !important;
 }
+
+/* VM Analytics table scroll styling */
+.table-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 rounded-full;
+}
