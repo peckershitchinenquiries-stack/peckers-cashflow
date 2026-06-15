@@ -152,6 +152,39 @@ export function weekdayIndex(d: Date): number {
   return (d.getDay() + 6) % 7;
 }
 
+/**
+ * Resolve the rota's visible date range from optional `start`/`end` query
+ * params. Defaults to the current ISO week (Mon–Sun) when params are missing
+ * or invalid, guarantees start ≤ end, and caps the span to one year so a
+ * stray URL can't trigger an enormous query.
+ */
+export function resolveRotaRange(
+  startParam?: string | string[],
+  endParam?: string | string[],
+): { startIso: string; endIso: string } {
+  const pick = (v?: string | string[]) => (Array.isArray(v) ? v[0] : v);
+  const isISO = (s?: string) =>
+    !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(parseISODate(s).getTime());
+
+  const sp = pick(startParam);
+  const ep = pick(endParam);
+  const weekStart = startOfISOWeek(new Date());
+
+  let start = isISO(sp) ? parseISODate(sp!) : weekStart;
+  let end = isISO(ep) ? parseISODate(ep!) : addDays(start, 6);
+
+  if (end.getTime() < start.getTime()) {
+    const tmp = start;
+    start = end;
+    end = tmp;
+  }
+  // Cap span at 366 days.
+  if (end.getTime() - start.getTime() > 366 * 86_400_000) {
+    end = addDays(start, 366);
+  }
+  return { startIso: toISODate(start), endIso: toISODate(end) };
+}
+
 // ---------------- time / shift helpers ----------------
 /** Convert HH:MM (24h) string to minutes since midnight. */
 export function timeToMinutes(t: string | null | undefined): number {

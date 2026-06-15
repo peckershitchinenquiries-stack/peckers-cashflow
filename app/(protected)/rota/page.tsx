@@ -4,6 +4,8 @@ import { RotaView } from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
 import {
   addDays,
+  parseISODate,
+  resolveRotaRange,
   startOfISOWeek,
   toISODate,
   todayISO,
@@ -19,19 +21,23 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-export default async function RotaPage() {
+export default async function RotaPage({
+  searchParams,
+}: {
+  searchParams: { start?: string; end?: string };
+}) {
   const user = await requireUser();
   const supabase = createServerSupabase();
   const settings = await getAppSettings();
 
-  // Default week = this week (Mon..Sun)
-  const today = new Date();
-  const weekStart = startOfISOWeek(today);
-  const weekStartIso = toISODate(weekStart);
-  const weekEndIso = toISODate(addDays(weekStart, 6));
+  // Visible range — defaults to the current ISO week, fully customizable via
+  // ?start=&end= query params set by the calendar picker.
+  const { startIso, endIso } = resolveRotaRange(searchParams.start, searchParams.end);
+  // Weekly deliveries stay anchored to the ISO week containing the range start.
+  const weekStartIso = toISODate(startOfISOWeek(parseISODate(startIso)));
 
   // For 4-week rolling avg we also fetch the prior 4 weeks of shifts
-  const fourWeeksBack = toISODate(addDays(weekStart, -28));
+  const fourWeeksBack = toISODate(addDays(parseISODate(weekStartIso), -28));
 
   const [storesRes, employeesRes, shiftsRes, clocksRes, deliveriesRes, schedulesRes] =
     await Promise.all([
@@ -45,7 +51,7 @@ export default async function RotaPage() {
         .from("rota_shifts")
         .select("*")
         .gte("shift_date", fourWeeksBack)
-        .lte("shift_date", weekEndIso),
+        .lte("shift_date", endIso),
       supabase
         .from("clock_events")
         .select("*")
@@ -72,7 +78,8 @@ export default async function RotaPage() {
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         minWageBands={settings.min_wage_bands}
-        weekStartIso={weekStartIso}
+        rangeStartIso={startIso}
+        rangeEndIso={endIso}
         userRole={user.allowed?.role ?? "manager"}
         userStoreId={user.allowed?.store_id ?? null}
       />

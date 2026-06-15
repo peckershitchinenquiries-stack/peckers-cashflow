@@ -2,7 +2,14 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { RotaView } from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
-import { addDays, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
+import {
+  addDays,
+  parseISODate,
+  resolveRotaRange,
+  startOfISOWeek,
+  toISODate,
+  todayISO,
+} from "@/lib/utils";
 import type {
   Employee,
   EmployeeScheduleDay,
@@ -14,16 +21,21 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-export default async function ManagerRotaPage() {
+export default async function ManagerRotaPage({
+  searchParams,
+}: {
+  searchParams: { start?: string; end?: string };
+}) {
   const user = await requireRole(["manager"]);
   const storeId = user.allowed?.store_id ?? "";
   const supabase = createServerSupabase();
   const settings = await getAppSettings();
 
-  const weekStart = startOfISOWeek(new Date());
-  const weekStartIso = toISODate(weekStart);
-  const weekEndIso = toISODate(addDays(weekStart, 6));
-  const fourWeeksBack = toISODate(addDays(weekStart, -28));
+  const { startIso, endIso } = resolveRotaRange(searchParams.start, searchParams.end);
+  // Weekly deliveries stay anchored to the ISO week containing the range start.
+  const weekStartIso = toISODate(startOfISOWeek(parseISODate(startIso)));
+  // Fetch 4 prior weeks (from the range start) so the rolling avg has history.
+  const fourWeeksBack = toISODate(addDays(parseISODate(weekStartIso), -28));
 
   const [storesRes, employeesRes, shiftsRes, clocksRes, deliveriesRes, schedulesRes] =
     await Promise.all([
@@ -39,7 +51,7 @@ export default async function ManagerRotaPage() {
         .select("*")
         .eq("store_id", storeId)
         .gte("shift_date", fourWeeksBack)
-        .lte("shift_date", weekEndIso),
+        .lte("shift_date", endIso),
       supabase
         .from("clock_events")
         .select("*")
@@ -68,7 +80,8 @@ export default async function ManagerRotaPage() {
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         minWageBands={settings.min_wage_bands}
-        weekStartIso={weekStartIso}
+        rangeStartIso={startIso}
+        rangeEndIso={endIso}
         userRole="manager"
         userStoreId={storeId || null}
       />

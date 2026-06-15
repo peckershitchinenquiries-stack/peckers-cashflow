@@ -1,21 +1,21 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
+import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { ShiftEditModal } from "./ShiftEditModal";
 import { DeliveryEditModal } from "./DeliveryEditModal";
 import {
   WEEKDAY_SHORT,
   addDays,
-  formatDDMMYYYY,
+  eachDay,
   formatGBP,
   formatShiftRange,
   parseISODate,
-  shiftHours,
   startOfISOWeek,
   toISODate,
   todayISO,
@@ -42,7 +42,8 @@ type Props = {
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
   minWageBands?: MinWageBands;
-  weekStartIso: string;
+  rangeStartIso: string;
+  rangeEndIso: string;
   userRole: string;
   userStoreId: string | null;
 };
@@ -55,13 +56,19 @@ export function RotaView({
   weeklyDeliveries,
   schedules = [],
   minWageBands = DEFAULT_SETTINGS.min_wage_bands,
-  weekStartIso,
+  rangeStartIso,
+  rangeEndIso,
   userRole,
   userStoreId,
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const toast = useToast();
-  const [weekStart, setWeekStart] = React.useState(parseISODate(weekStartIso));
+  const rangeStart = React.useMemo(() => parseISODate(rangeStartIso), [rangeStartIso]);
+  const rangeEnd = React.useMemo(() => parseISODate(rangeEndIso), [rangeEndIso]);
+  // ISO week anchoring the range start — used for weekly deliveries & "apply
+  // defaults", both of which remain week-based concepts.
+  const weekStart = React.useMemo(() => startOfISOWeek(rangeStart), [rangeStart]);
   const [applying, setApplying] = React.useState(false);
   const [activeStoreId, setActiveStoreId] = React.useState<string>(
     userStoreId && stores.some((s) => s.id === userStoreId)
@@ -83,10 +90,13 @@ export function RotaView({
 
   const isSuperAdmin = userRole === "admin";
   const activeStore = stores.find((s) => s.id === activeStoreId);
+  // Every day in the selected range (kept as `weekDays` for the rest of the
+  // component, but it can now span any number of days).
   const weekDays = React.useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
+    () => eachDay(rangeStart, rangeEnd),
+    [rangeStart, rangeEnd],
   );
+  const rangeDayCount = weekDays.length;
 
   // Employees for current store
   const storeEmployees = employees.filter(
@@ -168,11 +178,25 @@ export function RotaView({
     return result;
   }, [shifts, employees, weekStart]);
 
-  function shiftWeek(delta: number) {
-    setWeekStart((w) => addDays(w, delta * 7));
-    // Note: this client-side shift; data is already loaded for prior 4 weeks
-    // For a full reload to another week, we'd hit the server. Refresh is fine.
-    router.refresh();
+  // Navigate by pushing the range to the URL; the server page re-fetches the
+  // shifts/clocks for whatever range is requested.
+  function setRange(startIso: string, endIso: string) {
+    router.push(`${pathname}?start=${startIso}&end=${endIso}`);
+  }
+
+  // Step the whole window forward/backward by its own length, so paging keeps
+  // showing the same number of days.
+  function shiftRange(direction: number) {
+    const step = direction * rangeDayCount;
+    setRange(
+      toISODate(addDays(rangeStart, step)),
+      toISODate(addDays(rangeEnd, step)),
+    );
+  }
+
+  function goToday() {
+    const ws = startOfISOWeek(new Date());
+    setRange(toISODate(ws), toISODate(addDays(ws, 6)));
   }
 
   // Generate this week's shifts from each employee's recurring schedule.
@@ -210,12 +234,34 @@ export function RotaView({
     }, 0);
   }
 
+  // Scheduled hours within the range, grouped by ISO week. The NI/cash split
+  // (first 20h NI, remainder cash) is a weekly rule, so for multi-week ranges
+  // we apply the 20h threshold per week rather than across the whole range.
+  function hoursByWeek(empId: string): number[] {
+    const byWeek = new Map<string, number>();
+    for (const d of weekDays) {
+      const s = shiftByKey.get(`${empId}:${toISODate(d)}`);
+      if (!s || s.is_day_off) continue;
+      const wk = toISODate(startOfISOWeek(d));
+      byWeek.set(wk, (byWeek.get(wk) ?? 0) + Number(s.scheduled_hours ?? 0));
+    }
+    return Array.from(byWeek.values());
+  }
+
+  // Cash hours = sum of hours above 20 in each week of the range.
+  function weekCashHours(empId: string): number {
+    return hoursByWeek(empId).reduce((sum, h) => sum + Math.max(h - 20, 0), 0);
+  }
+
   function weekWages(emp: Employee): { ni: number; cash: number; total: number } {
-    const hours = weekTotalHours(emp.id);
-    const niHours = Math.min(hours, 20);
-    const cashHours = Math.max(hours - 20, 0);
     const niRate = Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0);
     const cashRate = Number(emp.hourly_cash_rate ?? 0);
+    let niHours = 0;
+    let cashHours = 0;
+    for (const h of hoursByWeek(emp.id)) {
+      niHours += Math.min(h, 20);
+      cashHours += Math.max(h - 20, 0);
+    }
     const ni = niHours * niRate;
     const cash = cashHours * cashRate;
     return { ni, cash, total: ni + cash };
@@ -261,35 +307,27 @@ export function RotaView({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => shiftWeek(-1)}
+              onClick={() => shiftRange(-1)}
               iconLeft={<ChevronLeftIcon size={14} />}
+              title={`Back ${rangeDayCount} day${rangeDayCount === 1 ? "" : "s"}`}
             >
               Prev
             </Button>
-            <div className="text-sm text-text-subtle text-center min-w-[180px]">
-              <div className="text-xs text-text-muted uppercase tracking-wider">
-                Week
-              </div>
-              <div className="font-medium">
-                {formatDDMMYYYY(weekDays[0])} – {formatDDMMYYYY(weekDays[6])}
-              </div>
-            </div>
+            <DateRangePicker
+              start={rangeStartIso}
+              end={rangeEndIso}
+              onApply={setRange}
+            />
             <Button
               variant="outline"
               size="sm"
-              onClick={() => shiftWeek(1)}
+              onClick={() => shiftRange(1)}
               iconRight={<ChevronRightIcon size={14} />}
+              title={`Forward ${rangeDayCount} day${rangeDayCount === 1 ? "" : "s"}`}
             >
               Next
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setWeekStart(startOfISOWeek(new Date()));
-                router.refresh();
-              }}
-            >
+            <Button variant="ghost" size="sm" onClick={goToday}>
               Today
             </Button>
           </div>
@@ -357,6 +395,7 @@ export function RotaView({
               )}
               {storeEmployees.map((emp) => {
                 const total = weekTotalHours(emp.id);
+                const cashHrs = weekCashHours(emp.id);
                 const avg = fourWkAvg.get(emp.id) ?? 0;
                 const wages = weekWages(emp);
                 const variance =
@@ -487,9 +526,9 @@ export function RotaView({
                       {total.toFixed(1)}h
                     </td>
                     <td className="px-2 py-2 text-right">
-                      {total > 20 ? (
+                      {cashHrs > 0 ? (
                         <span className="font-medium text-gold">
-                          {(total - 20).toFixed(1)}h
+                          {cashHrs.toFixed(1)}h
                         </span>
                       ) : (
                         <span className="text-text-muted">—</span>
