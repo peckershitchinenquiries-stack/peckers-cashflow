@@ -26,6 +26,7 @@ export type NavItem = {
 // ---- Admin portal (root URLs) ----
 export const adminNav: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
+  { href: "/vm-analytics/executive", label: "VM Analytics", icon: ChartIcon },
   { href: "/live", label: "Live", icon: RadioIcon, group: "Operations" },
   { href: "/rota", label: "Rota", icon: GridIcon, group: "Operations" },
   { href: "/alerts", label: "Alerts", icon: AlertIcon, group: "Operations" },
