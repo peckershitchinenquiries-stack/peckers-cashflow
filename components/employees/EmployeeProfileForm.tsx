@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Input, Select, Textarea } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { POSITION_OPTIONS } from "@/lib/types";
 import { ageFromDOB, minWageForAge } from "@/lib/compliance";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
@@ -156,11 +157,11 @@ export function EmployeeProfileForm({
             onChange={(e) => set("phone", e.target.value)}
             placeholder="optional"
           />
-          <Input
-            type="date"
-            label="Date of birth *"
+          <DatePicker
+            label="Date of birth"
+            required
             value={form.date_of_birth}
-            onChange={(e) => set("date_of_birth", e.target.value)}
+            onChange={(v) => set("date_of_birth", v)}
             error={errors.date_of_birth}
           />
           <Select
@@ -209,11 +210,11 @@ export function EmployeeProfileForm({
               </option>
             ))}
           </Select>
-          <Input
-            type="date"
-            label="Employment start *"
+          <DatePicker
+            label="Employment start"
+            required
             value={form.employment_start_date}
-            onChange={(e) => set("employment_start_date", e.target.value)}
+            onChange={(v) => set("employment_start_date", v)}
             error={errors.employment_start_date}
             hint={service ? `Length of service: ${service}` : undefined}
           />

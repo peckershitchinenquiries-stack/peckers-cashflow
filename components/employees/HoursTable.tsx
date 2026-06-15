@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
@@ -189,17 +190,15 @@ export function HoursTable({
             </option>
           ))}
         </Select>
-        <Input
-          type="date"
+        <DatePicker
           label="From"
           value={from}
-          onChange={(e) => setFrom(e.target.value)}
+          onChange={setFrom}
         />
-        <Input
-          type="date"
+        <DatePicker
           label="To"
           value={to}
-          onChange={(e) => setTo(e.target.value)}
+          onChange={setTo}
         />
       </div>
 

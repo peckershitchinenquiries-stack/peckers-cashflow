@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Modal } from "@/components/ui/Modal";
 import { Input } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { updateCashEntry } from "@/app/actions/entries";
@@ -69,11 +70,10 @@ export function EditEntryModal({
       }
     >
       <form id="edit-entry-form" onSubmit={submit} className="flex flex-col gap-4">
-        <Input
-          type="date"
+        <DatePicker
           label="Date"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={setDate}
           required
         />
         <Input

@@ -4,6 +4,7 @@ import * as React from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ChevronDownIcon, DownloadIcon, ListIcon } from "@/components/ui/icons";
@@ -80,8 +81,8 @@ export function PayoutHistoryView({
     <div className="flex flex-col gap-4">
       <Card className="print:hidden">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-          <Input type="date" label="From" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <Input type="date" label="To" value={to} onChange={(e) => setTo(e.target.value)} />
+          <DatePicker label="From" value={from} onChange={setFrom} />
+          <DatePicker label="To" value={to} onChange={setTo} />
           {isAdmin && (
             <Select label="Store" value={store} onChange={(e) => setStore(e.target.value)}>
               <option value="">All stores</option>

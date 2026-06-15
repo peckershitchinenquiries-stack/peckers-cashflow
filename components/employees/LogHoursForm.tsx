@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Input, Select } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { logEmployeeHours } from "@/app/actions/employees";
@@ -99,11 +100,10 @@ export function LogHoursForm({
         ))}
       </Select>
 
-      <Input
-        type="date"
+      <DatePicker
         label="Week Start (Mon)"
         value={weekStart}
-        onChange={(e) => onDateChange(e.target.value)}
+        onChange={onDateChange}
         hint="Auto-snaps to Monday of the chosen week."
         error={errors.week}
       />

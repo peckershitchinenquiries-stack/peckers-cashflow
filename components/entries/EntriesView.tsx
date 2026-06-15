@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input, Select } from "@/components/ui/Input";
+import { DatePicker } from "@/components/ui/DatePicker";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
@@ -122,17 +123,15 @@ export function EntriesView({
     <div className="flex flex-col gap-4">
       <Card>
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-          <Input
-            type="date"
+          <DatePicker
             label="From"
             value={from}
-            onChange={(e) => setFrom(e.target.value)}
+            onChange={setFrom}
           />
-          <Input
-            type="date"
+          <DatePicker
             label="To"
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={setTo}
           />
           <Select
             label="Manager"
