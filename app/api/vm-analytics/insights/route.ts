@@ -1,4 +1,5 @@
 import { buildInsights, buildClaudePrompt, type InsightInput } from "@/lib/vm-analytics/insights";
+import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
 import type { Insight } from "@/lib/vm-analytics/types";
 
 export const runtime = "nodejs";
@@ -14,45 +15,90 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    return Response.json(buildInsights(input) satisfies Insight);
-  }
-
+  // ── Step 1: Cache check ────────────────────────────────────────────────────
+  // If a summary for this (week, dashboard) pair already exists, return it
+  // immediately — no Claude call, no cost.
   try {
-    const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey });
-    const model = process.env.ANTHROPIC_MODEL || "claude-haiku-4-5-20251001";
+    const sb = getVMSupabaseServer();
+    const { data: cached } = await sb
+      .from("vm_generated_insights")
+      .select("summary, bullets, source")
+      .eq("week_start_iso", input.week)
+      .eq("dashboard", input.dashboard)
+      .single();
 
-    const msg = await client.messages.create({
-      model,
-      max_tokens: 700,
-      messages: [{ role: "user", content: buildClaudePrompt(input) }],
-    });
-
-    const text = msg.content
-      .filter((b): b is { type: "text"; text: string } => b.type === "text")
-      .map((b) => b.text)
-      .join("")
-      .trim();
-
-    const json = extractJson(text);
-    if (
-      json &&
-      typeof json.summary === "string" &&
-      Array.isArray(json.bullets)
-    ) {
+    if (cached?.summary) {
       return Response.json({
-        source: "claude",
-        summary: json.summary,
-        bullets: json.bullets.map(String),
+        source: cached.source as "claude" | "rules",
+        summary: cached.summary as string,
+        bullets: cached.bullets as string[],
       } satisfies Insight);
     }
-    return Response.json(buildInsights(input) satisfies Insight);
-  } catch (err) {
-    console.error("[insights] Claude call failed, using rules:", err);
-    return Response.json(buildInsights(input) satisfies Insight);
+  } catch {
+    // Table missing or network error — treat as cache miss, continue.
   }
+
+  // ── Step 2: Generate (Claude if key present, otherwise rule-based) ─────────
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  let insight: Insight;
+
+  if (!apiKey) {
+    insight = buildInsights(input);
+  } else {
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey });
+      const model = process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5-20251001";
+
+      const msg = await client.messages.create({
+        model,
+        max_tokens: 700,
+        messages: [{ role: "user", content: buildClaudePrompt(input) }],
+      });
+
+      const text = msg.content
+        .filter((b): b is { type: "text"; text: string } => b.type === "text")
+        .map((b) => b.text)
+        .join("")
+        .trim();
+
+      const json = extractJson(text);
+      if (json && typeof json.summary === "string" && Array.isArray(json.bullets)) {
+        insight = {
+          source: "claude",
+          summary: json.summary,
+          bullets: json.bullets.map(String),
+        };
+      } else {
+        insight = buildInsights(input);
+      }
+    } catch (err) {
+      console.error("[insights] Claude call failed, falling back to rules:", err);
+      insight = buildInsights(input);
+    }
+  }
+
+  // ── Step 3: Persist to cache (fire-and-forget, non-fatal) ─────────────────
+  // The next user to open this (week, dashboard) gets the cached result —
+  // no API call and no delay regardless of how many times they switch weeks.
+  try {
+    const sb = getVMSupabaseServer();
+    await sb.from("vm_generated_insights").upsert(
+      {
+        week_start_iso: input.week,
+        dashboard: input.dashboard,
+        summary: insight.summary,
+        bullets: insight.bullets,
+        source: insight.source,
+        generated_at: new Date().toISOString(),
+      },
+      { onConflict: "week_start_iso,dashboard" }
+    );
+  } catch (err) {
+    console.warn("[insights] Cache write failed (non-fatal):", err);
+  }
+
+  return Response.json(insight satisfies Insight);
 }
 
 function extractJson(text: string): { summary?: unknown; bullets?: unknown } | null {
