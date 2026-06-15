@@ -32,6 +32,13 @@ export async function upsertShift(input: RotaShiftInput) {
   if (!input.store_id) throw new Error("Missing store");
   if (!input.shift_date) throw new Error("Missing date");
 
+  // Past days are read-only — only today and future shifts can be edited.
+  if (input.shift_date < todayISO()) {
+    throw new Error(
+      "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
+    );
+  }
+
   const isDayOff = !!input.is_day_off;
   const start = isDayOff ? null : input.start_time?.slice(0, 5) || null;
   const end = isDayOff ? null : input.end_time?.slice(0, 5) || null;
@@ -113,6 +120,19 @@ export async function upsertShift(input: RotaShiftInput) {
 export async function deleteShift(id: string) {
   await requireAllowed();
   const supabase = createServerSupabase();
+
+  // Block clearing shifts on past days — they are read-only.
+  const { data: existing } = await supabase
+    .from("rota_shifts")
+    .select("shift_date")
+    .eq("id", id)
+    .maybeSingle();
+  if (existing && existing.shift_date < todayISO()) {
+    throw new Error(
+      "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
+    );
+  }
+
   const { error } = await supabase.from("rota_shifts").delete().eq("id", id);
   if (error) throw new Error(error.message);
   await writeAudit({ action: "delete", entity: "rota_shift", entity_id: id });

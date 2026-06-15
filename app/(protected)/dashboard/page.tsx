@@ -67,6 +67,7 @@ async function loadDashboardData() {
         supermarket_expenses: Number(e.supermarket_expenses || 0),
         difference: Number(e.difference || 0),
         is_late: !!e.is_late,
+        created_at: e.created_at,
       })),
     };
   });

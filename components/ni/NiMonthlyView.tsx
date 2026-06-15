@@ -3,7 +3,11 @@
 import * as React from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { DownloadIcon } from "@/components/ui/icons";
+import { Badge } from "@/components/ui/Badge";
+import { Modal } from "@/components/ui/Modal";
+import { Input, Select } from "@/components/ui/Input";
+import { useToast } from "@/components/ui/Toast";
+import { DownloadIcon, PlusIcon, TrashIcon } from "@/components/ui/icons";
 import { downloadCSV, formatGBP, formatGBPPlain, toCSV } from "@/lib/utils";
 
 export type NiRow = {
@@ -14,6 +18,8 @@ export type NiRow = {
   employee_name: string;
   ni_hours: number;
   ni_wages: number;
+  /** True for rows added by hand on this page (print-only, never persisted). */
+  manual?: boolean;
 };
 
 type StoreOpt = { id: string; name: string };
@@ -40,13 +46,48 @@ export function NiMonthlyView({
   stores: StoreOpt[];
   isAdmin: boolean;
 }) {
+  const toast = useToast();
   const [activeStoreId, setActiveStoreId] = React.useState(stores[0]?.id ?? "");
   const activeStore = stores.find((s) => s.id === activeStoreId) ?? stores[0];
 
+  // Hand-added rows that exist only on this page — for managers/admins who want
+  // to include an off-system NI line in the printed/exported summary. They are
+  // never saved to the database and don't affect any other figures.
+  const [manualRows, setManualRows] = React.useState<NiRow[]>([]);
+  const [adding, setAdding] = React.useState(false);
+  const manualSeq = React.useRef(0);
+
   const storeRows = React.useMemo(
-    () => rows.filter((r) => r.store_id === activeStore?.id),
-    [rows, activeStore?.id],
+    () => [...rows, ...manualRows].filter((r) => r.store_id === activeStore?.id),
+    [rows, manualRows, activeStore?.id],
   );
+
+  function addManualRow(input: {
+    month: string;
+    employee_name: string;
+    ni_hours: number;
+    ni_wages: number;
+  }) {
+    manualSeq.current += 1;
+    setManualRows((prev) => [
+      ...prev,
+      {
+        store_id: activeStore?.id ?? null,
+        month: input.month,
+        employee_id: `manual:${manualSeq.current}`,
+        employee_name: input.employee_name,
+        ni_hours: input.ni_hours,
+        ni_wages: input.ni_wages,
+        manual: true,
+      },
+    ]);
+    setAdding(false);
+    toast.success("Manual row added (print/export only)");
+  }
+
+  function removeManualRow(employeeId: string) {
+    setManualRows((prev) => prev.filter((r) => r.employee_id !== employeeId));
+  }
 
   // month -> employee -> aggregated totals
   const byMonth = React.useMemo(() => {
@@ -123,6 +164,13 @@ export function NiMonthlyView({
         </div>
         <div className="flex gap-2">
           <Button
+            variant="outline"
+            onClick={() => setAdding(true)}
+            iconLeft={<PlusIcon size={16} />}
+          >
+            Add manual record
+          </Button>
+          <Button
             variant="secondary"
             onClick={exportCSV}
             iconLeft={<DownloadIcon size={16} />}
@@ -174,6 +222,7 @@ export function NiMonthlyView({
                       <th className="px-4 py-2.5 font-medium">Employee</th>
                       <th className="px-4 py-2.5 font-medium text-right">NI hours</th>
                       <th className="px-4 py-2.5 font-medium text-right">NI wages</th>
+                      <th className="px-4 py-2.5 w-10 print:hidden"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -182,12 +231,30 @@ export function NiMonthlyView({
                         key={e.employee_id}
                         className={`${i % 2 === 0 ? "" : "bg-bg/40"} border-t border-border/60`}
                       >
-                        <td className="px-4 py-2.5 font-medium">{e.employee_name}</td>
+                        <td className="px-4 py-2.5 font-medium">
+                          {e.employee_name}
+                          {e.manual && (
+                            <Badge variant="gold" className="ml-2 text-[10px] py-0 px-1.5 print:hidden">
+                              Manual
+                            </Badge>
+                          )}
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">
                           {e.ni_hours.toFixed(1)}h
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums">
                           {formatGBP(e.ni_wages)}
+                        </td>
+                        <td className="px-2 py-2.5 text-right print:hidden">
+                          {e.manual && (
+                            <button
+                              onClick={() => removeManualRow(e.employee_id)}
+                              aria-label="Remove manual row"
+                              className="text-text-muted hover:text-danger transition-colors"
+                            >
+                              <TrashIcon size={15} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -201,6 +268,7 @@ export function NiMonthlyView({
                       <td className="px-4 py-2.5 text-right tabular-nums text-gold">
                         {formatGBP(niTotal)}
                       </td>
+                      <td className="print:hidden"></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -209,6 +277,116 @@ export function NiMonthlyView({
           );
         })
       )}
+
+      {adding && (
+        <ManualNiModal
+          storeName={activeStore.name}
+          onClose={() => setAdding(false)}
+          onAdd={addManualRow}
+        />
+      )}
     </div>
+  );
+}
+
+/** Print-only manual NI line — collects a month, name, hours and wages. */
+function ManualNiModal({
+  storeName,
+  onClose,
+  onAdd,
+}: {
+  storeName: string;
+  onClose: () => void;
+  onAdd: (input: {
+    month: string;
+    employee_name: string;
+    ni_hours: number;
+    ni_wages: number;
+  }) => void;
+}) {
+  // Last 12 months (current first) as YYYY-MM options.
+  const monthOptions = React.useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 12 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return { key, label: monthLabel(key) };
+    });
+  }, []);
+
+  const [month, setMonth] = React.useState(monthOptions[0].key);
+  const [name, setName] = React.useState("");
+  const [hours, setHours] = React.useState("");
+  const [wages, setWages] = React.useState("");
+
+  const canSave = name.trim() !== "" && wages !== "";
+
+  function save() {
+    if (!canSave) return;
+    onAdd({
+      month,
+      employee_name: name.trim(),
+      ni_hours: Number(hours) || 0,
+      ni_wages: Number(wages) || 0,
+    });
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Add manual NI record"
+      description={`Print/export only — added to the ${storeName} summary, never saved to the system.`}
+      size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={!canSave}>
+            Add row
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <Select label="Month" value={month} onChange={(e) => setMonth(e.target.value)}>
+          {monthOptions.map((m) => (
+            <option key={m.key} value={m.key}>
+              {m.label}
+            </option>
+          ))}
+        </Select>
+        <Input
+          label="Employee name *"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Sandeep Kumar"
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <Input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            label="NI hours"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            placeholder="0.0"
+          />
+          <Input
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            label="NI wages *"
+            prefix="£"
+            value={wages}
+            onChange={(e) => setWages(e.target.value)}
+            placeholder="0.00"
+          />
+        </div>
+      </div>
+    </Modal>
   );
 }

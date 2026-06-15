@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
-import { addDays, parseISODate, shiftHours, toISODate } from "@/lib/utils";
+import { addDays, parseISODate, shiftHours, toISODate, todayISO } from "@/lib/utils";
 import type { EmployeeScheduleDay } from "@/lib/types";
 
 async function requireStaff() {
@@ -184,11 +184,14 @@ export async function applyScheduleToWeek(input: {
   const updates: Array<{ id: string; payload: Record<string, unknown> }> = [];
   let skipped = 0;
 
+  const today = todayISO();
+
   for (const emp of employees) {
     for (let wd = 0; wd < 7; wd++) {
       const tmpl = schedByKey.get(`${emp.id}:${wd}`);
       if (!tmpl) continue; // no template for this weekday → leave rota untouched
       const date = toISODate(addDays(weekStart, wd));
+      if (date < today) continue; // past days are locked — never generate shifts for them
       const working = tmpl.is_working;
       const start = working ? tmpl.start_time : null;
       const end = working ? tmpl.end_time : null;

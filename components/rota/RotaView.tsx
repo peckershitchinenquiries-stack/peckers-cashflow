@@ -442,6 +442,9 @@ export function RotaView({
                       const cell = shiftByKey.get(`${emp.id}:${dateIso}`);
                       const clk = clockByKey.get(`${emp.id}:${dateIso}`);
                       const isToday = dateIso === todayISO();
+                      // Past days are read-only — managers & admins can view but
+                      // not edit yesterday or earlier; only today onwards.
+                      const isPast = dateIso < todayISO();
                       // Ghost hint: the employee's recurring schedule for this
                       // weekday, shown faintly in empty cells as a suggestion.
                       const tmpl = scheduleByEmpDay.get(
@@ -462,6 +465,33 @@ export function RotaView({
                               end: (prevShift.end_time ?? "").slice(0, 5),
                             }
                           : null;
+                      // Ghost defaults are only actionable on editable days.
+                      const showGhost = ghost && !isPast;
+                      const cellInner = (
+                        <>
+                          {cell ? (
+                            formatShiftRange(
+                              cell.is_day_off,
+                              cell.start_time,
+                              cell.end_time,
+                            )
+                          ) : showGhost ? (
+                            <span className="opacity-60">
+                              {ghost}
+                              <span className="block text-[9px] uppercase tracking-wide">
+                                default
+                              </span>
+                            </span>
+                          ) : (
+                            "—"
+                          )}
+                          {clk?.clock_in_at && (
+                            <div className="text-[9px] text-text-muted mt-0.5">
+                              in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </>
+                      );
                       return (
                         <td
                           key={dateIso}
@@ -470,55 +500,55 @@ export function RotaView({
                             (isToday ? "bg-gold/5" : "")
                           }
                         >
-                          <button
-                            onClick={() =>
-                              setEditingShift({
-                                employee: emp,
-                                date: dateIso,
-                                existing: cell ?? null,
-                                prefill,
-                              })
-                            }
-                            className={
-                              "w-full h-12 rounded-lg text-xs border transition-colors " +
-                              (cell?.is_day_off
-                                ? "bg-danger/10 border-danger/30 text-danger"
-                                : cell?.start_time
-                                  ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+                          {isPast ? (
+                            <div
+                              className={
+                                "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
+                                (cell?.is_day_off
+                                  ? "bg-danger/5 border-danger/20 text-danger"
+                                  : cell?.start_time
+                                    ? "bg-success/5 border-success/20 text-success"
+                                    : "border-dashed border-border text-text-muted")
+                              }
+                              title={
+                                cell?.same_day_edit_reason
+                                  ? `Reason: ${cell.same_day_edit_reason}`
+                                  : "Past day — view only (locked for editing)"
+                              }
+                            >
+                              {cellInner}
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                setEditingShift({
+                                  employee: emp,
+                                  date: dateIso,
+                                  existing: cell ?? null,
+                                  prefill,
+                                })
+                              }
+                              className={
+                                "w-full h-12 rounded-lg text-xs border transition-colors " +
+                                (cell?.is_day_off
+                                  ? "bg-danger/10 border-danger/30 text-danger"
+                                  : cell?.start_time
+                                    ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+                                    : ghost
+                                      ? "border-dashed border-gold/30 text-text-muted hover:bg-gold/5"
+                                      : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+                              }
+                              title={
+                                cell?.same_day_edit_reason
+                                  ? `Reason: ${cell.same_day_edit_reason}`
                                   : ghost
-                                    ? "border-dashed border-gold/30 text-text-muted hover:bg-gold/5"
-                                    : "border-dashed border-border text-text-muted hover:bg-surface-hover")
-                            }
-                            title={
-                              cell?.same_day_edit_reason
-                                ? `Reason: ${cell.same_day_edit_reason}`
-                                : ghost
-                                  ? "Default from recurring schedule — click to add this shift"
-                                  : undefined
-                            }
-                          >
-                            {cell ? (
-                              formatShiftRange(
-                                cell.is_day_off,
-                                cell.start_time,
-                                cell.end_time,
-                              )
-                            ) : ghost ? (
-                              <span className="opacity-60">
-                                {ghost}
-                                <span className="block text-[9px] uppercase tracking-wide">
-                                  default
-                                </span>
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                            {clk?.clock_in_at && (
-                              <div className="text-[9px] text-text-muted mt-0.5">
-                                in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                              </div>
-                            )}
-                          </button>
+                                    ? "Default from recurring schedule — click to add this shift"
+                                    : undefined
+                              }
+                            >
+                              {cellInner}
+                            </button>
+                          )}
                         </td>
                       );
                     })}

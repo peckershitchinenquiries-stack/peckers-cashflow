@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
 import { ListIcon } from "@/components/ui/icons";
-import { formatDDMMYYYY, formatGBP } from "@/lib/utils";
+import { formatDDMMYYYY, formatDateTimeShort, formatGBP } from "@/lib/utils";
 
 type Row = {
   id: string;
@@ -15,6 +15,7 @@ type Row = {
   supermarket_expenses: number;
   difference: number;
   is_late: boolean;
+  created_at: string;
 };
 
 export function RecentEntriesTable({
@@ -43,6 +44,7 @@ export function RecentEntriesTable({
             <thead>
               <tr className="text-left text-xs uppercase tracking-wider text-text-muted">
                 <th className="px-3 py-2 font-medium">Date</th>
+                <th className="px-3 py-2 font-medium">Logged</th>
                 <th className="px-3 py-2 font-medium">Manager</th>
                 <th className="px-3 py-2 font-medium text-right">Sales</th>
                 <th className="px-3 py-2 font-medium text-right">Expenses</th>
@@ -66,6 +68,9 @@ export function RecentEntriesTable({
                           Late
                         </Badge>
                       )}
+                    </td>
+                    <td className="px-3 py-3 whitespace-nowrap text-text-muted tabular-nums">
+                      {formatDateTimeShort(r.created_at)}
                     </td>
                     <td className="px-3 py-3 truncate max-w-[160px]" title={r.store_name ?? undefined}>
                       {r.manager_name || "—"}

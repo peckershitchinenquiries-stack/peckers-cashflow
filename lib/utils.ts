@@ -231,6 +231,14 @@ export function formatTimeOnly(iso: string | null | undefined): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Format a timestamptz to "dd/mm HH:MM" (local) — used to show when a record was logged. */
+export function formatDateTimeShort(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // ---------------- geofencing ----------------
 /** Haversine distance in metres between two lat/lng points. */
 export function haversineMeters(

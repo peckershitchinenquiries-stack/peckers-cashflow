@@ -23,6 +23,7 @@ export type StoreDashboardData = {
     supermarket_expenses: number;
     difference: number;
     is_late: boolean;
+    created_at: string;
   }[];
 };
 
