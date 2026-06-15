@@ -52,9 +52,14 @@ export default async function VmAnalyticsLayout({
       {/* Main content */}
       <div className="flex flex-col bg-bg">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-6 py-3">
-          <span className="text-sm font-medium text-text-muted">
-            VM Analytics
-          </span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium text-text-muted">VM Analytics</span>
+            {weeks[0] && (
+              <span className="text-xs text-text-muted opacity-60">
+                Last synced: week ending {weeks[0].week_end}
+              </span>
+            )}
+          </div>
           <Suspense fallback={null}>
             <WeekSelector weeks={weeks} laborWeeks={laborWeeks} />
           </Suspense>
