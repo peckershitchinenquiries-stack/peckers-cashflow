@@ -231,9 +231,9 @@ export async function getLaborCost(weekIso: string): Promise<LaborCostRow[]> {
       labour_pct: 0,
     };
     // Recalculate labour_pct for the total
-    const rev = total.revenue ?? 0;
-    total.labour_pct =
-      rev > 0 ? Math.round(((total.labour_cost as number) / (rev as number)) * 1000) / 10 : 0;
+    const rev = Number(total.revenue ?? 0);
+    const cost = Number(total.labour_cost ?? 0);
+    total.labour_pct = rev > 0 ? Math.round((cost / rev) * 1000) / 10 : 0;
     return [...rows, total];
   }
   return rows;
