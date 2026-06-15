@@ -91,6 +91,13 @@
     filter: invert(0.85);
   }
 
+  /* Native <select> dropdown list: telling the browser this element uses a dark
+     colour-scheme is the only cross-platform way to make the OS-rendered popup
+     use dark bg + light text on Windows Chrome. */
+  .dark select {
+    color-scheme: dark;
+  }
+
   input[type="number"]::-webkit-outer-spin-button,
   input[type="number"]::-webkit-inner-spin-button {
     -webkit-appearance: none;
