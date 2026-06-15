@@ -9,6 +9,9 @@ import type {
   DeliveryRow,
   ComparisonRow,
   LaborCostRow,
+  AttachmentRow,
+  MealDealRow,
+  MenuCategoryRow,
   WeekOption,
 } from "@/lib/vm-analytics/types";
 
@@ -21,6 +24,18 @@ function addDaysIso(iso: string, days: number): string {
   const d = new Date(iso + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+// Monday (UTC) of the week containing `now`, as YYYY-MM-DD. Weeks at or after
+// this date are the *current* (in-progress) week and shouldn't be offered as a
+// completed reporting week.
+function currentWeekMondayIso(now = new Date()): string {
+  const day = now.getUTCDay(); // 0=Sun … 6=Sat
+  const shift = day === 0 ? -6 : 1 - day;
+  const monday = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + shift),
+  );
+  return monday.toISOString().slice(0, 10);
 }
 
 export async function getWeeks(): Promise<WeekOption[]> {
@@ -122,6 +137,45 @@ export async function getComparison(weekIso: string): Promise<ComparisonRow[]> {
   return (data ?? []) as ComparisonRow[];
 }
 
+// Per-item attachment rates (share of orders containing the item) with WoW
+// delta. Used by the Weekly Exception Report for falling-attachment risks and
+// upselling opportunities. Ordered most-attached first.
+export async function getAttachmentRates(weekIso: string): Promise<AttachmentRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_attachment_with_wow")
+    .select("*")
+    .eq("week_start", weekIso)
+    .order("attach_pct", { ascending: false });
+  if (error) throw new Error(`getAttachmentRates: ${error.message}`);
+  return (data ?? []) as AttachmentRow[];
+}
+
+// Meal-deal basket penetration per store with WoW. Supports upselling signals.
+export async function getMealDeals(weekIso: string): Promise<MealDealRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_meal_deals")
+    .select("*")
+    .eq("week_start", weekIso);
+  if (error) throw new Error(`getMealDeals: ${error.message}`);
+  return (data ?? []) as MealDealRow[];
+}
+
+// Real menu categories with WoW (from products-with-modifiers source). The
+// exception report uses this for "fastest-growing category" since the external-
+// category report is largely blank for these stores.
+export async function getMenuCategories(weekIso: string): Promise<MenuCategoryRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_menu_category_wow")
+    .select("*")
+    .eq("week_start", weekIso)
+    .order("gross_sales", { ascending: false });
+  if (error) throw new Error(`getMenuCategories: ${error.message}`);
+  return (data ?? []) as MenuCategoryRow[];
+}
+
 // Get available weeks for Labor Cost dashboard (from cashflow Supabase).
 // week_start_date is the only week field these tables carry, so it serves as
 // both the start and the (display) end of the option.
@@ -136,11 +190,14 @@ export async function getLaborCostWeeks(): Promise<WeekOption[]> {
 
   // Deduplicate (the view has one row per store/week) and drop nulls.
   // week_start_date is the Monday; the week runs Mon–Sun, so week_end is +6 days.
+  // Exclude the current in-progress week — its data isn't fully synced yet, so
+  // we only offer completed weeks (most recent completed week shows by default).
+  const thisMonday = currentWeekMondayIso();
   const seen = new Set<string>();
   const weeks: WeekOption[] = [];
   for (const row of data ?? []) {
     const weekDate = (row as { week_start_date: string | null }).week_start_date;
-    if (weekDate && !seen.has(weekDate)) {
+    if (weekDate && weekDate < thisMonday && !seen.has(weekDate)) {
       seen.add(weekDate);
       weeks.push({
         week_start: weekDate,

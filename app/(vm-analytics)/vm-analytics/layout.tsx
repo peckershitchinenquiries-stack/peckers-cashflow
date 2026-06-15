@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { DashboardSelector } from "@/components/vm-analytics/nav/DashboardSelector";
 import { WeekSelector } from "@/components/vm-analytics/nav/WeekSelector";
-import { getWeeks } from "@/lib/vm-analytics/queries";
+import { getWeeks, getLaborCostWeeks } from "@/lib/vm-analytics/queries";
 
 export default async function VmAnalyticsLayout({
   children,
@@ -9,11 +9,20 @@ export default async function VmAnalyticsLayout({
   children: React.ReactNode;
 }) {
   let weeks = [] as Awaited<ReturnType<typeof getWeeks>>;
-  let weeksError: string | null = null;
   try {
     weeks = await getWeeks();
-  } catch (e) {
-    weeksError = e instanceof Error ? e.message : "Failed to load weeks";
+  } catch {
+    weeks = [];
+  }
+
+  // Labor Cost dashboard uses the cashflow Supabase, which has its own set of
+  // available weeks. Fetch them so the week picker shows the right options on
+  // that dashboard. A failure here must not break the other dashboards.
+  let laborWeeks = [] as Awaited<ReturnType<typeof getLaborCostWeeks>>;
+  try {
+    laborWeeks = await getLaborCostWeeks();
+  } catch {
+    laborWeeks = [];
   }
 
   return (
@@ -47,11 +56,7 @@ export default async function VmAnalyticsLayout({
             VM Analytics
           </span>
           <Suspense fallback={null}>
-            {weeksError ? (
-              <span className="text-sm text-rose-600">{weeksError}</span>
-            ) : (
-              <WeekSelector weeks={weeks} />
-            )}
+            <WeekSelector weeks={weeks} laborWeeks={laborWeeks} />
           </Suspense>
         </header>
 

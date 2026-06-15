@@ -6,11 +6,24 @@ import { weekRange } from "@/lib/vm-analytics/format";
 
 // Global week picker shown in the top bar. Pushes ?week=ISO so every dashboard
 // reads the same selected week from searchParams.
-export function WeekSelector({ weeks }: { weeks: WeekOption[] }) {
+//
+// The Labor Cost dashboard reads from a different Supabase (cashflow) whose
+// available weeks differ from the VM sales weeks, so the layout passes that
+// dashboard's weeks separately and we switch on the current route.
+export function WeekSelector({
+  weeks,
+  laborWeeks = [],
+}: {
+  weeks: WeekOption[];
+  laborWeeks?: WeekOption[];
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
   const selected = search.get("week");
+
+  const isLaborCost = pathname.includes("/labor-cost");
+  const list = isLaborCost ? laborWeeks : weeks;
 
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(search.toString());
@@ -18,7 +31,7 @@ export function WeekSelector({ weeks }: { weeks: WeekOption[] }) {
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  if (weeks.length === 0) {
+  if (list.length === 0) {
     return (
       <span className="text-sm text-secondary">No weeks synced yet</span>
     );
@@ -28,11 +41,11 @@ export function WeekSelector({ weeks }: { weeks: WeekOption[] }) {
     <label className="flex items-center gap-2 text-sm">
       <span className="text-secondary">Week</span>
       <select
-        value={selected ?? weeks[0].week_start_iso}
+        value={selected ?? list[0].week_start_iso}
         onChange={onChange}
         className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-brand focus:outline-none"
       >
-        {weeks.map((w) => (
+        {list.map((w) => (
           <option
             key={w.week_start_iso}
             value={w.week_start_iso}

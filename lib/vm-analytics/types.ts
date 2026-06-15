@@ -108,6 +108,37 @@ export interface LaborCostRow {
   labour_pct: Num;
 }
 
+export interface AttachmentRow {
+  store: string;
+  week_start: string;
+  item_name: string;
+  orders_with_item: Num;
+  units: Num;
+  total_orders: Num;
+  attach_pct: Num;
+  prev_attach_pct: Num;
+  attach_pct_delta: Num; // percentage-point change vs previous week
+}
+
+export interface MealDealRow {
+  store: string;
+  week_start: string;
+  deal_baskets: Num;
+  prev_deal_baskets: Num;
+  deal_baskets_delta: Num;
+}
+
+// Real menu categories (from products-with-modifiers), with WoW. Used by the
+// exception report — the external-category report is mostly blank for these
+// stores.
+export interface MenuCategoryRow {
+  store: string;
+  week_start: string;
+  category: string;
+  gross_sales: Num;
+  gross_sales_wow_pct: Num;
+}
+
 export interface WeekOption {
   week_start: string;
   week_end: string;

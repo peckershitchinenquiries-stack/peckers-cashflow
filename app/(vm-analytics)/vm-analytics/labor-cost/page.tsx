@@ -1,4 +1,5 @@
-import { getLaborCost, resolveWeek, getLaborCostWeeks } from "@/lib/vm-analytics/queries";
+import { redirect } from "next/navigation";
+import { getLaborCost, getLaborCostWeeks } from "@/lib/vm-analytics/queries";
 import { gbp, pct, weekRange } from "@/lib/vm-analytics/format";
 import { shortStore } from "@/lib/vm-analytics/constants";
 import { KpiCard, KpiGrid } from "@/components/vm-analytics/KpiCard";
@@ -10,39 +11,60 @@ import type { LaborCostRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
+// Monday (UTC) of the week containing `now`, as YYYY-MM-DD. Used to find the
+// "previous complete week" — i.e. the most recent week that started before this
+// one.
+function currentWeekMondayIso(now = new Date()): string {
+  const day = now.getUTCDay(); // 0=Sun … 6=Sat
+  const shift = day === 0 ? -6 : 1 - day; // back up to Monday
+  const monday = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + shift),
+  );
+  return monday.toISOString().slice(0, 10);
+}
+
 export default async function LaborCostPage({
   searchParams,
 }: {
   searchParams: { week?: string };
 }) {
-  let weekIso: string | null;
-  let rows: LaborCostRow[];
-  let weekEnd = "";
-
+  // 1. Load the weeks that actually have labor data (cashflow Supabase).
+  let weeks;
   try {
-    // Get available weeks from cashflow Supabase (labor cost data)
-    const weeks = await getLaborCostWeeks();
+    weeks = await getLaborCostWeeks();
+  } catch (e) {
+    return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
+  }
 
-    if (weeks.length === 0) {
-      return (
-        <>
-          <PageTitle title="Labor Cost Performance" />
-          <EmptyWeek message="No labor cost data available. Check that employee_weekly_summary and daily_cash_entries have data." />
-        </>
-      );
-    }
+  if (weeks.length === 0) {
+    return (
+      <>
+        <PageTitle title="Labor Cost Performance" />
+        <EmptyWeek message="No labor cost data available. Check that employee_weekly_summary and daily_cash_entries have data." />
+      </>
+    );
+  }
 
-    // Resolve week: use requested week or default to latest
-    if (searchParams.week) {
-      weekIso = weeks.find((w) => w.week_start_iso === searchParams.week)?.week_start_iso ?? null;
-    }
-    if (!weekIso) {
-      weekIso = weeks[0]?.week_start_iso ?? null;
-    }
-    if (!weekIso) return <EmptyWeek />;
+  // 2. No week in the URL → default to the previous *complete* week and write it
+  //    into the URL. This keeps the header week-picker in sync with what's shown
+  //    (the picker reads ?week=). weeks is sorted newest-first, so the first
+  //    entry starting before this Monday is last week.
+  if (!searchParams.week) {
+    const thisMonday = currentWeekMondayIso();
+    const prev = weeks.find((w) => w.week_start_iso < thisMonday) ?? weeks[0];
+    redirect(`/vm-analytics/labor-cost?week=${prev.week_start_iso}`);
+  }
 
+  // 3. Resolve the requested week (fall back to the latest if it's unknown).
+  const match =
+    weeks.find((w) => w.week_start_iso === searchParams.week) ?? weeks[0];
+  const weekIso = match.week_start_iso;
+  const weekEnd = match.week_end;
+
+  // 4. Fetch the rows for that week.
+  let rows: LaborCostRow[];
+  try {
     rows = await getLaborCost(weekIso);
-    weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
