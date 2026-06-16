@@ -125,11 +125,13 @@ export function PieChartCard({
   nameKey,
   valueKey,
   height = 280,
+  currency = true,
 }: {
   data: Record<string, unknown>[];
   nameKey: string;
   valueKey: string;
   height?: number;
+  currency?: boolean;
 }) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -149,7 +151,9 @@ export function PieChartCard({
           ))}
         </Pie>
         <Tooltip
-          formatter={(v: number) => `£${Number(v).toLocaleString()}`}
+          formatter={(v: number) =>
+            currency ? `£${Number(v).toLocaleString()}` : Number(v).toLocaleString()
+          }
           contentStyle={{ fontSize: 12, borderRadius: 8 }}
         />
         <Legend wrapperStyle={{ fontSize: 12 }} />

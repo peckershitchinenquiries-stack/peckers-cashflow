@@ -2,6 +2,10 @@ import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
 import { getCashflowSupabaseServer } from "@/lib/supabase-cashflow";
 import type {
   ExecRow,
+  ExecChannelRow,
+  LunchDealItemRow,
+  LunchDealChannelRow,
+  LunchDealChannelDetailRow,
   ProductRow,
   CategoryRow,
   DaypartRow,
@@ -70,6 +74,100 @@ export async function getExec(weekIso: string): Promise<ExecRow[]> {
     .eq("week_start", weekIso);
   if (error) throw new Error(`getExec: ${error.message}`);
   return (data ?? []) as ExecRow[];
+}
+
+// Channel-level net sales + orders for a week, merged from the two raw tables
+// on (store, channel). The Executive view (vm_v_exec_dashboard) only exposes
+// bucketed totals, so we read the raw tables to get per-channel granularity.
+export async function getExecChannels(weekIso: string): Promise<ExecChannelRow[]> {
+  const sb = getVMSupabaseServer();
+  const [salesRes, ordersRes] = await Promise.all([
+    sb
+      .from("vm_net_sales_by_channel")
+      .select("store, channel, net_sales")
+      .eq("week_start", weekIso),
+    sb
+      .from("vm_orders_by_channel")
+      .select("store, channel, number_of_orders")
+      .eq("week_start", weekIso),
+  ]);
+  if (salesRes.error) throw new Error(`getExecChannels (sales): ${salesRes.error.message}`);
+  if (ordersRes.error) throw new Error(`getExecChannels (orders): ${ordersRes.error.message}`);
+
+  const key = (store: string, channel: string) => `${store}||${channel}`;
+  const merged = new Map<string, ExecChannelRow>();
+
+  for (const r of (salesRes.data ?? []) as { store: string; channel: string; net_sales: string }[]) {
+    const k = key(r.store, r.channel);
+    const cur = merged.get(k) ?? { store: r.store, channel: r.channel, net_sales: 0, orders: 0 };
+    cur.net_sales = (cur.net_sales as number) + numOf(r.net_sales);
+    merged.set(k, cur);
+  }
+  for (const r of (ordersRes.data ?? []) as {
+    store: string;
+    channel: string;
+    number_of_orders: string;
+  }[]) {
+    const k = key(r.store, r.channel);
+    const cur = merged.get(k) ?? { store: r.store, channel: r.channel, net_sales: 0, orders: 0 };
+    cur.orders = (cur.orders as number) + numOf(r.number_of_orders);
+    merged.set(k, cur);
+  }
+  return Array.from(merged.values());
+}
+
+// Lunch Time Deals: per (store, meal deal) sales for a week, from the raw
+// vm_meal_deals_sold table. The "Meal Deals Sold (weekly)" report is pulled per
+// store, so net_sales and counts are already per store.
+export async function getLunchDeals(weekIso: string): Promise<LunchDealItemRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_meal_deals_sold")
+    .select("store, meal_deal_name, no_of_meal_deals, net_sales")
+    .eq("week_start", weekIso);
+  if (error) throw new Error(`getLunchDeals: ${error.message}`);
+  return (data ?? []) as LunchDealItemRow[];
+}
+
+// Delivery vs in-store split for meal deals, from vm_v_lunch_deals_channel.
+// Returns [] if the view is missing so the dashboard can degrade gracefully.
+export async function getLunchDealsChannel(weekIso: string): Promise<LunchDealChannelRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_lunch_deals_channel")
+    .select("store, channel, deal_baskets, net_sales, aov")
+    .eq("week_start", weekIso);
+  if (error) {
+    console.warn(`getLunchDealsChannel: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as LunchDealChannelRow[];
+}
+
+// Per-individual-channel meal-deal mix, from vm_v_lunch_deals_channel_detail.
+// Returns [] if the view is missing so the dashboard can degrade gracefully.
+export async function getLunchDealsChannelDetail(
+  weekIso: string,
+): Promise<LunchDealChannelDetailRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_lunch_deals_channel_detail")
+    .select("store, channel_group, channel_name, deal_baskets, net_sales, aov")
+    .eq("week_start", weekIso);
+  if (error) {
+    console.warn(`getLunchDealsChannelDetail: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as LunchDealChannelDetailRow[];
+}
+
+// Local numeric coercion mirroring vm_num(): strip everything but digits and the
+// decimal point. Raw channel tables store amounts as TEXT.
+function numOf(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  const cleaned = String(v).replace(/[^0-9.]/g, "");
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : 0;
 }
 
 export async function getProducts(weekIso: string): Promise<ProductRow[]> {

@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { DashboardSelector } from "@/components/vm-analytics/nav/DashboardSelector";
 import { WeekSelector } from "@/components/vm-analytics/nav/WeekSelector";
+import { StoreSelector } from "@/components/vm-analytics/nav/StoreSelector";
 import { getWeeks, getLaborCostWeeks } from "@/lib/vm-analytics/queries";
 
 export default async function VmAnalyticsLayout({
@@ -61,7 +62,10 @@ export default async function VmAnalyticsLayout({
             )}
           </div>
           <Suspense fallback={null}>
-            <WeekSelector weeks={weeks} laborWeeks={laborWeeks} />
+            <div className="flex items-center gap-4">
+              <StoreSelector />
+              <WeekSelector weeks={weeks} laborWeeks={laborWeeks} />
+            </div>
           </Suspense>
         </header>
 

@@ -1,68 +1,139 @@
-import { getExec, resolveWeek, previousWeek, getWeeks } from "@/lib/vm-analytics/queries";
+import { getExec, getExecChannels, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, pct, weekRange, signedPct } from "@/lib/vm-analytics/format";
-import { shortStore, STORES } from "@/lib/vm-analytics/constants";
+import {
+  shortStore,
+  STORES,
+  resolveStore,
+  isDeliveryChannel,
+  DELIVERY_CHANNELS,
+  IN_STORE_CHANNELS,
+} from "@/lib/vm-analytics/constants";
 import { KpiCard, KpiGrid } from "@/components/vm-analytics/KpiCard";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import type { ExecRow } from "@/lib/vm-analytics/types";
+import type { ExecRow, ExecChannelRow } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";
 
 export const dynamic = "force-dynamic";
 
-interface Metrics {
+const share = (part: number, whole: number) => (whole > 0 ? (100 * part) / whole : 0);
+
+// Per-channel stats within a fulfilment group (delivery or in-store).
+interface ChannelStat {
+  channel: string;
   netSales: number;
   orders: number;
   aov: number;
+  orderPct: number; // share of orders within the group
+  salesPct: number; // share of net sales within the group
+}
+
+interface GroupAgg {
+  netSales: number;
+  orders: number;
+  aov: number;
+  channels: ChannelStat[];
+}
+
+// Aggregated view of a scope (one store, or both combined).
+interface Breakdown {
+  netSales: number;
   customers: number;
-  deliveryAmt: number;
-  collectionAmt: number;
-  eatInAmt: number;
+  orders: number; // delivery + in-store orders
+  delivery: GroupAgg;
+  inStore: GroupAgg;
+  aov: number; // blended
 }
 
-function metricsOf(rows: ExecRow[]): Metrics {
-  const m: Metrics = {
-    netSales: 0,
-    orders: 0,
-    aov: 0,
-    customers: 0,
-    deliveryAmt: 0,
-    collectionAmt: 0,
-    eatInAmt: 0,
-  };
+function groupAgg(rows: ExecChannelRow[], pred: (ch: string) => boolean): GroupAgg {
+  const m = new Map<string, { net: number; orders: number }>();
   for (const r of rows) {
-    m.netSales += n(r.net_sales);
-    m.orders += n(r.number_of_orders);
-    m.customers += n(r.customer_count);
-    m.deliveryAmt += n(r.delivery_sales_amount);
-    m.collectionAmt += n(r.collection_sales_amount);
-    m.eatInAmt += n(r.eat_in_sales_amount);
+    if (!pred(r.channel)) continue;
+    const c = m.get(r.channel) ?? { net: 0, orders: 0 };
+    c.net += n(r.net_sales);
+    c.orders += n(r.orders);
+    m.set(r.channel, c);
   }
-  m.aov = m.orders > 0 ? m.netSales / m.orders : 0;
-  return m;
+  let netSales = 0;
+  let orders = 0;
+  Array.from(m.values()).forEach((c) => {
+    netSales += c.net;
+    orders += c.orders;
+  });
+  const channels: ChannelStat[] = Array.from(m.entries())
+    .map(([channel, c]) => ({
+      channel,
+      netSales: c.net,
+      orders: c.orders,
+      aov: c.orders > 0 ? c.net / c.orders : 0,
+      orderPct: share(c.orders, orders),
+      salesPct: share(c.net, netSales),
+    }))
+    .sort((a, b) => b.netSales - a.netSales);
+  return { netSales, orders, aov: orders > 0 ? netSales / orders : 0, channels };
 }
 
-const share = (part: number, whole: number) => (whole > 0 ? (100 * part) / whole : 0);
+function buildBreakdown(
+  stores: readonly string[],
+  execRows: ExecRow[],
+  chanRows: ExecChannelRow[]
+): Breakdown {
+  const scopedExec = execRows.filter((r) => stores.includes(r.store));
+  const scopedChan = chanRows.filter((r) => stores.includes(r.store));
+  let netSales = 0;
+  let customers = 0;
+  for (const r of scopedExec) {
+    netSales += n(r.net_sales);
+    customers += n(r.customer_count);
+  }
+  const delivery = groupAgg(scopedChan, isDeliveryChannel);
+  const inStore = groupAgg(scopedChan, (ch) => !isDeliveryChannel(ch));
+  const orders = delivery.orders + inStore.orders;
+  return {
+    netSales,
+    customers,
+    orders,
+    delivery,
+    inStore,
+    aov: orders > 0 ? netSales / orders : 0,
+  };
+}
 
 export default async function ExecutivePage({
   searchParams,
 }: {
-  searchParams: { week?: string };
+  searchParams: { week?: string; store?: string };
 }) {
+  const activeStore = resolveStore(searchParams.store);
+  const activeStores: readonly string[] = activeStore ? [activeStore] : STORES;
+
   let weekIso: string | null;
   let rows: ExecRow[];
+  let chanRows: ExecChannelRow[];
   let prevRows: ExecRow[] = [];
+  let prevChanRows: ExecChannelRow[] = [];
   let weekEnd = "";
   try {
-    weekIso = await resolveWeek(searchParams.week);
-    if (!weekIso) return <EmptyWeek />;
-    rows = await getExec(weekIso);
-    const prevIso = await previousWeek(weekIso);
-    if (prevIso) prevRows = await getExec(prevIso);
+    // One getWeeks() call, then fan out all data fetches in parallel. Keeping the
+    // render short reduces event-loop contention (and the chance the concurrent
+    // auth fetch in middleware trips its dev-mode timeout).
     const weeks = await getWeeks();
+    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
+    if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
+
+    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+    const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+
+    [rows, chanRows, prevRows, prevChanRows] = await Promise.all([
+      getExec(weekIso),
+      getExecChannels(weekIso),
+      prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
+      prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
+    ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
@@ -76,119 +147,160 @@ export default async function ExecutivePage({
     );
   }
 
-  const byStore = (s: string) => rows.filter((r) => r.store === s);
-  const total = metricsOf(rows);
-  const prevTotal = metricsOf(prevRows);
+  const scopeLabel = activeStore ? shortStore(activeStore) : "Both stores combined";
+
+  // Breakdowns: one per active store, plus the combined scope and prev week.
+  const byStore = new Map<string, Breakdown>();
+  for (const s of activeStores) byStore.set(s, buildBreakdown([s], rows, chanRows));
+  const combined = buildBreakdown(activeStores, rows, chanRows);
   const hasPrev = prevRows.length > 0;
+  const prevCombined = buildBreakdown(activeStores, prevRows, prevChanRows);
 
-  const totalNetWow = hasPrev ? share(total.netSales - prevTotal.netSales, prevTotal.netSales) : null;
-  const totalOrdWow = hasPrev ? share(total.orders - prevTotal.orders, prevTotal.orders) : null;
-  const totalCustWow = hasPrev ? share(total.customers - prevTotal.customers, prevTotal.customers) : null;
-  const totalAovWow =
-    hasPrev && prevTotal.aov > 0 ? share(total.aov - prevTotal.aov, prevTotal.aov) : null;
+  // ---- Headline WoW deltas (scoped to the selected store/s)
+  const netWow = hasPrev ? share(combined.netSales - prevCombined.netSales, prevCombined.netSales) : null;
+  const ordWow = hasPrev ? share(combined.orders - prevCombined.orders, prevCombined.orders) : null;
+  const custWow = hasPrev ? share(combined.customers - prevCombined.customers, prevCombined.customers) : null;
+  const aovDelWow =
+    hasPrev && prevCombined.delivery.aov > 0
+      ? share(combined.delivery.aov - prevCombined.delivery.aov, prevCombined.delivery.aov)
+      : null;
+  const aovInWow =
+    hasPrev && prevCombined.inStore.aov > 0
+      ? share(combined.inStore.aov - prevCombined.inStore.aov, prevCombined.inStore.aov)
+      : null;
+  const netDelWow = hasPrev
+    ? share(combined.delivery.netSales - prevCombined.delivery.netSales, prevCombined.delivery.netSales)
+    : null;
+  const netInWow = hasPrev
+    ? share(combined.inStore.netSales - prevCombined.inStore.netSales, prevCombined.inStore.netSales)
+    : null;
+  const aovBlendWow =
+    hasPrev && prevCombined.aov > 0 ? share(combined.aov - prevCombined.aov, prevCombined.aov) : null;
 
-  const storeMetrics = STORES.map((s) => ({ store: s, m: metricsOf(byStore(s)) }));
+  // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
+  const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
+    canonical.filter((ch) =>
+      Array.from(byStore.values()).some((b) => b[group].channels.some((c) => c.channel === ch))
+    );
+  const presentDelivery = present("delivery", DELIVERY_CHANNELS);
+  const presentInStore = present("inStore", IN_STORE_CHANNELS);
 
-  const prevCell = (val: number, isCurrency: boolean, isPct: boolean) =>
-    !hasPrev ? "—" : isPct ? pct(val) : isCurrency ? gbp(val) : int(val);
-
+  // ---- KPI Summary table (per store) -------------------------------------
   type KpiRowDef = {
     kpi: string;
-    cell: (m: Metrics) => string;
-    prev: string;
+    indent?: boolean;
+    cell: (b: Breakdown) => string;
   };
+
+  const channelCell = (group: "delivery" | "inStore", ch: string) => (b: Breakdown) => {
+    const c = b[group].channels.find((x) => x.channel === ch);
+    return c ? `${int(c.orders)} · ${pct(c.orderPct)}` : "—";
+  };
+
   const kpiRows: KpiRowDef[] = [
+    { kpi: "Net Sales", cell: (b) => gbp(b.netSales) },
+    { kpi: "Net Sales — Delivery", cell: (b) => gbp(b.delivery.netSales) },
+    { kpi: "Net Sales — In-store", cell: (b) => gbp(b.inStore.netSales) },
+    { kpi: "Total Orders", cell: (b) => int(b.orders) },
+    { kpi: "Customers", cell: (b) => int(b.customers) },
+    { kpi: "AOV (Blended)", cell: (b) => gbp(b.aov) },
+    { kpi: "AOV — Delivery", cell: (b) => gbp(b.delivery.aov) },
+    { kpi: "AOV — In-store", cell: (b) => gbp(b.inStore.aov) },
     {
-      kpi: "Net Sales",
-      cell: (m) => gbp(m.netSales),
-      prev: prevCell(prevTotal.netSales, true, false),
+      kpi: "Delivery Orders",
+      cell: (b) => `${int(b.delivery.orders)} · ${pct(share(b.delivery.orders, b.orders))}`,
     },
+    ...presentDelivery.map((ch) => ({
+      kpi: ch,
+      indent: true,
+      cell: channelCell("delivery", ch),
+    })),
     {
-      kpi: "Orders",
-      cell: (m) => int(m.orders),
-      prev: prevCell(prevTotal.orders, false, false),
+      kpi: "In-store Orders",
+      cell: (b) => `${int(b.inStore.orders)} · ${pct(share(b.inStore.orders, b.orders))}`,
     },
-    {
-      kpi: "AOV",
-      cell: (m) => gbp(m.aov),
-      prev: prevCell(prevTotal.aov, true, false),
-    },
-    {
-      kpi: "Customers",
-      cell: (m) => int(m.customers),
-      prev: prevCell(prevTotal.customers, false, false),
-    },
-    {
-      kpi: "Delivery %",
-      cell: (m) => pct(share(m.deliveryAmt, m.netSales)),
-      prev: prevCell(share(prevTotal.deliveryAmt, prevTotal.netSales), false, true),
-    },
-    {
-      kpi: "Collection Sales %",
-      cell: (m) => pct(share(m.collectionAmt, m.netSales)),
-      prev: prevCell(share(prevTotal.collectionAmt, prevTotal.netSales), false, true),
-    },
-    {
-      kpi: "Eat-In Sales %",
-      cell: (m) => pct(share(m.eatInAmt, m.netSales)),
-      prev: prevCell(share(prevTotal.eatInAmt, prevTotal.netSales), false, true),
-    },
+    ...presentInStore.map((ch) => ({
+      kpi: ch,
+      indent: true,
+      cell: channelCell("inStore", ch),
+    })),
   ];
 
-  const tableColumns: Column<KpiRowDef>[] = [
-    { key: "kpi", header: "KPI", render: (r) => <span className="font-medium">{r.kpi}</span> },
+  const summaryColumns: Column<KpiRowDef>[] = [
     {
-      key: "hitchin",
-      header: shortStore(STORES[0]),
-      align: "right",
-      render: (r) => r.cell(storeMetrics[0].m),
+      key: "kpi",
+      header: "KPI",
+      render: (r) => (
+        <span className={r.indent ? "pl-4 text-secondary" : "font-medium"}>{r.kpi}</span>
+      ),
     },
-    {
-      key: "stevenage",
-      header: shortStore(STORES[1]),
-      align: "right",
-      render: (r) => r.cell(storeMetrics[1].m),
-    },
-    {
-      key: "total",
-      header: "Total",
-      align: "right",
-      render: (r) => <span className="font-semibold">{r.cell(total)}</span>,
-    },
+    ...activeStores.map((s) => ({
+      key: shortStore(s).toLowerCase(),
+      header: shortStore(s),
+      align: "right" as const,
+      render: (r: KpiRowDef) => r.cell(byStore.get(s)!),
+    })),
+    // Total column only adds information when more than one store is shown.
+    ...(activeStores.length > 1
+      ? [
+          {
+            key: "total",
+            header: "Total",
+            align: "right" as const,
+            render: (r: KpiRowDef) => <span className="font-semibold">{r.cell(combined)}</span>,
+          },
+        ]
+      : []),
     {
       key: "prev",
       header: "Previous Week",
-      align: "right",
-      render: (r) => <span className="text-ink-faint">{r.prev}</span>,
+      align: "right" as const,
+      render: (r: KpiRowDef) => (
+        <span className="text-tertiary">{hasPrev ? r.cell(prevCombined) : "—"}</span>
+      ),
     },
   ];
 
-  const netSalesByStore = storeMetrics.map((sm) => ({
-    store: shortStore(sm.store),
-    "Net Sales": Math.round(sm.m.netSales),
+  // ---- Order-mix tables (per channel, within each group) -----------------
+  const mixColumns: Column<ChannelStat>[] = [
+    { key: "ch", header: "Channel", render: (r) => <span className="font-medium">{r.channel}</span> },
+    { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
+    { key: "pct", header: "% of group", align: "right", render: (r) => pct(r.orderPct) },
+    { key: "aov", header: "AOV", align: "right", render: (r) => gbp(r.aov) },
+  ];
+
+  const deliveryOrdersChart = combined.delivery.channels.map((c) => ({
+    channel: c.channel,
+    Orders: Math.round(c.orders),
   }));
-  const channelMix = storeMetrics.map((sm) => ({
-    store: shortStore(sm.store),
-    Delivery: Math.round(sm.m.deliveryAmt),
-    Collection: Math.round(sm.m.collectionAmt),
-    "Eat-In": Math.round(sm.m.eatInAmt),
+  const inStoreOrdersChart = combined.inStore.channels.map((c) => ({
+    channel: c.channel,
+    Orders: Math.round(c.orders),
   }));
 
+  // ---- Net sales by store (only meaningful when both stores are shown) ----
+  const netSalesByStore = activeStores.map((s) => ({
+    store: shortStore(s),
+    "Net Sales": Math.round(byStore.get(s)!.netSales),
+  }));
+
+  // ---- Insight payload (scoped) ------------------------------------------
   const insightInput: ExecInput = {
     dashboard: "executive",
     week: weekIso,
-    totalWow: totalNetWow,
-    stores: storeMetrics.map((sm) => {
-      const row = byStore(sm.store)[0];
+    totalWow: netWow,
+    stores: activeStores.map((s) => {
+      const b = byStore.get(s)!;
+      const row = rows.find((r) => r.store === s);
       return {
-        store: sm.store,
-        netSales: sm.m.netSales,
-        orders: sm.m.orders,
-        aov: sm.m.aov,
-        customers: sm.m.customers,
-        deliveryPct: share(sm.m.deliveryAmt, sm.m.netSales),
-        collectionPct: share(sm.m.collectionAmt, sm.m.netSales),
-        eatInPct: share(sm.m.eatInAmt, sm.m.netSales),
+        store: s,
+        netSales: b.netSales,
+        orders: b.orders,
+        aov: b.aov,
+        customers: b.customers,
+        deliveryPct: share(b.delivery.netSales, b.netSales),
+        collectionPct: row ? n(row.collection_pct) : 0,
+        eatInPct: row ? n(row.eat_in_pct) : 0,
         netSalesWow: row ? (row.net_sales_wow_pct === null ? null : n(row.net_sales_wow_pct)) : null,
       };
     }),
@@ -199,54 +311,118 @@ export default async function ExecutivePage({
     <div className="space-y-7">
       <PageTitle
         title="Executive Dashboard"
-        subtitle={`High-level overview · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`${scopeLabel} · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <KpiGrid>
-        <KpiCard label="Net Sales (Total)" value={gbp(total.netSales)} delta={totalNetWow} />
-        <KpiCard label="Orders (Total)" value={int(total.orders)} delta={totalOrdWow} />
-        <KpiCard label="AOV (Blended)" value={gbp(total.aov)} delta={totalAovWow} />
-        <KpiCard label="Customers (Total)" value={int(total.customers)} delta={totalCustWow} />
-        <KpiCard label="Delivery %" value={pct(share(total.deliveryAmt, total.netSales))} />
-        <KpiCard label="Collection %" value={pct(share(total.collectionAmt, total.netSales))} />
-        <KpiCard label="Eat-In %" value={pct(share(total.eatInAmt, total.netSales))} />
+        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} />
+        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} />
+        <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} />
+        <KpiCard
+          label="AOV (Blended)"
+          value={gbp(combined.aov)}
+          delta={aovBlendWow}
+          hint="net sales ÷ orders"
+        />
+        <KpiCard label="AOV — Delivery" value={gbp(combined.delivery.aov)} delta={aovDelWow} />
+        <KpiCard label="AOV — In-store" value={gbp(combined.inStore.aov)} delta={aovInWow} />
+        <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} />
+        <KpiCard label="Delivery %" value={pct(share(combined.delivery.netSales, combined.netSales))} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(share(combined.inStore.netSales, combined.netSales))} hint="of net sales" />
         <KpiCard
           label="Net Sales WoW"
-          value={signedPct(totalNetWow)}
+          value={signedPct(netWow)}
           hint={hasPrev ? "vs previous week" : "no prior week"}
         />
       </KpiGrid>
 
       <Commentary initial={draft} input={insightInput} />
 
-      <Section title="KPI Summary" description="Both stores side by side, with previous-week totals.">
-        <DataTable columns={tableColumns} rows={kpiRows} />
-      </Section>
-
-      <Section title="Visual Breakdown">
+      <Section
+        title="Order Mix"
+        description="Total orders split into delivery and in-store, with each channel's share of its group."
+      >
         <div className="grid gap-4 lg:grid-cols-2">
-          <ChartCard title="Net Sales by Store">
-            <BarChartCard
-              data={netSalesByStore}
-              xKey="store"
-              bars={[{ key: "Net Sales", name: "Net Sales" }]}
-              currency
-            />
+          <ChartCard
+            title={`Delivery Orders — ${int(combined.delivery.orders)} (${pct(
+              share(combined.delivery.orders, combined.orders)
+            )} of orders)`}
+          >
+            <DataTable columns={mixColumns} rows={combined.delivery.channels} />
+            {deliveryOrdersChart.length > 0 && (
+              <div className="mt-4">
+                <BarChartCard
+                  data={deliveryOrdersChart}
+                  xKey="channel"
+                  bars={[{ key: "Orders", name: "Orders" }]}
+                  height={220}
+                />
+              </div>
+            )}
           </ChartCard>
-          <ChartCard title="Sales by Fulfilment Channel">
-            <BarChartCard
-              data={channelMix}
-              xKey="store"
-              bars={[
-                { key: "Delivery", name: "Delivery" },
-                { key: "Collection", name: "Collection" },
-                { key: "Eat-In", name: "Eat-In" },
-              ]}
-              currency
-            />
+          <ChartCard
+            title={`In-store Orders — ${int(combined.inStore.orders)} (${pct(
+              share(combined.inStore.orders, combined.orders)
+            )} of orders)`}
+          >
+            <DataTable columns={mixColumns} rows={combined.inStore.channels} />
+            {inStoreOrdersChart.length > 0 && (
+              <div className="mt-4">
+                <BarChartCard
+                  data={inStoreOrdersChart}
+                  xKey="channel"
+                  bars={[{ key: "Orders", name: "Orders" }]}
+                  height={220}
+                />
+              </div>
+            )}
           </ChartCard>
         </div>
       </Section>
+
+      <Section
+        title="KPI Summary"
+        description={
+          activeStore
+            ? `${shortStore(activeStore)} only, with previous-week values.`
+            : "Both stores side by side, with combined totals and previous-week values."
+        }
+      >
+        <DataTable columns={summaryColumns} rows={kpiRows} />
+      </Section>
+
+      {activeStores.length > 1 && (
+        <Section title="Visual Breakdown">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ChartCard title="Net Sales by Store">
+              <BarChartCard
+                data={netSalesByStore}
+                xKey="store"
+                bars={[{ key: "Net Sales", name: "Net Sales" }]}
+                currency
+              />
+            </ChartCard>
+            <ChartCard title="Sales: Delivery vs In-store">
+              <BarChartCard
+                data={[
+                  {
+                    scope: scopeLabel,
+                    Delivery: Math.round(combined.delivery.netSales),
+                    "In-store": Math.round(combined.inStore.netSales),
+                  },
+                ]}
+                xKey="scope"
+                bars={[
+                  { key: "Delivery", name: "Delivery" },
+                  { key: "In-store", name: "In-store" },
+                ]}
+                currency
+              />
+            </ChartCard>
+          </div>
+        </Section>
+      )}
     </div>
   );
 }

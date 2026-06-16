@@ -38,7 +38,7 @@ export function Commentary({
   const isClaude = insight.source === "claude";
 
   return (
-    <div className="rounded-xl border border-brand-light bg-gradient-to-br from-white to-brand-light/40 p-5 shadow-sm">
+<div className="rounded-xl border border-white/10 bg-gradient-to-br from-zinc-900 via-black to-zinc-800 p-5 shadow-sm">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-sm font-semibold text-brand-dark">
           Automated Commentary
@@ -46,8 +46,8 @@ export function Commentary({
         <span
           className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
             isClaude
-              ? "bg-brand text-white"
-              : "bg-slate-200 text-ink-soft"
+              ? "bg-white text-black"
+              : "bg-slate-200 text-black"
           }`}
           title={
             isClaude
