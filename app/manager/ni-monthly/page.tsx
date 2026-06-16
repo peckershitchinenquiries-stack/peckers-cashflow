@@ -1,7 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
-import { loadNiRows } from "@/lib/ni-data";
+import { loadManualNiRows, loadNiRows } from "@/lib/ni-data";
 import { NiMonthlyView } from "@/components/ni/NiMonthlyView";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +22,10 @@ export default async function ManagerNiMonthlyPage() {
   }
 
   const supabase = createServerSupabase();
-  const [{ data: store }, rows] = await Promise.all([
+  const [{ data: store }, rows, manualRows] = await Promise.all([
     supabase.from("stores").select("id, name").eq("id", storeId).maybeSingle(),
     loadNiRows(storeId),
+    loadManualNiRows(storeId),
   ]);
 
   return (
@@ -33,7 +34,12 @@ export default async function ManagerNiMonthlyPage() {
         title="NI — Monthly Summary"
         description="National Insurance (PAYE) wages for your store, grouped by calendar month. NI is paid monthly; cash is paid weekly."
       />
-      <NiMonthlyView rows={rows} stores={store ? [store] : []} isAdmin={false} />
+      <NiMonthlyView
+        rows={rows}
+        manualRows={manualRows}
+        stores={store ? [store] : []}
+        isAdmin={false}
+      />
     </>
   );
 }

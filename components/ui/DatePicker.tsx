@@ -59,6 +59,11 @@ export function DatePicker({
 
   const [open, setOpen] = React.useState(false);
   const [flipUp, setFlipUp] = React.useState(false);
+  // Drill-down level inside the popover: pick a day, a month, or a year. The
+  // year grid makes far-back dates (e.g. dates of birth in the 1990s) reachable
+  // in a couple of clicks instead of paging month-by-month.
+  const [view, setView] = React.useState<"days" | "months" | "years">("days");
+  const [yearStart, setYearStart] = React.useState(2000);
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
 
@@ -75,7 +80,11 @@ export function DatePicker({
   React.useEffect(() => {
     if (open) {
       const base = value ? parseISODate(value) : new Date();
-      setViewMonth(startOfMonth(isNaN(base.getTime()) ? new Date() : base));
+      const start = startOfMonth(isNaN(base.getTime()) ? new Date() : base);
+      setViewMonth(start);
+      setView("days");
+      // Show a 12-year block containing the focused year.
+      setYearStart(start.getFullYear() - (start.getFullYear() % 12));
       // Flip the popover above the field if there isn't room below.
       const rect = triggerRef.current?.getBoundingClientRect();
       if (rect) setFlipUp(window.innerHeight - rect.bottom < 380);
@@ -172,79 +181,155 @@ export function DatePicker({
               flipUp ? "bottom-full mb-2" : "top-full mt-2",
             )}
           >
-            {/* Month nav */}
+            {/* Header nav — adapts to the drill-down level (day / month / year) */}
             <div className="flex items-center justify-between mb-2">
               <button
                 type="button"
-                onClick={() =>
-                  setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1))
-                }
+                onClick={() => {
+                  if (view === "days")
+                    setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() - 1, 1));
+                  else if (view === "months")
+                    setViewMonth((m) => new Date(m.getFullYear() - 1, m.getMonth(), 1));
+                  else setYearStart((y) => y - 12);
+                }}
                 className="h-8 w-8 grid place-items-center rounded-lg hover:bg-surface-hover text-text-subtle"
-                aria-label="Previous month"
+                aria-label="Previous"
               >
                 <ChevronLeftIcon size={16} />
               </button>
-              <div className="text-sm font-medium text-text-primary">
-                {MONTH_LONG[viewMonth.getMonth()]} {viewMonth.getFullYear()}
-              </div>
               <button
                 type="button"
                 onClick={() =>
-                  setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1))
+                  setView(view === "days" ? "months" : view === "months" ? "years" : "days")
                 }
+                className="text-sm font-medium text-text-primary px-3 h-8 rounded-lg hover:bg-surface-hover transition-colors"
+                title="Switch between day, month and year"
+              >
+                {view === "days" && `${MONTH_LONG[viewMonth.getMonth()]} ${viewMonth.getFullYear()}`}
+                {view === "months" && viewMonth.getFullYear()}
+                {view === "years" && `${yearStart} – ${yearStart + 11}`}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (view === "days")
+                    setViewMonth((m) => new Date(m.getFullYear(), m.getMonth() + 1, 1));
+                  else if (view === "months")
+                    setViewMonth((m) => new Date(m.getFullYear() + 1, m.getMonth(), 1));
+                  else setYearStart((y) => y + 12);
+                }}
                 className="h-8 w-8 grid place-items-center rounded-lg hover:bg-surface-hover text-text-subtle"
-                aria-label="Next month"
+                aria-label="Next"
               >
                 <ChevronRightIcon size={16} />
               </button>
             </div>
 
-            {/* Weekday header */}
-            <div className="grid grid-cols-7 mb-1">
-              {WEEKDAY_SHORT.map((w) => (
-                <div
-                  key={w}
-                  className="text-center text-[10px] uppercase tracking-wider text-text-muted py-1"
-                >
-                  {w[0]}
+            {view === "days" && (
+              <>
+                {/* Weekday header */}
+                <div className="grid grid-cols-7 mb-1">
+                  {WEEKDAY_SHORT.map((w) => (
+                    <div
+                      key={w}
+                      className="text-center text-[10px] uppercase tracking-wider text-text-muted py-1"
+                    >
+                      {w[0]}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            {/* Day grid */}
-            <div className="grid grid-cols-7 gap-y-0.5">
-              {cells.map((d) => {
-                const outside = d.getMonth() !== viewMonth.getMonth();
-                const isToday = isSameDay(d, today);
-                const isSel = selected ? isSameDay(d, selected) : false;
-                const off = isDisabled(d);
-                return (
-                  <button
-                    key={toISODate(d)}
-                    type="button"
-                    disabled={off}
-                    onClick={() => pick(d)}
-                    className="h-9 grid place-items-center"
-                  >
-                    <span
+                {/* Day grid */}
+                <div className="grid grid-cols-7 gap-y-0.5">
+                  {cells.map((d) => {
+                    const outside = d.getMonth() !== viewMonth.getMonth();
+                    const isToday = isSameDay(d, today);
+                    const isSel = selected ? isSameDay(d, selected) : false;
+                    const off = isDisabled(d);
+                    return (
+                      <button
+                        key={toISODate(d)}
+                        type="button"
+                        disabled={off}
+                        onClick={() => pick(d)}
+                        className="h-9 grid place-items-center"
+                      >
+                        <span
+                          className={cn(
+                            "h-8 w-8 grid place-items-center rounded-lg text-xs transition-colors",
+                            isSel
+                              ? "bg-gold text-black font-semibold"
+                              : off
+                                ? "text-text-muted/40 cursor-not-allowed"
+                                : outside
+                                  ? "text-text-muted/50 hover:bg-surface-hover"
+                                  : "text-text-primary hover:bg-surface-hover",
+                            isToday && !isSel && "ring-1 ring-gold/50",
+                          )}
+                        >
+                          {d.getDate()}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {view === "months" && (
+              <div className="grid grid-cols-3 gap-1.5 py-1">
+                {MONTH_LONG.map((label, idx) => {
+                  const isSel =
+                    !!selected &&
+                    selected.getMonth() === idx &&
+                    selected.getFullYear() === viewMonth.getFullYear();
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => {
+                        setViewMonth((m) => new Date(m.getFullYear(), idx, 1));
+                        setView("days");
+                      }}
                       className={cn(
-                        "h-8 w-8 grid place-items-center rounded-lg text-xs transition-colors",
+                        "h-10 rounded-lg text-xs transition-colors",
                         isSel
                           ? "bg-gold text-black font-semibold"
-                          : off
-                            ? "text-text-muted/40 cursor-not-allowed"
-                            : outside
-                              ? "text-text-muted/50 hover:bg-surface-hover"
-                              : "text-text-primary hover:bg-surface-hover",
-                        isToday && !isSel && "ring-1 ring-gold/50",
+                          : "text-text-primary hover:bg-surface-hover",
                       )}
                     >
-                      {d.getDate()}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+                      {label.slice(0, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {view === "years" && (
+              <div className="grid grid-cols-3 gap-1.5 py-1">
+                {Array.from({ length: 12 }, (_, i) => yearStart + i).map((yr) => {
+                  const isSel = !!selected && selected.getFullYear() === yr;
+                  return (
+                    <button
+                      key={yr}
+                      type="button"
+                      onClick={() => {
+                        setViewMonth((m) => new Date(yr, m.getMonth(), 1));
+                        setView("months");
+                      }}
+                      className={cn(
+                        "h-10 rounded-lg text-xs transition-colors",
+                        isSel
+                          ? "bg-gold text-black font-semibold"
+                          : "text-text-primary hover:bg-surface-hover",
+                      )}
+                    >
+                      {yr}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Footer actions */}
             <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">

@@ -56,7 +56,7 @@ export function AuthShell({
         )}
 
         <p className="text-center text-xs text-text-muted mt-6">
-          Peckers Restaurant Group · Built by WEBCROS
+          Peckers Restaurant Group
         </p>
       </div>
     </main>

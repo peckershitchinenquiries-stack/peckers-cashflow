@@ -63,6 +63,32 @@ export function splitHours(
   return { bankHours: round2(bankHours), cashHours: round2(cashHours) };
 }
 
+/**
+ * Whether an employee is paid any hours in cash. An employee left with a blank
+ * (or zero) cash rate doesn't work for cash at all — every hour is NI/PAYE,
+ * regardless of how many hours they work in a week.
+ */
+export function worksForCash(emp: {
+  hourly_cash_rate?: number | null;
+}): boolean {
+  return emp.hourly_cash_rate != null && Number(emp.hourly_cash_rate) > 0;
+}
+
+/**
+ * Per-employee hours split. If the employee has no cash rate, ALL hours are
+ * NI/bank hours (cash = 0) — even above the weekly bank limit. Otherwise the
+ * usual "first `bank_weekly_hours_limit` hours NI, remainder cash" rule applies.
+ */
+export function splitHoursForEmployee(
+  emp: { hourly_cash_rate?: number | null; bank_weekly_hours_limit?: number | null },
+  totalHours: number,
+): { bankHours: number; cashHours: number } {
+  if (!worksForCash(emp)) {
+    return { bankHours: round2(Math.max(0, Number(totalHours) || 0)), cashHours: 0 };
+  }
+  return splitHours(totalHours, emp.bank_weekly_hours_limit ?? 20);
+}
+
 // ---------------- daily reconciliation ----------------
 
 export type WeekEntryTotals = {
@@ -155,8 +181,9 @@ export function buildWageLines(
     // left this week is still owed for the pay week. Anyone with nothing due is
     // dropped by the total<=0 check below.
     const worked = workedByEmployee.get(emp.id) ?? { hours: 0, deliveries: 0 };
-    const bankLimit = emp.bank_weekly_hours_limit ?? 20;
-    const { cashHours } = splitHours(worked.hours, bankLimit);
+    // No cash rate ⇒ no cash hours at all (every hour is NI), even past the
+    // weekly bank limit. Otherwise hours above the limit are paid in cash.
+    const { cashHours } = splitHoursForEmployee(emp, worked.hours);
     const cashRate = Number(emp.hourly_cash_rate ?? 0) || 0;
     const cashWage = round2(cashHours * cashRate);
 

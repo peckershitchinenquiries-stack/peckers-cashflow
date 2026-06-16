@@ -90,20 +90,22 @@ async function loadOpeningBalance(
  *
  * Pay structure (confirmed with the client): wages paid on this week's Saturday
  * are for the PREVIOUS week's work (Mon–Sun). So the wage lines (hours +
- * deliveries) come from LAST week, while the cash available to pay them comes
- * from the envelopes collected since the last payout — previous Sunday through
- * this payday Saturday. (The payout is confirmed and locked on Saturday, so the
- * cash window must END on Saturday; Sunday's envelope rolls into next week's
- * window instead of being lost after the lock.)
+ * deliveries) come from LAST week, while the cash available to pay them is the
+ * Vita Mojo cash sales for the seven days ending the day before payday — the
+ * Saturday before this week through this Friday. (The payout is confirmed and
+ * locked on payday Saturday, so the cash window must END on the Friday before;
+ * Saturday's takings roll into next week's window instead of being lost after
+ * the lock.)
  */
 async function computeSummary(
   supabase: SupabaseClient,
   storeId: string,
   weekStartISO: string,
 ): Promise<PrePaymentSummary> {
-  // Cash window: previous Sunday → payday Saturday (complete at confirm time).
-  const cashStart = toISODate(addDays(parseISODate(weekStartISO), -1));
-  const cashEnd = toISODate(addDays(parseISODate(weekStartISO), 5));
+  // Cash window: the Saturday before this week → this Friday (Sat–Fri), i.e.
+  // the seven days ending the day before payday Saturday.
+  const cashStart = toISODate(addDays(parseISODate(weekStartISO), -2));
+  const cashEnd = toISODate(addDays(parseISODate(weekStartISO), 4));
   // The week being PAID: the previous Monday–Sunday.
   const payWeek = payWeekOf(weekStartISO);
 

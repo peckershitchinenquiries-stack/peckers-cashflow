@@ -67,8 +67,10 @@ export type EmployeePosition =
   | "Driver"
   | "Supervisor";
 
+// "Manager" is intentionally excluded — managers are provisioned separately
+// (not employees), so they must not be selectable as an employee position.
+// The type above still allows "Manager" so any legacy record keeps rendering.
 export const POSITION_OPTIONS: EmployeePosition[] = [
-  "Manager",
   "KTM (Supervisor)",
   "Kitchen Team Member",
   "Driver",

@@ -13,7 +13,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Peckers Cash Flow",
-  description: "Internal cash flow management — by WEBCROS",
+  description: "Internal cash flow management",
   icons: {
     icon: "/favicon.svg",
   },

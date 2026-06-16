@@ -23,6 +23,7 @@ import {
 } from "@/lib/utils";
 import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/icons";
 import { applyScheduleToWeek } from "@/app/actions/schedule";
+import { worksForCash } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
 import type {
@@ -248,19 +249,27 @@ export function RotaView({
     return Array.from(byWeek.values());
   }
 
-  // Cash hours = sum of hours above 20 in each week of the range.
-  function weekCashHours(empId: string): number {
-    return hoursByWeek(empId).reduce((sum, h) => sum + Math.max(h - 20, 0), 0);
+  // Cash hours = sum of hours above 20 in each week of the range. Employees
+  // with no cash rate never accrue cash hours — every hour is NI.
+  function weekCashHours(emp: Employee): number {
+    if (!worksForCash(emp)) return 0;
+    return hoursByWeek(emp.id).reduce((sum, h) => sum + Math.max(h - 20, 0), 0);
   }
 
   function weekWages(emp: Employee): { ni: number; cash: number; total: number } {
     const niRate = Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0);
     const cashRate = Number(emp.hourly_cash_rate ?? 0);
+    const cashEligible = worksForCash(emp);
     let niHours = 0;
     let cashHours = 0;
     for (const h of hoursByWeek(emp.id)) {
-      niHours += Math.min(h, 20);
-      cashHours += Math.max(h - 20, 0);
+      if (cashEligible) {
+        niHours += Math.min(h, 20);
+        cashHours += Math.max(h - 20, 0);
+      } else {
+        // No cash rate: all hours are NI, even above the weekly limit.
+        niHours += h;
+      }
     }
     const ni = niHours * niRate;
     const cash = cashHours * cashRate;
@@ -395,7 +404,7 @@ export function RotaView({
               )}
               {storeEmployees.map((emp) => {
                 const total = weekTotalHours(emp.id);
-                const cashHrs = weekCashHours(emp.id);
+                const cashHrs = weekCashHours(emp);
                 const avg = fourWkAvg.get(emp.id) ?? 0;
                 const wages = weekWages(emp);
                 const variance =

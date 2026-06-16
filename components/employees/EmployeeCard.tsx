@@ -105,6 +105,7 @@ export function EmployeeCard({
             size="icon"
             onClick={onEdit}
             aria-label="Edit"
+            title="Edit"
             className="text-text-muted hover:text-text-primary"
           >
             <PencilIcon size={16} />
@@ -115,6 +116,7 @@ export function EmployeeCard({
             onClick={toggleArchive}
             loading={busy}
             aria-label={employee.is_active ? "Archive" : "Restore"}
+            title={employee.is_active ? "Archive" : "Restore"}
             className="text-text-muted hover:text-text-primary"
           >
             <ArchiveIcon size={16} />

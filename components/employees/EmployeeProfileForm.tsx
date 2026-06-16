@@ -86,6 +86,22 @@ export function employeeToForm(emp: Employee): EmployeeFormState {
 
 export type FormErrors = Partial<Record<keyof EmployeeFormState, string>>;
 
+/** Strip everything except digits (used for account number / sort code). */
+function digitsOnly(v: string): string {
+  return v.replace(/\D/g, "");
+}
+
+/** Remove any digit from a value (account name must not contain numbers). */
+function lettersNoDigits(v: string): string {
+  return v.replace(/[0-9]/g, "");
+}
+
+/** Format up to 6 digits as a UK sort code "12-34-56". */
+function formatSortCode(v: string): string {
+  const d = digitsOnly(v).slice(0, 6);
+  return d.replace(/(\d{2})(?=\d)/g, "$1-");
+}
+
 export function validateEmployeeForm(form: EmployeeFormState): FormErrors {
   const errs: FormErrors = {};
   if (!form.name.trim()) errs.name = "Required";
@@ -95,10 +111,28 @@ export function validateEmployeeForm(form: EmployeeFormState): FormErrors {
   if (!form.store_id) errs.store_id = "Assign to a store";
   if (!form.hourly_ni_rate || Number(form.hourly_ni_rate) <= 0)
     errs.hourly_ni_rate = "Must be > 0";
-  if (!form.bank_account_name.trim()) errs.bank_account_name = "Required";
-  if (!form.bank_name.trim()) errs.bank_name = "Required";
-  if (!form.account_number.trim()) errs.account_number = "Required";
-  if (!form.sort_code.trim()) errs.sort_code = "Required";
+
+  // Bank details — required + format-checked for payroll.
+  if (!form.bank_account_name.trim()) {
+    errs.bank_account_name = "Required";
+  } else if (/[0-9]/.test(form.bank_account_name)) {
+    errs.bank_account_name = "Name cannot contain numbers";
+  }
+  if (!form.bank_name.trim()) {
+    errs.bank_name = "Required";
+  } else if (/[0-9]/.test(form.bank_name)) {
+    errs.bank_name = "Bank name cannot contain numbers";
+  }
+  if (!form.account_number.trim()) {
+    errs.account_number = "Required";
+  } else if (!/^\d{8}$/.test(digitsOnly(form.account_number))) {
+    errs.account_number = "Must be exactly 8 digits";
+  }
+  if (!form.sort_code.trim()) {
+    errs.sort_code = "Required";
+  } else if (digitsOnly(form.sort_code).length !== 6) {
+    errs.sort_code = "Must be 6 digits (e.g. 12-34-56)";
+  }
   return errs;
 }
 
@@ -129,6 +163,13 @@ export function EmployeeProfileForm({
     setForm((prev) => ({ ...prev, [k]: v }));
 
   const service = calcLengthOfService(form.employment_start_date);
+
+  // Position options exclude "Manager" (managers aren't employees). Keep any
+  // legacy value already on the record so editing it never silently blanks it.
+  const positionOptions =
+    form.position && !POSITION_OPTIONS.includes(form.position)
+      ? [form.position, ...POSITION_OPTIONS]
+      : POSITION_OPTIONS;
 
   // Indicative minimum-wage check (uses default bands; the configured bands
   // drive the authoritative alert/badge). Advisory only — never blocks saving.
@@ -190,7 +231,7 @@ export function EmployeeProfileForm({
             error={errors.position}
           >
             <option value="">Select…</option>
-            {POSITION_OPTIONS.map((p) => (
+            {positionOptions.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>
@@ -287,27 +328,35 @@ export function EmployeeProfileForm({
           <Input
             label="Account name *"
             value={form.bank_account_name}
-            onChange={(e) => set("bank_account_name", e.target.value)}
+            onChange={(e) => set("bank_account_name", lettersNoDigits(e.target.value))}
             error={errors.bank_account_name}
+            placeholder="As shown on the account"
           />
           <Input
             label="Bank name *"
             value={form.bank_name}
-            onChange={(e) => set("bank_name", e.target.value)}
+            onChange={(e) => set("bank_name", lettersNoDigits(e.target.value))}
             error={errors.bank_name}
           />
           <Input
             label="Account number *"
+            inputMode="numeric"
+            maxLength={8}
+            placeholder="8 digits"
             value={form.account_number}
-            onChange={(e) => set("account_number", e.target.value)}
+            onChange={(e) => set("account_number", digitsOnly(e.target.value).slice(0, 8))}
             error={errors.account_number}
+            hint={!errors.account_number ? "8 digits, numbers only" : undefined}
           />
           <Input
             label="Sort code *"
-            placeholder="00-00-00"
+            inputMode="numeric"
+            maxLength={8}
+            placeholder="12-34-56"
             value={form.sort_code}
-            onChange={(e) => set("sort_code", e.target.value)}
+            onChange={(e) => set("sort_code", formatSortCode(e.target.value))}
             error={errors.sort_code}
+            hint={!errors.sort_code ? "6 digits" : undefined}
           />
         </div>
       </div>

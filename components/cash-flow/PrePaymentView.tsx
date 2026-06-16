@@ -201,7 +201,7 @@ export function PrePaymentView({
           <table className="w-full text-sm">
             <tbody>
               <SummaryRow label="Opening balance (carried forward)" value={formatGBP(fin.opening_balance)} />
-              <SummaryRow label="Vita Mojo cash sales (Sun – payday Sat)" value={formatGBP(fin.vita_mojo_total)} />
+              <SummaryRow label="Vita Mojo cash sales (Sat – Fri)" value={formatGBP(fin.vita_mojo_total)} />
               <SummaryRow label="Less: logged differences / cash used" value={`(${formatGBP(fin.logged_differences)})`} tone="bad" />
               <SummaryRow label="Actual cash available" value={formatGBP(fin.actual_cash_available)} strong />
               <SummaryRow label="Total cash wages due" value={`(${formatGBP(fin.total_cash_wages)})`} tone="bad" />
