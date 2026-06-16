@@ -28,6 +28,16 @@ export interface ExecRow {
   aov_wow_pct: Num;
 }
 
+// Channel-level net sales + orders for a store/week, merged from
+// vm_net_sales_by_channel and vm_orders_by_channel. Powers the Executive
+// dashboard's per-channel AOV / order-mix breakdowns.
+export interface ExecChannelRow {
+  store: string;
+  channel: string;
+  net_sales: Num;
+  orders: Num;
+}
+
 export interface ProductRow {
   store: string;
   week_start: string;
@@ -126,6 +136,37 @@ export interface MealDealRow {
   deal_baskets: Num;
   prev_deal_baskets: Num;
   deal_baskets_delta: Num;
+}
+
+// One row per (store, meal deal) for a week, from the raw vm_meal_deals_sold
+// table (the "Meal Deals Sold (weekly)" report, pulled per store). Powers the
+// Lunch Time Deals section of the Daypart dashboard.
+export interface LunchDealItemRow {
+  store: string;
+  meal_deal_name: string;
+  no_of_meal_deals: Num;
+  net_sales: Num;
+}
+
+// Delivery vs in-store split for meal deals, from vm_v_lunch_deals_channel
+// (derived from line-item data). channel is "delivery" | "in_store".
+export interface LunchDealChannelRow {
+  store: string;
+  channel: string;
+  deal_baskets: Num;
+  net_sales: Num;
+  aov: Num;
+}
+
+// Per-individual-channel meal-deal mix (Deliveroo, Own Delivery, Kiosk, …),
+// from vm_v_lunch_deals_channel_detail. channel_group is "delivery" | "in_store".
+export interface LunchDealChannelDetailRow {
+  store: string;
+  channel_group: string;
+  channel_name: string;
+  deal_baskets: Num;
+  net_sales: Num;
+  aov: Num;
 }
 
 // Real menu categories (from products-with-modifiers), with WoW. Used by the

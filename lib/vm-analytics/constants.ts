@@ -12,6 +12,37 @@ export function shortStore(store: string): string {
   return STORE_LABEL[store] ?? store.replace(/^Peckers\s+/i, "");
 }
 
+// Resolve a ?store= query value ("hitchin" | "stevenage") to a canonical store
+// name. Anything else (incl. undefined / "all") means "both stores combined".
+export function resolveStore(param?: string): StoreName | null {
+  if (!param) return null;
+  const p = param.toLowerCase();
+  return STORES.find((s) => shortStore(s).toLowerCase() === p) ?? null;
+}
+
+// Channel buckets for the Executive dashboard. "Delivery" = own delivery + the
+// third-party platforms; everything else is treated as in-store (collection,
+// kiosk, till). Order & Pay at Table is listed for completeness — it may not be
+// present in every week's data.
+export const DELIVERY_CHANNELS = [
+  "Own Delivery",
+  "Deliveroo",
+  "Uber Eats",
+  "Just Eat",
+] as const;
+
+export const IN_STORE_CHANNELS = [
+  "Click & Collect",
+  "Order & Pay at Table",
+  "Kiosk",
+  "Till (takeaway)",
+  "Till (eat-in)",
+] as const;
+
+export function isDeliveryChannel(channel: string): boolean {
+  return (DELIVERY_CHANNELS as readonly string[]).includes(channel);
+}
+
 // Canonical store key for joining data ACROSS sources whose naming differs:
 //   VM views      -> "Peckers Hitchin"
 //   Cashflow/rota -> "Hitchin Peckers"

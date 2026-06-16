@@ -1,5 +1,6 @@
-import { getProducts, getCategories, resolveWeek, getWeeks } from "@/lib/vm-analytics/queries";
+import { getProducts, getCategories, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
+import { resolveStore, shortStore } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
@@ -45,21 +46,30 @@ function aggregate(rows: ProductRow[]): AggItem[] {
 export default async function ProductsPage({
   searchParams,
 }: {
-  searchParams: { week?: string };
+  searchParams: { week?: string; store?: string };
 }) {
+  const activeStore = resolveStore(searchParams.store);
+  const scopeLabel = activeStore ? shortStore(activeStore) : "both stores combined";
+
   let weekIso: string | null;
   let rows: ProductRow[];
   let cats: CategoryRow[];
   let weekEnd = "";
   try {
-    weekIso = await resolveWeek(searchParams.week);
-    if (!weekIso) return <EmptyWeek />;
-    rows = await getProducts(weekIso);
-    cats = await getCategories(weekIso);
+    // One getWeeks() call, then fetch products + categories in parallel.
     const weeks = await getWeeks();
+    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
+    if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
+    [rows, cats] = await Promise.all([getProducts(weekIso), getCategories(weekIso)]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
+  }
+
+  // Scope to the selected store (or keep both when "All Stores" is chosen).
+  if (activeStore) {
+    rows = rows.filter((r) => r.store === activeStore);
+    cats = cats.filter((c) => c.store === activeStore);
   }
 
   if (rows.length === 0) {
@@ -125,7 +135,7 @@ export default async function ProductsPage({
     <div className="space-y-7">
       <PageTitle
         title="Product Performance"
-        subtitle={`Best & worst sellers (both stores combined) · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`Best & worst sellers (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <Commentary initial={draft} input={insightInput} />
