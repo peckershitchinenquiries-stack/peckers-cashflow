@@ -7,8 +7,10 @@ import { Badge } from "@/components/ui/Badge";
 import {
   WEEKDAY_LONG,
   formatDDMMYYYY,
+  formatGBP,
   formatShiftRange,
   formatTimeOnly,
+  shiftHours,
   todayISO,
 } from "@/lib/utils";
 import type {
@@ -79,6 +81,20 @@ function computeStatus(
   if (diffMin > 60) return "absent";
   if (diffMin > 15) return "late";
   return "expected";
+}
+
+/** Gross hourly rate used to value a day's wage (on-the-books NI rate). */
+function rateOf(emp: Employee): number {
+  return Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0) || 0;
+}
+
+/** Hours actually worked so far today, from the clock event (open shifts count up to now). */
+function actualHoursOf(clock: ClockEvent | null | undefined, now: Date): number {
+  if (!clock?.clock_in_at) return 0;
+  const start = new Date(clock.clock_in_at).getTime();
+  const end = clock.clock_out_at ? new Date(clock.clock_out_at).getTime() : now.getTime();
+  const ms = end - start;
+  return ms > 0 ? ms / 3_600_000 : 0;
 }
 
 export function LiveDashboard({
@@ -200,6 +216,35 @@ export function LiveDashboard({
             return c?.clock_in_at && !c.clock_out_at;
           }).length;
 
+          // Per-employee daily wage: expected (scheduled hours × rate) and
+          // actual (hours clocked so far × rate). Drives the table columns and
+          // the store totals below.
+          const wageRows = sorted.map((emp) => {
+            const { shift, fromTemplate } = effectiveShiftFor(emp.id);
+            const realShift = shiftByEmp.get(emp.id);
+            const clock = clockByEmp.get(emp.id);
+            const status = computeStatus(shift, clock, now);
+            const rate = rateOf(emp);
+            const expHours =
+              shift && !shift.is_day_off
+                ? realShift && Number(realShift.scheduled_hours) > 0
+                  ? Number(realShift.scheduled_hours)
+                  : shiftHours(shift.start_time, shift.end_time)
+                : 0;
+            const actHours = actualHoursOf(clock, now);
+            return {
+              emp,
+              shift,
+              fromTemplate,
+              clock,
+              status,
+              expectedWage: expHours * rate,
+              actualWage: actHours * rate,
+            };
+          });
+          const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
+          const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
+
           return (
             <Card key={store.id} className="p-0 overflow-hidden">
               <div className="px-5 pt-5 pb-3 border-b border-border">
@@ -230,10 +275,30 @@ export function LiveDashboard({
                     </div>
                   )}
                 </div>
+
+                {/* Daily wage summary — expected (from the schedule) vs actual (clocked so far) */}
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                      Expected wage today
+                    </div>
+                    <div className="text-base font-semibold tabular-nums text-text-primary">
+                      {formatGBP(expectedTotal)}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
+                    <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                      Actual wage so far
+                    </div>
+                    <div className="text-base font-semibold tabular-nums text-gold">
+                      {formatGBP(actualTotal)}
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[600px]">
+                <table className="w-full text-sm min-w-[720px]">
                   <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                     <tr>
                       <th className="text-left px-3 py-2">Employee</th>
@@ -242,6 +307,8 @@ export function LiveDashboard({
                       <th className="text-center px-2 py-2">In</th>
                       <th className="text-center px-2 py-2">Out</th>
                       <th className="text-center px-2 py-2">Status</th>
+                      <th className="text-right px-2 py-2">Exp. £</th>
+                      <th className="text-right px-2 py-2">Act. £</th>
                       <th className="text-center px-2 py-2">Deliv.</th>
                     </tr>
                   </thead>
@@ -249,17 +316,14 @@ export function LiveDashboard({
                     {sorted.length === 0 && (
                       <tr>
                         <td
-                          colSpan={7}
+                          colSpan={9}
                           className="px-4 py-8 text-center text-text-muted text-sm"
                         >
                           No staff scheduled today. <span className="text-warning">TBC</span>
                         </td>
                       </tr>
                     )}
-                    {sorted.map((emp) => {
-                      const { shift, fromTemplate } = effectiveShiftFor(emp.id);
-                      const clock = clockByEmp.get(emp.id);
-                      const status = computeStatus(shift, clock, now);
+                    {wageRows.map(({ emp, shift, fromTemplate, clock, status, expectedWage, actualWage }) => {
                       const style = STATUS_STYLES[status];
                       return (
                         <tr
@@ -304,6 +368,12 @@ export function LiveDashboard({
                             >
                               {style.label}
                             </span>
+                          </td>
+                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-subtle">
+                            {expectedWage > 0 ? formatGBP(expectedWage) : "—"}
+                          </td>
+                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-primary">
+                            {actualWage > 0 ? formatGBP(actualWage) : "—"}
                           </td>
                           <td className="px-2 py-2 text-center text-xs text-text-subtle">
                             {emp.position === "Driver"

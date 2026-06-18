@@ -425,7 +425,7 @@ export function DailyCashView({
                               {r.reason}
                             </span>
                           ) : (
-                            <Badge variant="success">OK</Badge>
+                            <Badge variant="success">Supermarket</Badge>
                           )}
                         </td>
                         <td className="px-4 py-3 text-right tabular-nums font-medium">

@@ -165,7 +165,7 @@ async function resolveRecipients(
 async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: number }> {
   const today = todayISO();
   const weekStart = toISODate(startOfISOWeek(new Date()));
-  // Saturday pays the PREVIOUS Mon–Sun — the wage forecast must use that week.
+  // Tuesday pays the PREVIOUS Mon–Sun — the wage forecast must use that week.
   const payWeek = payWeekOf(weekStart);
   const fourWeeksAgo = toISODate(addDays(new Date(), -28));
 
@@ -610,8 +610,8 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
       );
     }
 
-    // ----- Saturday wage forecast: Post Office draw -----
-    // Wages paid this Saturday are for LAST week's work (Mon–Sun), so the
+    // ----- Tuesday wage forecast: Post Office draw -----
+    // Wages paid this Tuesday are for LAST week's work (Mon–Sun), so the
     // forecast uses the pay week — keeping it identical to the payout screen.
     // Leavers stay included: they're still owed for the pay week they worked.
     const storeEmployees = employees.filter((e) => e.store_id === store.id);
@@ -629,12 +629,13 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
       opening_balance: opening,
       entries: storeEntries,
       lines,
+      supermarket_cash: settings.cash_flow.supermarket_default_cash,
     });
 
     const payout = payoutByStore.get(store.id);
 
-    // Post Office draw required — flag from Friday onward.
-    if (summary.post_office_draw > 0.001 && todayWd >= 4) {
+    // Post Office draw required — flag on the Monday before and on payday Tuesday.
+    if (summary.post_office_draw > 0.001 && todayWd <= 1) {
       await upsertAlert(
         supabase,
         {
@@ -642,7 +643,7 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
           severity: "critical",
           store_id: store.id,
           title: `${store.name}: draw £${summary.post_office_draw.toFixed(2)} from the Post Office`,
-          message: `You need to draw £${summary.post_office_draw.toFixed(2)} from the Post Office before paying wages this Saturday. Wages due £${summary.grand_total_wages.toFixed(2)}; cash available £${summary.actual_cash_available.toFixed(2)}.`,
+          message: `You need to draw £${summary.post_office_draw.toFixed(2)} from the Post Office before paying wages this Tuesday. Wages due £${summary.grand_total_wages.toFixed(2)}; cash available £${summary.actual_cash_available.toFixed(2)}.`,
           payload: {
             draw: summary.post_office_draw,
             wages_due: summary.grand_total_wages,
@@ -653,8 +654,8 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
       );
     }
 
-    // Saturday after the confirm deadline: wages / payments not finalised.
-    if (todayWd === 5 && nowHour >= settings.cash_flow.wages_confirm_hour) {
+    // Tuesday after the confirm deadline: wages / payments not finalised.
+    if (todayWd === 1 && nowHour >= settings.cash_flow.wages_confirm_hour) {
       if (!payout || payout.status !== "confirmed") {
         await upsertAlert(
           supabase,
@@ -663,7 +664,7 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
             severity: "warning",
             store_id: store.id,
             title: `${store.name}: wages not yet confirmed`,
-            message: `Saturday wage payments for ${store.name} have not been confirmed in the system. Please confirm once all employees are paid.`,
+            message: `Tuesday wage payments for ${store.name} have not been confirmed in the system. Please confirm once all employees are paid.`,
             payload: { week_start: weekStart },
           },
           newAlerts,
@@ -672,8 +673,8 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
     }
   }
 
-  // ----- Unconfirmed payment for an employee (some paid, some not) on Saturday -----
-  if (todayWd === 5 && nowHour >= settings.cash_flow.wages_confirm_hour) {
+  // ----- Unconfirmed payment for an employee (some paid, some not) on Tuesday -----
+  if (todayWd === 1 && nowHour >= settings.cash_flow.wages_confirm_hour) {
     const draftPayoutIds = weekPayouts.filter((p) => !p.locked).map((p) => p.id);
     if (draftPayoutIds.length) {
       const { data: lineRows } = await supabase
@@ -698,7 +699,7 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
               severity: "warning",
               store_id: p.store_id,
               title: `${store?.name ?? "Store"}: ${agg.unpaid} employee${agg.unpaid === 1 ? "" : "s"} unpaid`,
-              message: `${agg.paid} employee${agg.paid === 1 ? "" : "s"} marked paid but ${agg.unpaid} still unconfirmed for this Saturday.`,
+              message: `${agg.paid} employee${agg.paid === 1 ? "" : "s"} marked paid but ${agg.unpaid} still unconfirmed for this Tuesday.`,
               payload: { paid: agg.paid, unpaid: agg.unpaid },
             },
             newAlerts,

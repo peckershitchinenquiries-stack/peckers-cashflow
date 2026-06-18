@@ -108,7 +108,7 @@ export function PayoutHistoryView({
           <EmptyState
             icon={<ListIcon />}
             title="No payout records yet"
-            description="Open the Saturday Payout page and click 'Generate payout sheet' — drafts and confirmed payouts both appear here, searchable by date, store, or employee."
+            description="Open the Tuesday Payout page and click 'Generate payout sheet' — drafts and confirmed payouts both appear here, searchable by date, store, or employee."
           />
         </Card>
       ) : (

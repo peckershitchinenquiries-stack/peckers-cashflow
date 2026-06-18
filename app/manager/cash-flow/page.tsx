@@ -41,7 +41,7 @@ export default async function ManagerCashFlowPage({
     <>
       <PageHeader
         title="Cash Flow"
-        description="Daily reconciliation, running balance, and Saturday wage forecast."
+        description="Daily reconciliation, running balance, and Tuesday wage forecast."
       />
       <CashFlowDashboard views={views} weekStart={weekStart} basePath="/manager/cash-flow" />
     </>

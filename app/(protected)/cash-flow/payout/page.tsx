@@ -21,7 +21,7 @@ export default async function CashFlowPayoutPage({
   if (!store) {
     return (
       <>
-        <PageHeader title="Saturday Payout" />
+        <PageHeader title="Tuesday Payout" />
         <p className="text-sm text-text-muted">No stores configured.</p>
       </>
     );
@@ -35,7 +35,7 @@ export default async function CashFlowPayoutPage({
   return (
     <>
       <PageHeader
-        title="Saturday Cash &amp; Delivery Wages"
+        title="Tuesday Cash &amp; Delivery Wages"
         description="Pre-payment summary, Post Office draw, and per-employee wage confirmation."
       />
       <PrePaymentView

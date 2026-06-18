@@ -107,7 +107,7 @@ export function CashFlowDashboard({
                   href={`${basePath}/payout?week=${weekStart}&store=${v.store.id}`}
                   className="btn-base outline-none bg-surface text-text-primary border border-border hover:bg-surface-hover h-9 px-3 text-sm"
                 >
-                  Saturday payout
+                  Tuesday payout
                 </Link>
                 <Link
                   href={`${basePath}/history`}
@@ -123,7 +123,7 @@ export function CashFlowDashboard({
               {draw > 0.001 && (
                 <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3">
                   <p className="text-sm font-semibold text-danger">
-                    ⚠ Draw {formatGBP(draw)} from the Post Office before Saturday
+                    ⚠ Draw {formatGBP(draw)} from the Post Office before Tuesday
                   </p>
                   <p className="text-xs text-text-subtle mt-1">
                     Forecast wages {formatGBP(v.summary.grand_total_wages)} exceed available cash{" "}
@@ -136,7 +136,7 @@ export function CashFlowDashboard({
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Stat label="Running cash balance" value={formatGBP(v.runningBalance)} tone="gold" />
                 <Stat
-                  label="Saturday wage forecast"
+                  label="Tuesday wage forecast"
                   value={formatGBP(v.summary.grand_total_wages)}
                   hint={`Cash ${formatGBP(v.summary.total_cash_wages)} + delivery ${formatGBP(v.summary.total_delivery_wages)}`}
                 />

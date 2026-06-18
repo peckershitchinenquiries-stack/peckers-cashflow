@@ -66,6 +66,12 @@ export function PrePaymentView({
         vita_mojo_total: payout.cash_collected + payout.logged_differences,
         cash_collected: payout.cash_collected,
         logged_differences: payout.logged_differences,
+        // Locked snapshots don't store the float separately; reconstruct it from
+        // the recorded total (actual = opening + collected + supermarket float).
+        supermarket_cash: Math.max(
+          0,
+          payout.actual_cash_available - payout.cash_collected - payout.opening_balance,
+        ),
         actual_cash_available: payout.actual_cash_available,
         total_cash_wages: payout.total_cash_wages,
         total_delivery_wages: payout.total_delivery_wages,
@@ -136,10 +142,10 @@ export function PrePaymentView({
     }
   }
 
-  const saturday = formatDDMMYYYY(
-    new Date(parseISODate(weekStart).getTime() + 5 * 86400000),
+  const tuesday = formatDDMMYYYY(
+    new Date(parseISODate(weekStart).getTime() + 1 * 86400000),
   );
-  // Wages paid this Saturday are for the PREVIOUS Mon–Sun week.
+  // Wages paid this Tuesday are for the PREVIOUS Mon–Sun week.
   const payWeekStartDate = new Date(parseISODate(weekStart).getTime() - 7 * 86400000);
   const payWeekLabel = `${formatDDMMYYYY(payWeekStartDate)} – ${formatDDMMYYYY(
     new Date(payWeekStartDate.getTime() + 6 * 86400000),
@@ -193,7 +199,7 @@ export function PrePaymentView({
         >
           <CardTitle>Pre-Payment Summary — {store.name}</CardTitle>
           <CardDescription>
-            Wages due on Saturday {saturday} — for last week&apos;s work ({payWeekLabel})
+            Wages due on Tuesday {tuesday} — for last week&apos;s work ({payWeekLabel})
           </CardDescription>
         </CardHeader>
 
@@ -201,8 +207,11 @@ export function PrePaymentView({
           <table className="w-full text-sm">
             <tbody>
               <SummaryRow label="Opening balance (carried forward)" value={formatGBP(fin.opening_balance)} />
-              <SummaryRow label="Vita Mojo cash sales (Sat – Fri)" value={formatGBP(fin.vita_mojo_total)} />
+              <SummaryRow label="Vita Mojo cash sales (Tue – Mon)" value={formatGBP(fin.vita_mojo_total)} />
               <SummaryRow label="Less: logged differences / cash used" value={`(${formatGBP(fin.logged_differences)})`} tone="bad" />
+              {fin.supermarket_cash > 0.001 && (
+                <SummaryRow label="Plus: supermarket cash (default float)" value={`+ ${formatGBP(fin.supermarket_cash)}`} tone="good" />
+              )}
               <SummaryRow label="Actual cash available" value={formatGBP(fin.actual_cash_available)} strong />
               <SummaryRow label="Total cash wages due" value={`(${formatGBP(fin.total_cash_wages)})`} tone="bad" />
               <SummaryRow label="Total delivery wages due" value={`(${formatGBP(fin.total_delivery_wages)})`} tone="bad" />
@@ -224,7 +233,7 @@ export function PrePaymentView({
 
         {fin.post_office_draw > 0.001 && (
           <div className="mt-4 rounded-xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger font-medium">
-            Draw {formatGBP(fin.post_office_draw)} from the Post Office before paying wages this Saturday.
+            Draw {formatGBP(fin.post_office_draw)} from the Post Office before paying wages this Tuesday.
           </div>
         )}
       </Card>
@@ -233,7 +242,7 @@ export function PrePaymentView({
       <Card className="p-0 overflow-hidden">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h3 className="text-base font-semibold text-text-primary">Saturday Wage Breakdown</h3>
+            <h3 className="text-base font-semibold text-text-primary">Tuesday Wage Breakdown</h3>
             <p className="text-sm text-text-muted mt-0.5">
               Hours &amp; deliveries from {payWeekLabel} ·{" "}
               {payout

@@ -23,6 +23,7 @@ export function CashFlowSettingsCard({ initial }: { initial: AppSettings }) {
           carry_forward_surplus: c.carry_forward_surplus,
           missing_entry_hour: Math.max(0, Math.min(23, Number(c.missing_entry_hour) || 0)),
           wages_confirm_hour: Math.max(0, Math.min(23, Number(c.wages_confirm_hour) || 0)),
+          supermarket_default_cash: Math.max(0, Number(c.supermarket_default_cash) || 0),
         },
       });
       toast.success("Cash flow settings saved");
@@ -68,10 +69,20 @@ export function CashFlowSettingsCard({ initial }: { initial: AppSettings }) {
             type="number"
             min="0"
             max="23"
-            label="Saturday wages-confirm hour (0–23)"
+            label="Tuesday wages-confirm hour (0–23)"
             value={String(c.wages_confirm_hour)}
             onChange={(e) => setC((p) => ({ ...p, wages_confirm_hour: Number(e.target.value) }))}
-            hint="Flag unconfirmed wages after this hour on Saturday (e.g. 18 = 6pm)"
+            hint="Flag unconfirmed wages after this hour on Tuesday (e.g. 18 = 6pm)"
+          />
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            label="Default supermarket cash (£)"
+            prefix="£"
+            value={String(c.supermarket_default_cash)}
+            onChange={(e) => setC((p) => ({ ...p, supermarket_default_cash: Number(e.target.value) }))}
+            hint="Added to every Tuesday payout as cash already in hand from supermarket takings (e.g. 700)"
           />
         </div>
 

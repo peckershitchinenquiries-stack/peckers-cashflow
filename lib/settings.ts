@@ -46,8 +46,14 @@ export type CashFlowSettings = {
   carry_forward_surplus: boolean;
   /** Hour (0–23) after which a store with no daily entry is flagged missing. */
   missing_entry_hour: number;
-  /** Hour (0–23) on Saturday after which unconfirmed wages are flagged. */
+  /** Hour (0–23) on Tuesday (payday) after which unconfirmed wages are flagged. */
   wages_confirm_hour: number;
+  /**
+   * Default supermarket cash added to each Tuesday payout — money the business
+   * already holds from supermarket takings, used to pay wages before any Post
+   * Office draw. Counts toward "actual cash available"; the rest is surplus.
+   */
+  supermarket_default_cash: number;
 };
 
 export type AppSettings = {
@@ -82,6 +88,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     carry_forward_surplus: true,
     missing_entry_hour: 23,
     wages_confirm_hour: 18,
+    supermarket_default_cash: 700,
   },
 };
 

@@ -19,7 +19,7 @@ export default async function NiMonthlyPage() {
     <>
       <PageHeader
         title="NI — Monthly Summary"
-        description="National Insurance (PAYE) wages grouped by calendar month, per store. NI is paid monthly; cash is paid weekly on the Saturday payout."
+        description="National Insurance (PAYE) wages grouped by calendar month, per store. NI is paid monthly; cash is paid weekly on the Tuesday payout."
       />
       <NiMonthlyView rows={rows} manualRows={manualRows} stores={stores ?? []} isAdmin />
     </>

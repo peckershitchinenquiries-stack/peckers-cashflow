@@ -400,7 +400,7 @@ export type WageLine = {
   total_payment: number;
 };
 
-/** The Saturday pre-payment summary (§3.4 of the spec). */
+/** The Tuesday pre-payment summary (§3.4 of the spec). */
 export type PrePaymentSummary = {
   store_id: string;
   week_start_date: string;
@@ -408,6 +408,8 @@ export type PrePaymentSummary = {
   vita_mojo_total: number;
   cash_collected: number;
   logged_differences: number;
+  /** Default supermarket cash float added to the pot (from app settings). */
+  supermarket_cash: number;
   actual_cash_available: number;
   total_cash_wages: number;
   total_delivery_wages: number;

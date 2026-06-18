@@ -18,7 +18,7 @@ export default async function ManagerCashFlowPayoutPage({
   if (!storeId) {
     return (
       <>
-        <PageHeader title="Saturday Payout" />
+        <PageHeader title="Tuesday Payout" />
         <Card>
           <p className="text-sm text-text-muted">No store assigned to your account.</p>
         </Card>
@@ -36,7 +36,7 @@ export default async function ManagerCashFlowPayoutPage({
   if (!store) {
     return (
       <>
-        <PageHeader title="Saturday Payout" />
+        <PageHeader title="Tuesday Payout" />
         <Card>
           <p className="text-sm text-text-muted">Store not found.</p>
         </Card>
@@ -52,7 +52,7 @@ export default async function ManagerCashFlowPayoutPage({
   return (
     <>
       <PageHeader
-        title="Saturday Cash &amp; Delivery Wages"
+        title="Tuesday Cash &amp; Delivery Wages"
         description="Pre-payment summary, Post Office draw, and per-employee wage confirmation."
       />
       <PrePaymentView

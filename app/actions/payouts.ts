@@ -56,9 +56,9 @@ function revalidateCashFlow() {
   }
 }
 
-/** Monday → that week's Saturday (payment day). */
-function saturdayOf(weekStartISO: string): string {
-  return toISODate(addDays(parseISODate(weekStartISO), 5));
+/** Monday → that week's Tuesday (payment day). */
+function tuesdayOf(weekStartISO: string): string {
+  return toISODate(addDays(parseISODate(weekStartISO), 1));
 }
 
 /**
@@ -88,13 +88,13 @@ async function loadOpeningBalance(
 /**
  * Compute the live pre-payment summary for a store + week from current data.
  *
- * Pay structure (confirmed with the client): wages paid on this week's Saturday
+ * Pay structure (confirmed with the client): wages paid on this week's Tuesday
  * are for the PREVIOUS week's work (Mon–Sun). So the wage lines (hours +
  * deliveries) come from LAST week, while the cash available to pay them is the
  * Vita Mojo cash sales for the seven days ending the day before payday — the
- * Saturday before this week through this Friday. (The payout is confirmed and
- * locked on payday Saturday, so the cash window must END on the Friday before;
- * Saturday's takings roll into next week's window instead of being lost after
+ * Tuesday before this week through this Monday. (The payout is confirmed and
+ * locked on payday Tuesday, so the cash window must END on the Monday before;
+ * Tuesday's takings roll into next week's window instead of being lost after
  * the lock.)
  */
 async function computeSummary(
@@ -102,10 +102,10 @@ async function computeSummary(
   storeId: string,
   weekStartISO: string,
 ): Promise<PrePaymentSummary> {
-  // Cash window: the Saturday before this week → this Friday (Sat–Fri), i.e.
-  // the seven days ending the day before payday Saturday.
-  const cashStart = toISODate(addDays(parseISODate(weekStartISO), -2));
-  const cashEnd = toISODate(addDays(parseISODate(weekStartISO), 4));
+  // Cash window: the Tuesday before this week → this Monday (Tue–Mon), i.e.
+  // the seven days ending the day before payday Tuesday.
+  const cashStart = toISODate(addDays(parseISODate(weekStartISO), -6));
+  const cashEnd = toISODate(addDays(parseISODate(weekStartISO), 0));
   // The week being PAID: the previous Monday–Sunday.
   const payWeek = payWeekOf(weekStartISO);
 
@@ -155,6 +155,7 @@ async function computeSummary(
     opening_balance: opening,
     entries,
     lines,
+    supermarket_cash: settings.cash_flow.supermarket_default_cash,
   });
 }
 
@@ -202,7 +203,7 @@ export async function generatePayout(input: {
   const headerPayload = {
     store_id: input.store_id,
     week_start_date: weekStart,
-    payment_date: saturdayOf(weekStart),
+    payment_date: tuesdayOf(weekStart),
     status: "draft" as const,
     opening_balance: summary.opening_balance,
     cash_collected: summary.cash_collected,
@@ -377,7 +378,7 @@ export async function confirmPayout(input: { payout_id: string }): Promise<{ ok:
     .update({
       status: "confirmed",
       locked: true,
-      payment_date: saturdayOf(payout.week_start_date),
+      payment_date: tuesdayOf(payout.week_start_date),
       opening_balance: summary.opening_balance,
       cash_collected: summary.cash_collected,
       logged_differences: summary.logged_differences,

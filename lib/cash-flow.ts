@@ -10,8 +10,9 @@
 //    in cash, at the employee's hourly_cash_rate.
 //  - Drivers are paid hourly like everyone else PLUS £2 per delivery (petrol).
 //    Extra deliveries (logged with a reason) are paid the same £2.
-//  - Wages paid on a Saturday are for the PREVIOUS week's work (Mon–Sun);
-//    the cash used to pay them is what this week's envelopes collected.
+//  - Wages paid on a Tuesday are for the PREVIOUS week's work (Mon–Sun);
+//    the cash used to pay them is what this week's envelopes collected, plus a
+//    default supermarket cash float.
 //  - Opening balance carries forward last week's surplus.
 // =============================================================
 
@@ -26,7 +27,7 @@ export function round2(n: number): number {
 export const DELIVERY_PETROL_RATE = 2;
 
 /**
- * The pay week for a Saturday payout: wages paid on this week's Saturday are
+ * The pay week for a Tuesday payout: wages paid on this week's Tuesday are
  * for the PREVIOUS Monday–Sunday week.
  */
 export function payWeekOf(weekStartISO: string): { start: string; end: string } {
@@ -223,10 +224,16 @@ export function buildPrePaymentSummary(input: {
   opening_balance: number;
   entries: Pick<DailyCashEntry, "vita_mojo_sales" | "envelope_amount" | "difference">[];
   lines: WageLine[];
+  /** Default supermarket cash float added to the pot (0 if not configured). */
+  supermarket_cash?: number;
 }): PrePaymentSummary {
   const totals = summariseWeekEntries(input.entries);
   const opening = round2(input.opening_balance);
-  const actualCashAvailable = round2(opening + totals.cashCollected);
+  const supermarketCash = round2(Math.max(0, Number(input.supermarket_cash) || 0));
+  // Cash available to pay wages = carried-forward surplus + envelopes collected
+  // + the default supermarket float. Wages are deducted from this; any remainder
+  // is surplus, and a shortfall is the Post Office draw.
+  const actualCashAvailable = round2(opening + totals.cashCollected + supermarketCash);
   const totalCashWages = round2(input.lines.reduce((s, l) => s + l.cash_wage, 0));
   const totalDeliveryWages = round2(input.lines.reduce((s, l) => s + l.delivery_wages, 0));
   const grandTotal = round2(totalCashWages + totalDeliveryWages);
@@ -239,6 +246,7 @@ export function buildPrePaymentSummary(input: {
     vita_mojo_total: totals.vitaMojoTotal,
     cash_collected: totals.cashCollected,
     logged_differences: totals.loggedDifferences,
+    supermarket_cash: supermarketCash,
     actual_cash_available: actualCashAvailable,
     total_cash_wages: totalCashWages,
     total_delivery_wages: totalDeliveryWages,
