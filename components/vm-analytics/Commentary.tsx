@@ -18,6 +18,10 @@ export function Commentary({
 
   useEffect(() => {
     let cancelled = false;
+    // Re-scope immediately to the newly-selected store/week's SSR draft. Without
+    // this, switching stores keeps showing the previously-loaded store because
+    // useState ignores changes to `initial` after mount.
+    setInsight(initial);
     setLoading(true);
     fetch("/api/vm-analytics/insights", {
       method: "POST",
@@ -26,13 +30,19 @@ export function Commentary({
     })
       .then((r) => r.json())
       .then((data: Insight) => {
-        if (!cancelled && data && data.summary) setInsight(data);
+        // Accept any valid insight — including ones with an empty summary (the
+        // Executive dashboard has no summary, only bullets). Guarding on
+        // `data.summary` here is what stopped store switches from updating.
+        const valid =
+          data && (data.summary || (Array.isArray(data.bullets) && data.bullets.length > 0));
+        if (!cancelled && valid) setInsight(data);
       })
       .catch(() => {})
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(input)]);
 
   const isClaude = insight.source === "claude";
