@@ -9,6 +9,8 @@ import type {
   ProductRow,
   CategoryRow,
   DaypartRow,
+  DaypartChannelRow,
+  DaypartChannelDetailRow,
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
@@ -201,6 +203,43 @@ export async function getDayparts(weekIso: string): Promise<DaypartRow[]> {
     .order("daypart_rank", { ascending: true });
   if (error) throw new Error(`getDayparts: ${error.message}`);
   return (data ?? []) as DaypartRow[];
+}
+
+// Delivery vs in-store split for dayparts, from vm_v_daypart_channel
+// (derived from line-item data). Returns [] if the view is missing so the
+// dashboard can degrade gracefully.
+export async function getDaypartChannels(weekIso: string): Promise<DaypartChannelRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_daypart_channel")
+    .select("store, week_start, daypart, daypart_rank, channel, orders, net_sales, aov")
+    .eq("week_start", weekIso)
+    .order("daypart_rank", { ascending: true });
+  if (error) {
+    console.warn(`getDaypartChannels: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as DaypartChannelRow[];
+}
+
+// Finer per-channel daypart breakdown, from vm_v_daypart_channel_detail. Lets
+// the Daypart dashboard show Own Delivery / Aggregate / Eat-in columns. Returns
+// [] if the view is missing (e.g. before the SQL has been run) so the dashboard
+// can degrade to the Delivery/In-store split gracefully.
+export async function getDaypartChannelDetail(
+  weekIso: string,
+): Promise<DaypartChannelDetailRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_daypart_channel_detail")
+    .select("store, week_start, daypart, daypart_rank, channel_group, channel_name, orders, net_sales, aov")
+    .eq("week_start", weekIso)
+    .order("daypart_rank", { ascending: true });
+  if (error) {
+    console.warn(`getDaypartChannelDetail: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as DaypartChannelDetailRow[];
 }
 
 export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {

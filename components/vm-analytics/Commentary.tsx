@@ -61,7 +61,9 @@ export function Commentary({
           <span className="text-[10px] text-ink-faint">refining…</span>
         )}
       </div>
-      <p className="text-sm leading-relaxed text-ink">{insight.summary}</p>
+      {insight.summary && (
+        <p className="text-sm leading-relaxed text-ink">{insight.summary}</p>
+      )}
       {insight.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5">
           {insight.bullets.map((b, i) => (

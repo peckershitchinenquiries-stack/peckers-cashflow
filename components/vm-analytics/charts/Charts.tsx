@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { truncTo } from "@/lib/vm-analytics/format";
 
 const PALETTE = [
   "#e11d2a",
@@ -126,13 +127,18 @@ export function PieChartCard({
   valueKey,
   height = 280,
   currency = true,
+  showPercent = false,
 }: {
   data: Record<string, unknown>[];
   nameKey: string;
   valueKey: string;
   height?: number;
   currency?: boolean;
+  // When true, slices are labelled with their share of the total (to 2 dp) and
+  // the tooltip shows the percentage rather than the raw value.
+  showPercent?: boolean;
 }) {
+  const total = data.reduce((s, d) => s + Number(d[valueKey] ?? 0), 0);
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -145,6 +151,13 @@ export function PieChartCard({
           outerRadius={90}
           innerRadius={45}
           paddingAngle={2}
+          label={
+            showPercent
+              ? (e: { percent?: number }) =>
+                  `${truncTo((e.percent ?? 0) * 100, 2).toFixed(2)}%`
+              : undefined
+          }
+          labelLine={false}
         >
           {data.map((_, i) => (
             <Cell key={i} fill={PALETTE[i % PALETTE.length]} />
@@ -152,7 +165,11 @@ export function PieChartCard({
         </Pie>
         <Tooltip
           formatter={(v: number) =>
-            currency ? `£${Number(v).toLocaleString()}` : Number(v).toLocaleString()
+            showPercent
+              ? `${total > 0 ? truncTo((Number(v) / total) * 100, 2).toFixed(2) : "0.00"}%`
+              : currency
+              ? `£${Number(v).toLocaleString()}`
+              : Number(v).toLocaleString()
           }
           contentStyle={{ fontSize: 12, borderRadius: 8 }}
         />

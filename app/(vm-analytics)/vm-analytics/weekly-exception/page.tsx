@@ -1,17 +1,16 @@
 import {
   getExec,
+  getExecChannels,
   getProducts,
-  getMenuCategories,
   getDayparts,
   getDelivery,
   getLaborCost,
-  getAttachmentRates,
   getMealDeals,
   resolveWeek,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
-import { gbp, gbp0, int, pct, weekRange, n } from "@/lib/vm-analytics/format";
-import { shortStore } from "@/lib/vm-analytics/constants";
+import { gbp, int, pct, weekRange } from "@/lib/vm-analytics/format";
+import { canonicalStore, resolveStore, shortStore } from "@/lib/vm-analytics/constants";
 import {
   buildExceptionReport,
   type KpiTableRow,
@@ -20,7 +19,6 @@ import {
 import { Section } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import type { AttachmentRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +32,7 @@ const kpiColumns: Column<KpiTableRow>[] = [
   },
   {
     key: "revenue",
-    header: "Revenue",
+    header: "Net Sales",
     align: "right",
     render: (r) => (
       <span className={r.store === "TOTAL" ? "font-semibold" : ""}>{gbp(r.revenue)}</span>
@@ -48,18 +46,19 @@ const kpiColumns: Column<KpiTableRow>[] = [
       <span className={r.store === "TOTAL" ? "font-semibold" : ""}>{int(r.orders)}</span>
     ),
   },
-  { key: "aov", header: "AOV", align: "right", render: (r) => gbp(r.aov) },
-  {
-    key: "labour",
-    header: "Labour % of Net",
-    align: "right",
-    render: (r) =>
-      r.labourPctOfNet == null ? (
-        <span className="text-tertiary">—</span>
-      ) : (
-        <span>{pct(r.labourPctOfNet)}</span>
-      ),
-  },
+  { key: "aovDel", header: "AOV — Delivery", align: "right", render: (r) => gbp(r.deliveryAov) },
+  { key: "aovIn", header: "AOV — In-store", align: "right", render: (r) => gbp(r.inStoreAov) },
+  // {
+  //   key: "labour",
+  //   header: "Labour % of Net",
+  //   align: "right",
+  //   render: (r) =>
+  //     r.labourPctOfNet == null ? (
+  //       <span className="text-tertiary">—</span>
+  //     ) : (
+  //       <span>{pct(r.labourPctOfNet)}</span>
+  //     ),
+  // },
   { key: "delivery", header: "Delivery %", align: "right", render: (r) => pct(r.deliveryPct) },
   {
     key: "top3",
@@ -68,43 +67,14 @@ const kpiColumns: Column<KpiTableRow>[] = [
       <div className="space-y-0.5">
         {r.top3.map((p, i) => (
           <div key={i} className="text-xs text-secondary">
-            {i + 1}. {p.name} <span className="text-tertiary">({gbp0(p.revenue)})</span>
+            {i + 1}. {p.name}{" "}
+            <span className="text-tertiary">
+              ({gbp(p.revenue)} · {int(p.units)} units)
+            </span>
           </div>
         ))}
       </div>
     ),
-  },
-];
-
-const attachColumns: Column<AttachmentRow>[] = [
-  { key: "item", header: "Item", render: (r) => r.item_name },
-  { key: "store", header: "Store", render: (r) => shortStore(r.store) },
-  { key: "attach", header: "Attach %", align: "right", render: (r) => pct(r.attach_pct) },
-  {
-    key: "prev",
-    header: "Prev Week",
-    align: "right",
-    render: (r) => (r.prev_attach_pct == null ? "—" : pct(r.prev_attach_pct)),
-  },
-  {
-    key: "delta",
-    header: "Change",
-    align: "right",
-    render: (r) =>
-      r.attach_pct_delta == null ? (
-        "—"
-      ) : (
-        <span
-          className={
-            n(r.attach_pct_delta) < 0
-              ? "text-rose-600 dark:text-rose-400"
-              : "text-emerald-600 dark:text-emerald-400"
-          }
-        >
-          {n(r.attach_pct_delta) >= 0 ? "+" : ""}
-          {n(r.attach_pct_delta).toFixed(1)} pp
-        </span>
-      ),
   },
 ];
 
@@ -120,18 +90,18 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
   { key: "uber", header: "Uber Eats", align: "right", render: (r) => pct(r.uberPct) },
   { key: "deliveroo", header: "Deliveroo", align: "right", render: (r) => pct(r.deliverooPct) },
   {
-    key: "thirdParty",
-    header: "3rd-Party Total",
+    key: "aggregator",
+    header: "Aggregator Total",
     align: "right",
     render: (r) => (
       <span
         className={
           r.overThreshold
-            ? "font-semibold text-rose-600 dark:text-rose-400"
-            : "font-semibold text-primary"
+            ? "font-bold text-rose-600 dark:text-rose-400"
+            : "font-bold text-amber-600 dark:text-amber-400"
         }
       >
-        {pct(r.thirdPartyPct)}
+        {pct(r.aggregatorPct)}
       </span>
     ),
   },
@@ -139,7 +109,11 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
     key: "own",
     header: "Own Delivery",
     align: "right",
-    render: (r) => <span className="text-secondary">{pct(r.ownDeliveryPct)}</span>,
+    render: (r) => (
+      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+        {pct(r.ownDeliveryPct)}
+      </span>
+    ),
   },
   {
     key: "all",
@@ -149,16 +123,12 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
   },
 ];
 
-function ExceptionList({
-  items,
-}: {
-  items: { text: string; detail?: string }[];
-}) {
+function ExceptionList({ items }: { items: { text: string; detail?: string }[] }) {
   return (
     <ul className="space-y-2.5">
       {items.map((o, i) => (
-        <li key={i} className="text-sm">
-          <span className="font-medium text-primary">{o.text}</span>
+        <li key={i} className="text-sm leading-relaxed text-primary">
+          {o.text}
           {o.detail && <span className="block text-xs text-secondary">{o.detail}</span>}
         </li>
       ))}
@@ -169,32 +139,32 @@ function ExceptionList({
 export default async function WeeklyExceptionPage({
   searchParams,
 }: {
-  searchParams: { week?: string };
+  searchParams: { week?: string; store?: string };
 }) {
+  const activeStore = resolveStore(searchParams.store);
+  const scopeLabel = activeStore ? shortStore(activeStore) : "both stores combined";
+
   let weekIso: string | null;
   let weekEnd = "";
   let report: ReturnType<typeof buildExceptionReport>;
-  let attachment: AttachmentRow[] = [];
 
   try {
     weekIso = await resolveWeek(searchParams.week);
     if (!weekIso) return <EmptyWeek />;
 
-    const [exec, products, categories, dayparts, delivery, labour, attach, mealDeals, weeks] =
+    const [exec, channels, products, dayparts, delivery, labour, mealDeals, weeks] =
       await Promise.all([
         getExec(weekIso),
+        getExecChannels(weekIso),
         getProducts(weekIso),
-        getMenuCategories(weekIso),
         getDayparts(weekIso),
         getDelivery(weekIso),
         getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
-        getAttachmentRates(weekIso),
         getMealDeals(weekIso),
         getWeeks(),
       ]);
 
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    attachment = attach;
 
     if (exec.length === 0) {
       return (
@@ -205,40 +175,41 @@ export default async function WeeklyExceptionPage({
       );
     }
 
+    // Scope every dataset to the selected store so the whole report (KPIs,
+    // opportunities, risks) is store-specific. Labour uses a different store
+    // naming convention, so match on the canonical key.
+    const scope = activeStore;
+    const byStore = <Row extends { store: string }>(rows: Row[]) =>
+      scope ? rows.filter((r) => r.store === scope) : rows;
+    const byCanonical = <Row extends { store: string }>(rows: Row[]) =>
+      scope ? rows.filter((r) => canonicalStore(r.store) === canonicalStore(scope)) : rows;
+
     report = buildExceptionReport({
-      exec,
-      products,
-      categories,
-      dayparts,
-      delivery,
-      labour,
-      attachment: attach,
-      mealDeals,
+      exec: byStore(exec),
+      channels: byStore(channels),
+      products: byStore(products),
+      dayparts: byStore(dayparts),
+      delivery: byStore(delivery),
+      labour: byCanonical(labour),
+      mealDeals: byCanonical(mealDeals),
+      activeStore,
     });
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
 
-  const { kpi, opportunities, risks, deliveryDependence, platformThreshold, labourDataPartial } =
-    report;
-
-  // Supporting table: most-attached items (in ≥10% of orders) that have a prior
-  // week to compare, top 12 by current attachment.
-  const attachTop = attachment
-    .filter((a) => n(a.attach_pct) >= 10 && a.prev_attach_pct != null)
-    .sort((a, b) => n(b.attach_pct) - n(a.attach_pct))
-    .slice(0, 12);
+  const { kpi, opportunities, risks, deliveryDependence, labourDataPartial } = report;
 
   return (
     <div className="space-y-7">
       <PageTitle
         title="Weekly Exception Report"
-        subtitle={`Opportunities & risks across all reports · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`Opportunities & risks · ${scopeLabel} · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <Section
         title="KPI Summary"
-        description="Headline metrics per store. Labour % is scheduled rota wages ÷ net sales."
+        description="Headline metrics per store. AOV is split into delivery and in-store. Labour % is scheduled rota wages ÷ net sales."
       >
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (
@@ -266,7 +237,7 @@ export default async function WeeklyExceptionPage({
             <span className="text-rose-600 dark:text-rose-400">▼</span> Risks
           </h3>
           {risks.length === 0 ? (
-            <p className="text-sm text-tertiary">No risks crossed threshold this week.</p>
+            <p className="text-sm text-tertiary">Nothing needs attention this week.</p>
           ) : (
             <ExceptionList items={risks} />
           )}
@@ -276,18 +247,9 @@ export default async function WeeklyExceptionPage({
       {deliveryDependence.length > 0 && (
         <Section
           title="Delivery Platform Dependence"
-          description={`Share of each store's sales by delivery channel. "3rd-Party Total" (Just Eat + Uber Eats + Deliveroo) is the platform-dependence figure — it turns red above ${platformThreshold}%. Own Delivery (your own drivers) is shown separately and is not counted as platform dependence.`}
+          description={`Share of each store's sales by delivery channel. "Aggregator Total" (Just Eat + Uber Eats + Deliveroo) is the commission-charging share — it turns red when it gets high. Own Delivery (your own drivers) is highlighted in green: growing it wins back commission.`}
         >
           <DataTable columns={deliveryColumns} rows={deliveryDependence} />
-        </Section>
-      )}
-
-      {attachTop.length > 0 && (
-        <Section
-          title="Attachment Rates"
-          description="Share of orders containing each item vs the previous week. Powers the falling-attachment risks above."
-        >
-          <DataTable columns={attachColumns} rows={attachTop} />
         </Section>
       )}
     </div>

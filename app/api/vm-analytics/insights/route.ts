@@ -15,8 +15,15 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "Invalid request body" }, { status: 400 });
   }
 
+  // Cache discriminator: store-specific dashboards send a `store`, so the
+  // commentary must be cached per store (otherwise the first store viewed that
+  // week is served for every store). All-Stores views send no store and keep
+  // the plain dashboard key. Stored in the `dashboard` column, e.g.
+  // "delivery" (all) vs "delivery@Peckers Hitchin".
+  const cacheKey = input.store ? `${input.dashboard}@${input.store}` : input.dashboard;
+
   // ── Step 1: Cache check ────────────────────────────────────────────────────
-  // If a summary for this (week, dashboard) pair already exists, return it
+  // If a summary for this (week, cacheKey) pair already exists, return it
   // immediately — no Claude call, no cost.
   try {
     const sb = getVMSupabaseServer();
@@ -24,7 +31,7 @@ export async function POST(req: Request): Promise<Response> {
       .from("vm_generated_insights")
       .select("summary, bullets, source")
       .eq("week_start_iso", input.week)
-      .eq("dashboard", input.dashboard)
+      .eq("dashboard", cacheKey)
       .single();
 
     if (cached?.summary) {
@@ -78,6 +85,13 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
 
+  // The Executive dashboard intentionally has no narrative summary (the KPI
+  // cards carry the story). Enforce it here so the Claude path can't reintroduce
+  // one, and the empty summary is what gets cached.
+  if (input.dashboard === "executive") {
+    insight = { ...insight, summary: "" };
+  }
+
   // ── Step 3: Persist to cache (fire-and-forget, non-fatal) ─────────────────
   // The next user to open this (week, dashboard) gets the cached result —
   // no API call and no delay regardless of how many times they switch weeks.
@@ -86,7 +100,7 @@ export async function POST(req: Request): Promise<Response> {
     await sb.from("vm_generated_insights").upsert(
       {
         week_start_iso: input.week,
-        dashboard: input.dashboard,
+        dashboard: cacheKey,
         summary: insight.summary,
         bullets: insight.bullets,
         source: insight.source,
