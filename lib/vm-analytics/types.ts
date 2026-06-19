@@ -70,6 +70,36 @@ export interface DaypartRow {
   aov: Num;
 }
 
+// Delivery vs in-store split for dayparts, from vm_v_daypart_channel
+// (derived from line-item data). channel is "Delivery" | "In-store".
+export interface DaypartChannelRow {
+  store: string;
+  week_start: string;
+  daypart: string;
+  daypart_rank: number;
+  channel: string;
+  orders: Num;
+  net_sales: Num;
+  aov: Num;
+}
+
+// Finer daypart × channel breakdown, from vm_v_daypart_channel_detail
+// (line-item derived, opening-hours filtered). channel_group is
+// "delivery" | "in_store"; channel_name is one of the executive channels
+// (Own Delivery, Deliveroo, Uber Eats, Just Eat, Click & Collect, Kiosk,
+// Till (eat-in), Till (takeaway)).
+export interface DaypartChannelDetailRow {
+  store: string;
+  week_start: string;
+  daypart: string;
+  daypart_rank: number;
+  channel_group: string;
+  channel_name: string;
+  orders: Num;
+  net_sales: Num;
+  aov: Num;
+}
+
 export interface WeekdayRow {
   store: string;
   week_start: string;

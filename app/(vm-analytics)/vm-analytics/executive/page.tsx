@@ -4,7 +4,6 @@ import {
   shortStore,
   STORES,
   resolveStore,
-  isDeliveryChannel,
   DELIVERY_CHANNELS,
   IN_STORE_CHANNELS,
 } from "@/lib/vm-analytics/constants";
@@ -16,91 +15,9 @@ import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import type { ExecRow, ExecChannelRow } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";
+import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown, type ChannelStat, type GroupAgg } from "@/lib/vm-analytics/channels";
 
 export const dynamic = "force-dynamic";
-
-const share = (part: number, whole: number) => (whole > 0 ? (100 * part) / whole : 0);
-
-// Per-channel stats within a fulfilment group (delivery or in-store).
-interface ChannelStat {
-  channel: string;
-  netSales: number;
-  orders: number;
-  aov: number;
-  orderPct: number; // share of orders within the group
-  salesPct: number; // share of net sales within the group
-}
-
-interface GroupAgg {
-  netSales: number;
-  orders: number;
-  aov: number;
-  channels: ChannelStat[];
-}
-
-// Aggregated view of a scope (one store, or both combined).
-interface Breakdown {
-  netSales: number;
-  customers: number;
-  orders: number; // delivery + in-store orders
-  delivery: GroupAgg;
-  inStore: GroupAgg;
-  aov: number; // blended
-}
-
-function groupAgg(rows: ExecChannelRow[], pred: (ch: string) => boolean): GroupAgg {
-  const m = new Map<string, { net: number; orders: number }>();
-  for (const r of rows) {
-    if (!pred(r.channel)) continue;
-    const c = m.get(r.channel) ?? { net: 0, orders: 0 };
-    c.net += n(r.net_sales);
-    c.orders += n(r.orders);
-    m.set(r.channel, c);
-  }
-  let netSales = 0;
-  let orders = 0;
-  Array.from(m.values()).forEach((c) => {
-    netSales += c.net;
-    orders += c.orders;
-  });
-  const channels: ChannelStat[] = Array.from(m.entries())
-    .map(([channel, c]) => ({
-      channel,
-      netSales: c.net,
-      orders: c.orders,
-      aov: c.orders > 0 ? c.net / c.orders : 0,
-      orderPct: share(c.orders, orders),
-      salesPct: share(c.net, netSales),
-    }))
-    .sort((a, b) => b.netSales - a.netSales);
-  return { netSales, orders, aov: orders > 0 ? netSales / orders : 0, channels };
-}
-
-function buildBreakdown(
-  stores: readonly string[],
-  execRows: ExecRow[],
-  chanRows: ExecChannelRow[]
-): Breakdown {
-  const scopedExec = execRows.filter((r) => stores.includes(r.store));
-  const scopedChan = chanRows.filter((r) => stores.includes(r.store));
-  let netSales = 0;
-  let customers = 0;
-  for (const r of scopedExec) {
-    netSales += n(r.net_sales);
-    customers += n(r.customer_count);
-  }
-  const delivery = groupAgg(scopedChan, isDeliveryChannel);
-  const inStore = groupAgg(scopedChan, (ch) => !isDeliveryChannel(ch));
-  const orders = delivery.orders + inStore.orders;
-  return {
-    netSales,
-    customers,
-    orders,
-    delivery,
-    inStore,
-    aov: orders > 0 ? netSales / orders : 0,
-  };
-}
 
 export default async function ExecutivePage({
   searchParams,
@@ -177,6 +94,21 @@ export default async function ExecutivePage({
   const aovBlendWow =
     hasPrev && prevCombined.aov > 0 ? share(combined.aov - prevCombined.aov, prevCombined.aov) : null;
 
+  // Own Delivery vs Aggregator (Deliveroo + Uber Eats + Just Eat) — both net
+  // sales and AOV (net ÷ orders), with WoW vs the previous week.
+  const ownDel = ownDelivery(combined.delivery);
+  const aggDel = aggregator(combined.delivery);
+  const prevOwnDel = ownDelivery(prevCombined.delivery);
+  const prevAggDel = aggregator(prevCombined.delivery);
+  const netOwnWow =
+    hasPrev && prevOwnDel.netSales > 0 ? share(ownDel.netSales - prevOwnDel.netSales, prevOwnDel.netSales) : null;
+  const netAggWow =
+    hasPrev && prevAggDel.netSales > 0 ? share(aggDel.netSales - prevAggDel.netSales, prevAggDel.netSales) : null;
+  const aovOwnWow =
+    hasPrev && prevOwnDel.aov > 0 ? share(ownDel.aov - prevOwnDel.aov, prevOwnDel.aov) : null;
+  const aovAggWow =
+    hasPrev && prevAggDel.aov > 0 ? share(aggDel.aov - prevAggDel.aov, prevAggDel.aov) : null;
+
   // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
   const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
     canonical.filter((ch) =>
@@ -189,42 +121,65 @@ export default async function ExecutivePage({
   type KpiRowDef = {
     kpi: string;
     indent?: boolean;
+    // Semantic colour: "good" (green) for in-store / own delivery, "bad" (red)
+    // for aggregator. Drives the value colour in every store column.
+    tone?: "good" | "bad";
     cell: (b: Breakdown) => string;
   };
 
+  // Every channel % is now share of the STORE's net sales (channel net ÷ store
+  // net), NOT share of its group — so Own Delivery % here matches the Delivery
+  // and other dashboards exactly. (pct truncates, so it never rounds up.)
   const channelCell = (group: "delivery" | "inStore", ch: string) => (b: Breakdown) => {
     const c = b[group].channels.find((x) => x.channel === ch);
-    return c ? `${int(c.orders)} · ${pct(c.orderPct)}` : "—";
+    if (!c) return "—";
+    const storeShare = b.netSales > 0 ? (100 * c.netSales) / b.netSales : 0;
+    return `${int(c.orders)} · ${pct(storeShare)}`;
   };
 
   const kpiRows: KpiRowDef[] = [
     { kpi: "Net Sales", cell: (b) => gbp(b.netSales) },
     { kpi: "Net Sales — Delivery", cell: (b) => gbp(b.delivery.netSales) },
-    { kpi: "Net Sales — In-store", cell: (b) => gbp(b.inStore.netSales) },
+    { kpi: "Net Sales — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).netSales) },
+    { kpi: "Net Sales — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).netSales) },
+    { kpi: "Net Sales — In-store", tone: "good", cell: (b) => gbp(b.inStore.netSales) },
     { kpi: "Total Orders", cell: (b) => int(b.orders) },
     { kpi: "Customers", cell: (b) => int(b.customers) },
     { kpi: "AOV (Blended)", cell: (b) => gbp(b.aov) },
     { kpi: "AOV — Delivery", cell: (b) => gbp(b.delivery.aov) },
-    { kpi: "AOV — In-store", cell: (b) => gbp(b.inStore.aov) },
+    { kpi: "AOV — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).aov) },
+    { kpi: "AOV — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).aov) },
+    { kpi: "AOV — In-store", tone: "good", cell: (b) => gbp(b.inStore.aov) },
     {
       kpi: "Delivery Orders",
-      cell: (b) => `${int(b.delivery.orders)} · ${pct(share(b.delivery.orders, b.orders))}`,
+      cell: (b) => `${int(b.delivery.orders)} · ${pct(b.deliveryPct)}`,
     },
-    ...presentDelivery.map((ch) => ({
+    ...presentDelivery.map((ch): KpiRowDef => ({
       kpi: ch,
       indent: true,
+      tone: /own|direct/i.test(ch) ? "good" : /deliveroo|uber|just\s*eat/i.test(ch) ? "bad" : undefined,
       cell: channelCell("delivery", ch),
     })),
     {
       kpi: "In-store Orders",
-      cell: (b) => `${int(b.inStore.orders)} · ${pct(share(b.inStore.orders, b.orders))}`,
+      tone: "good",
+      cell: (b) => `${int(b.inStore.orders)} · ${pct(b.inStorePct)}`,
     },
-    ...presentInStore.map((ch) => ({
+    ...presentInStore.map((ch): KpiRowDef => ({
       kpi: ch,
       indent: true,
+      tone: "good",
       cell: channelCell("inStore", ch),
     })),
   ];
+
+  // Green for margin-friendly rows (in-store / own delivery), red for aggregator.
+  const toneClass = (tone?: "good" | "bad") =>
+    tone === "good"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : tone === "bad"
+      ? "text-rose-600 dark:text-rose-400"
+      : "";
 
   const summaryColumns: Column<KpiRowDef>[] = [
     {
@@ -238,7 +193,7 @@ export default async function ExecutivePage({
       key: shortStore(s).toLowerCase(),
       header: shortStore(s),
       align: "right" as const,
-      render: (r: KpiRowDef) => r.cell(byStore.get(s)!),
+      render: (r: KpiRowDef) => <span className={toneClass(r.tone)}>{r.cell(byStore.get(s)!)}</span>,
     })),
     // Total column only adds information when more than one store is shown.
     ...(activeStores.length > 1
@@ -247,7 +202,9 @@ export default async function ExecutivePage({
             key: "total",
             header: "Total",
             align: "right" as const,
-            render: (r: KpiRowDef) => <span className="font-semibold">{r.cell(combined)}</span>,
+            render: (r: KpiRowDef) => (
+              <span className={`font-semibold ${toneClass(r.tone)}`}>{r.cell(combined)}</span>
+            ),
           },
         ]
       : []),
@@ -262,11 +219,58 @@ export default async function ExecutivePage({
   ];
 
   // ---- Order-mix tables (per channel, within each group) -----------------
-  const mixColumns: Column<ChannelStat>[] = [
-    { key: "ch", header: "Channel", render: (r) => <span className="font-medium">{r.channel}</span> },
-    { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
-    { key: "pct", header: "% of group", align: "right", render: (r) => pct(r.orderPct) },
-    { key: "aov", header: "AOV", align: "right", render: (r) => gbp(r.aov) },
+  // Revenue-based share (not order-based) for consistency with other dashboards,
+  // plus a Net Sales column and a TOTAL row so the % is easy to verify.
+  interface ChannelRow extends ChannelStat {
+    isTotal?: boolean;
+  }
+  const buildChannelTable = (group: GroupAgg): ChannelRow[] => [
+    ...group.channels,
+    {
+      channel: "TOTAL",
+      netSales: group.netSales,
+      orders: group.orders,
+      aov: group.aov,
+      orderPct: 100,
+      salesPct: 100,
+      isTotal: true,
+    },
+  ];
+
+  const mixColumns: Column<ChannelRow>[] = [
+    {
+      key: "ch",
+      header: "Channel",
+      render: (r) => (
+        <span className={r.isTotal ? "font-semibold" : "font-medium"}>{r.channel}</span>
+      ),
+    },
+    {
+      key: "orders",
+      header: "Orders",
+      align: "right",
+      render: (r) => <span className={r.isTotal ? "font-semibold" : ""}>{int(r.orders)}</span>,
+    },
+    {
+      key: "net-sales",
+      header: "Net Sales",
+      align: "right",
+      render: (r) => <span className={r.isTotal ? "font-semibold" : ""}>{gbp(r.netSales)}</span>,
+    },
+    {
+      key: "pct",
+      header: "% of group (revenue)",
+      align: "right",
+      render: (r) => (
+        <span className={r.isTotal ? "font-semibold" : ""}>{pct(r.salesPct)}</span>
+      ),
+    },
+    {
+      key: "aov",
+      header: "AOV",
+      align: "right",
+      render: (r) => <span className={r.isTotal ? "font-semibold" : ""}>{gbp(r.aov)}</span>,
+    },
   ];
 
   const deliveryOrdersChart = combined.delivery.channels.map((c) => ({
@@ -288,17 +292,35 @@ export default async function ExecutivePage({
   const insightInput: ExecInput = {
     dashboard: "executive",
     week: weekIso,
+    store: activeStore,
     totalWow: netWow,
+    combined: {
+      netSales: combined.netSales,
+      deliveryNetSales: combined.delivery.netSales,
+      inStoreNetSales: combined.inStore.netSales,
+      orders: combined.orders,
+      aov: combined.aov,
+      deliveryAov: combined.delivery.aov,
+      inStoreAov: combined.inStore.aov,
+      deliveryPct: share(combined.delivery.netSales, combined.netSales),
+      inStorePct: share(combined.inStore.netSales, combined.netSales),
+      customers: combined.customers,
+    },
     stores: activeStores.map((s) => {
       const b = byStore.get(s)!;
       const row = rows.find((r) => r.store === s);
       return {
         store: s,
         netSales: b.netSales,
+        deliveryNetSales: b.delivery.netSales,
+        inStoreNetSales: b.inStore.netSales,
         orders: b.orders,
         aov: b.aov,
+        deliveryAov: b.delivery.aov,
+        inStoreAov: b.inStore.aov,
         customers: b.customers,
         deliveryPct: share(b.delivery.netSales, b.netSales),
+        inStorePct: share(b.inStore.netSales, b.netSales),
         collectionPct: row ? n(row.collection_pct) : 0,
         eatInPct: row ? n(row.eat_in_pct) : 0,
         netSalesWow: row ? (row.net_sales_wow_pct === null ? null : n(row.net_sales_wow_pct)) : null,
@@ -317,7 +339,9 @@ export default async function ExecutivePage({
       <KpiGrid>
         <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} />
         <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} />
+        <KpiCard label="Net Sales — Own Delivery" value={gbp(ownDel.netSales)} delta={netOwnWow} tone="good" />
+        <KpiCard label="Net Sales — Aggregator" value={gbp(aggDel.netSales)} delta={netAggWow} hint="Deliveroo + Uber + Just Eat" tone="bad" />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} tone="good" />
         <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} />
         <KpiCard
           label="AOV (Blended)"
@@ -326,10 +350,14 @@ export default async function ExecutivePage({
           hint="net sales ÷ orders"
         />
         <KpiCard label="AOV — Delivery" value={gbp(combined.delivery.aov)} delta={aovDelWow} />
-        <KpiCard label="AOV — In-store" value={gbp(combined.inStore.aov)} delta={aovInWow} />
+        <KpiCard label="AOV — Own Delivery" value={gbp(ownDel.aov)} delta={aovOwnWow} tone="good" />
+        <KpiCard label="AOV — Aggregator" value={gbp(aggDel.aov)} delta={aovAggWow} hint="Deliveroo + Uber + Just Eat" tone="bad" />
+        <KpiCard label="AOV — In-store" value={gbp(combined.inStore.aov)} delta={aovInWow} tone="good" />
         <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} />
+        <KpiCard label="Own Delivery %" value={pct(share(ownDel.netSales, combined.netSales))} hint="of net sales" tone="good" />
+        <KpiCard label="Aggregate %" value={pct(share(aggDel.netSales, combined.netSales))} hint="of net sales" tone="bad" />
         <KpiCard label="Delivery %" value={pct(share(combined.delivery.netSales, combined.netSales))} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(share(combined.inStore.netSales, combined.netSales))} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(share(combined.inStore.netSales, combined.netSales))} hint="of net sales" tone="good" />
         <KpiCard
           label="Net Sales WoW"
           value={signedPct(netWow)}
@@ -349,7 +377,7 @@ export default async function ExecutivePage({
               share(combined.delivery.orders, combined.orders)
             )} of orders)`}
           >
-            <DataTable columns={mixColumns} rows={combined.delivery.channels} />
+            <DataTable columns={mixColumns} rows={buildChannelTable(combined.delivery)} />
             {deliveryOrdersChart.length > 0 && (
               <div className="mt-4">
                 <BarChartCard
@@ -366,7 +394,7 @@ export default async function ExecutivePage({
               share(combined.inStore.orders, combined.orders)
             )} of orders)`}
           >
-            <DataTable columns={mixColumns} rows={combined.inStore.channels} />
+            <DataTable columns={mixColumns} rows={buildChannelTable(combined.inStore)} />
             {inStoreOrdersChart.length > 0 && (
               <div className="mt-4">
                 <BarChartCard

@@ -1,13 +1,14 @@
-import { getComparison, resolveWeek, getWeeks } from "@/lib/vm-analytics/queries";
+import { getComparison, getExec, getExecChannels, resolveWeek, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 import { shortStore, STORES } from "@/lib/vm-analytics/constants";
+import { buildBreakdown, ownDelivery, aggregator, type Breakdown } from "@/lib/vm-analytics/channels";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type ComparisonInput } from "@/lib/vm-analytics/insights";
-import type { ComparisonRow } from "@/lib/vm-analytics/types";
+import type { ComparisonRow, ExecRow, ExecChannelRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -18,13 +19,19 @@ export default async function StoreComparisonPage({
 }) {
   let weekIso: string | null;
   let rows: ComparisonRow[];
+  let execRows: ExecRow[] = [];
+  let chanRows: ExecChannelRow[] = [];
   let weekEnd = "";
   try {
     weekIso = await resolveWeek(searchParams.week);
     if (!weekIso) return <EmptyWeek />;
-    rows = await getComparison(weekIso);
     const weeks = await getWeeks();
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
+    [rows, execRows, chanRows] = await Promise.all([
+      getComparison(weekIso),
+      getExec(weekIso),
+      getExecChannels(weekIso),
+    ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
@@ -39,6 +46,12 @@ export default async function StoreComparisonPage({
   }
 
   const get = (s: string) => rows.find((r) => r.store === s);
+  // Delivery / in-store AOV split, computed identically to the Executive and
+  // Exception dashboards so the numbers line up across the suite.
+  const breakdowns = new Map<string, Breakdown>(
+    STORES.map((s) => [s, buildBreakdown([s], execRows, chanRows)])
+  );
+  const bd = (s: string) => breakdowns.get(s);
 
   interface MetricRow {
     metric: string;
@@ -49,15 +62,38 @@ export default async function StoreComparisonPage({
   const stores = STORES.map((s) => get(s));
   const vals = (pick: (r: ComparisonRow) => number) =>
     stores.map((r) => (r ? pick(r) : 0));
+  const bdVals = (pick: (b: Breakdown) => number) =>
+    STORES.map((s) => {
+      const b = bd(s);
+      return b ? pick(b) : 0;
+    });
 
   const metricRows: MetricRow[] = [
-    { metric: "Gross Sales", fmt: gbp, values: vals((r) => n(r.gross_sales)), higherIsBetter: true },
+    // { metric: "Gross Sales", fmt: gbp, values: vals((r) => n(r.gross_sales)), higherIsBetter: true },
     { metric: "Net Sales", fmt: gbp, values: vals((r) => n(r.net_sales)), higherIsBetter: true },
     { metric: "Orders", fmt: int, values: vals((r) => n(r.total_orders)), higherIsBetter: true },
-    { metric: "AOV", fmt: gbp, values: vals((r) => n(r.aov)), higherIsBetter: true },
+    { metric: "AOV — Delivery", fmt: gbp, values: bdVals((b) => b.delivery.aov), higherIsBetter: true },
+    { metric: "AOV — In-store", fmt: gbp, values: bdVals((b) => b.inStore.aov), higherIsBetter: true },
+    { metric: "AOV (Combined)", fmt: gbp, values: bdVals((b) => b.aov), higherIsBetter: true },
     { metric: "Customers", fmt: int, values: vals((r) => n(r.total_customers)), higherIsBetter: true },
     { metric: "New Customer %", fmt: (v) => pct(v), values: vals((r) => n(r.new_customer_pct)), higherIsBetter: true },
-    { metric: "Delivery Mix %", fmt: (v) => pct(v), values: vals((r) => n(r.delivery_mix_pct)), higherIsBetter: false },
+    // Delivery mix split into Own Delivery (margin-friendly → higher is better)
+    // and Aggregate (commission → higher is worse). All three shares are % of
+    // that store's net sales and sum to 100%.
+    {
+      metric: "Own Delivery %",
+      fmt: (v) => pct(v),
+      values: bdVals((b) => (b.netSales > 0 ? (100 * ownDelivery(b.delivery).netSales) / b.netSales : 0)),
+      higherIsBetter: true,
+    },
+    {
+      metric: "Aggregate %",
+      fmt: (v) => pct(v),
+      values: bdVals((b) => (b.netSales > 0 ? (100 * aggregator(b.delivery).netSales) / b.netSales : 0)),
+      higherIsBetter: false,
+    },
+    // In-store is the most profitable channel, so a higher share is better.
+    { metric: "In Store %", fmt: (v) => pct(v), values: bdVals((b) => b.inStorePct), higherIsBetter: true },
   ];
 
   const columns: Column<MetricRow>[] = [
@@ -92,7 +128,7 @@ export default async function StoreComparisonPage({
         return (
           <span className="text-ink-soft">
             {r.fmt(Math.abs(diff))}{" "}
-            <span className="text-ink-faint">({pctGap.toFixed(0)}%)</span>
+            <span className="text-ink-faint">({pct(pctGap)})</span>
           </span>
         );
       },
@@ -100,11 +136,12 @@ export default async function StoreComparisonPage({
   ];
 
   const revChart = STORES.map((s) => {
+    const b = bd(s);
     const r = get(s);
     return {
       store: shortStore(s),
-      "Gross Sales": Math.round(n(r?.gross_sales)),
-      Orders: Math.round(n(r?.total_orders)),
+      "Net Sales": Math.round(b ? b.netSales : n(r?.net_sales)),
+      Orders: Math.round(b ? b.orders : n(r?.total_orders)),
     };
   });
 
@@ -113,11 +150,14 @@ export default async function StoreComparisonPage({
     week: weekIso,
     stores: STORES.map((s) => {
       const r = get(s);
+      const b = bd(s);
       return {
         store: s,
-        revenue: n(r?.gross_sales),
+        revenue: b ? b.netSales : n(r?.net_sales),
         orders: n(r?.total_orders),
-        aov: n(r?.aov),
+        aov: b ? b.aov : n(r?.aov),
+        deliveryAov: b ? b.delivery.aov : 0,
+        inStoreAov: b ? b.inStore.aov : 0,
         customers: n(r?.total_customers),
       };
     }),
@@ -142,12 +182,12 @@ export default async function StoreComparisonPage({
         {STORES.map((s) => {
           const r = get(s);
           return (
-            <div key={s} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div key={s} className="rounded-xl border border-slate-200 bg-black p-4 shadow-sm">
               <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
                 {shortStore(s)}
               </div>
               <div className="mt-1 text-2xl font-semibold text-ink">
-                {gbp(n(r?.gross_sales))}
+                {gbp(n(r?.net_sales))}
               </div>
               <div className="mt-1 text-xs">
                 <span className={deltaClass(wowFor(s))}>{signedPct(wowFor(s))} WoW</span>
@@ -166,12 +206,13 @@ export default async function StoreComparisonPage({
       </Section>
 
       <Section title="Revenue & Orders">
-        <ChartCard title="Gross Sales by Store">
+        <ChartCard title="Net Sales by Store">
           <BarChartCard
             data={revChart}
             xKey="store"
-            bars={[{ key: "Gross Sales", name: "Gross Sales" }]}
+            bars={[{ key: "Net Sales", name: "Net Sales" }]}
             currency
+            height={320}
           />
         </ChartCard>
       </Section>

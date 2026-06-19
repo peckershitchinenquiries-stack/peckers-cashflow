@@ -32,14 +32,31 @@ export function int(v: unknown): string {
   return intFmt.format(Math.round(n(v)));
 }
 
-export function pct(v: unknown, digits = 1): string {
-  return `${n(v).toFixed(digits)}%`;
+// Truncate (NOT round) a number toward zero to `digits` decimals. These figures
+// drive business decisions, so a value like 15.1182% must show as 15.11%, never
+// rounded up to 15.12%. Done via a fixed-string slice (rounded a few places
+// deeper first) so binary float noise — e.g. 0.29 held as 0.289999… — can't
+// truncate to the wrong penny.
+export function truncTo(v: number, digits: number): number {
+  if (!Number.isFinite(v)) return 0;
+  const neg = v < 0;
+  const s = Math.abs(v).toFixed(digits + 4); // clears float noise at the tail
+  const dot = s.indexOf(".");
+  const cut = digits > 0 ? s.slice(0, dot + 1 + digits) : s.slice(0, dot);
+  const num = Number(cut);
+  return neg ? -num : num;
+}
+
+// Percentages are TRUNCATED to 2 decimals everywhere so they reconcile across
+// dashboards and never round up. (Money stays at the penny — see gbp.)
+export function pct(v: unknown, digits = 2): string {
+  return `${truncTo(n(v), digits).toFixed(digits)}%`;
 }
 
 // Signed percentage with +/- prefix, for WoW deltas. Returns "—" when null.
-export function signedPct(v: unknown, digits = 1): string {
+export function signedPct(v: unknown, digits = 2): string {
   if (v === null || v === undefined || v === "") return "—";
-  const num = n(v);
+  const num = truncTo(n(v), digits);
   const sign = num > 0 ? "+" : "";
   return `${sign}${num.toFixed(digits)}%`;
 }

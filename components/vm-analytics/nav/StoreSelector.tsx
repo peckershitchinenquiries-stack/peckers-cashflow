@@ -12,6 +12,10 @@ export function StoreSelector() {
   const search = useSearchParams();
   const selected = search.get("store") ?? "";
 
+  // Store Comparison is always both stores side by side, so a store filter makes
+  // no sense there — hide the selector on that dashboard.
+  if (pathname?.includes("/store-comparison")) return null;
+
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(search.toString());
     if (e.target.value) params.set("store", e.target.value);

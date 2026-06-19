@@ -50,8 +50,11 @@ export default async function VmAnalyticsLayout({
         </p>
       </aside>
 
-      {/* Main content */}
-      <div className="flex flex-col bg-bg">
+      {/* Main content. min-w-0 lets wide tables (e.g. the Daypart breakdown)
+          scroll inside their own container instead of stretching the whole
+          column past the viewport — which would push the chart's bars and the
+          top-bar selectors off-screen. */}
+      <div className="flex min-w-0 flex-col bg-bg">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-6 py-3">
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium text-text-muted">VM Analytics</span>
@@ -69,7 +72,7 @@ export default async function VmAnalyticsLayout({
           </Suspense>
         </header>
 
-        <main className="flex-1 px-6 py-6">{children}</main>
+        <main className="min-w-0 flex-1 px-6 py-6">{children}</main>
       </div>
     </div>
   );
