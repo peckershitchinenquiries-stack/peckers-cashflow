@@ -19,7 +19,7 @@ export type EmployeeInput = {
   email?: string | null;
   date_of_birth?: string | null;
   gender?: string | null;
-  position?: EmployeePosition | null;
+  position?: string | null; // Pipe-delimited positions (e.g. "Kitchen Team Member|Driver")
   employment_start_date?: string | null;
   joined_date?: string | null;
   hourly_ni_rate?: number | null;

@@ -34,6 +34,7 @@ import type {
   Store,
   WeeklyDelivery,
 } from "@/lib/types";
+import { hasRole } from "@/lib/types";
 
 type Props = {
   stores: Store[];
@@ -410,7 +411,7 @@ export function RotaView({
                 const variance =
                   avg > 0 ? ((total - avg) / avg) * 100 : 0;
                 const flagVariance = avg > 0 && Math.abs(variance) > 20;
-                const isDriver = emp.position === "Driver";
+                const isDriver = hasRole(emp.position, "Driver");
                 const delivery = deliveryByDriver.get(emp.id);
                 const wage = wageComplianceForEmployee(emp, minWageBands);
                 const underMinWage = wage ? !wage.compliant : false;

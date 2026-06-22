@@ -25,6 +25,7 @@ import { wageComplianceForEmployee } from "@/lib/compliance";
 import { isCredentialEmail } from "@/lib/credentials";
 import { sendAlertDigest } from "@/lib/email";
 import type { AlertType, AlertSeverity } from "@/lib/types";
+import { hasRole } from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -335,7 +336,7 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
   }
   for (const [driverId, weeks] of Array.from(deliveriesByDriverWeek.entries())) {
     const driver = employeeById.get(driverId);
-    if (!driver || driver.position !== "Driver") continue;
+    if (!driver || !hasRole(driver.position, "Driver")) continue;
     const thisWeek = weeks.get(weekStart) ?? 0;
     const priorWeeks = Array.from(weeks.entries())
       .filter(([wk]) => wk !== weekStart)

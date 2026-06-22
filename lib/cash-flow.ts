@@ -17,6 +17,7 @@
 // =============================================================
 
 import type { DailyCashEntry, Employee, PrePaymentSummary, WageLine } from "./types";
+import { hasRole } from "./types";
 import { addDays, parseISODate, startOfISOWeek, toISODate } from "./utils";
 
 export function round2(n: number): number {
@@ -188,7 +189,7 @@ export function buildWageLines(
     const cashRate = Number(emp.hourly_cash_rate ?? 0) || 0;
     const cashWage = round2(cashHours * cashRate);
 
-    const isDriver = emp.position === "Driver";
+    const isDriver = hasRole(emp.position, "Driver");
     const deliveries = isDriver ? Math.max(0, Math.round(worked.deliveries)) : 0;
     // £2/delivery petrol allowance unless a custom per-driver rate is set.
     const deliveryRate = isDriver

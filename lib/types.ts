@@ -106,6 +106,17 @@ export type Employee = {
   delivery_rate: number | null;
 };
 
+/** Parse pipe-delimited positions string into array. */
+export function parsePositions(positionStr: string | null): EmployeePosition[] {
+  if (!positionStr) return [];
+  return positionStr.split("|").filter((p) => p.trim() && POSITION_OPTIONS.includes(p.trim() as EmployeePosition)) as EmployeePosition[];
+}
+
+/** Check if employee has a specific role. */
+export function hasRole(positionStr: string | null, role: EmployeePosition): boolean {
+  return parsePositions(positionStr).includes(role);
+}
+
 export type EmployeeHoursSource = "manual" | "clocked";
 
 export type EmployeeHoursRow = {

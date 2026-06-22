@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { haversineMeters, isWithinGeofence, shiftHours, todayISO } from "@/lib/utils";
+import { hasRole } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
 const AUTO_SHIFT_NOTE = "Auto-created from clock-in";
@@ -244,7 +245,7 @@ export async function clockOut(input: {
     throw new Error("You've already clocked out today.");
   }
 
-  const isDriver = employee.position === "Driver";
+  const isDriver = hasRole(employee.position, "Driver");
   if (isDriver && (input.deliveries_count == null || Number.isNaN(input.deliveries_count))) {
     throw new Error("Drivers must enter the number of deliveries before clocking out.");
   }
@@ -328,7 +329,7 @@ export async function updateDeliveryCount(input: {
 
   const employee = await getEmployeeForUser(user.id, user.email);
   if (!employee) throw new Error("Your account is not linked to a crew profile.");
-  if (employee.position !== "Driver") {
+  if (!hasRole(employee.position, "Driver")) {
     throw new Error("Only drivers can update deliveries.");
   }
 

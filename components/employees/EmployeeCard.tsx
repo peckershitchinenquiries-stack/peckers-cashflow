@@ -14,6 +14,7 @@ import {
   ClockIcon,
 } from "@/components/ui/icons";
 import type { Employee, Store } from "@/lib/types";
+import { parsePositions } from "@/lib/types";
 import { formatGBP } from "@/lib/utils";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
@@ -69,9 +70,9 @@ export function EmployeeCard({
             {employee.name}
           </h3>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {employee.position && (
-              <Badge variant="gold">{employee.position}</Badge>
-            )}
+            {employee.position && parsePositions(employee.position).map((pos) => (
+              <Badge key={pos} variant="gold">{pos}</Badge>
+            ))}
             {store && <Badge variant="neutral">{store.name}</Badge>}
             {employee.employment_status === "active" ? (
               <Badge variant="success">Active</Badge>
