@@ -1,4 +1,4 @@
-import { getExec, getExecChannels, getWeeks } from "@/lib/vm-analytics/queries";
+import { getExec, getExecChannels, getWeeks, getYoy, yoyWeekIso } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, pct, weekRange, signedPct } from "@/lib/vm-analytics/format";
 import {
   shortStore,
@@ -13,7 +13,7 @@ import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import type { ExecRow, ExecChannelRow } from "@/lib/vm-analytics/types";
+import type { ExecRow, ExecChannelRow, YoyRow } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";
 import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown, type ChannelStat, type GroupAgg } from "@/lib/vm-analytics/channels";
 
@@ -33,6 +33,8 @@ export default async function ExecutivePage({
   let prevRows: ExecRow[] = [];
   let prevChanRows: ExecChannelRow[] = [];
   let weekEnd = "";
+  let yoyRow: YoyRow | null = null;
+  let yoyWeek = "";
   try {
     // One getWeeks() call, then fan out all data fetches in parallel. Keeping the
     // render short reduces event-loop contention (and the chance the concurrent
@@ -44,12 +46,14 @@ export default async function ExecutivePage({
 
     const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
     const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+    yoyWeek = yoyWeekIso(weekIso);
 
-    [rows, chanRows, prevRows, prevChanRows] = await Promise.all([
+    [rows, chanRows, prevRows, prevChanRows, yoyRow] = await Promise.all([
       getExec(weekIso),
       getExecChannels(weekIso),
       prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
       prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
+      getYoy(weekIso, activeStore),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -108,6 +112,20 @@ export default async function ExecutivePage({
     hasPrev && prevOwnDel.aov > 0 ? share(ownDel.aov - prevOwnDel.aov, prevOwnDel.aov) : null;
   const aovAggWow =
     hasPrev && prevAggDel.aov > 0 ? share(aggDel.aov - prevAggDel.aov, prevAggDel.aov) : null;
+
+  // ---- YoY deltas (from historical Excel data) ----------------------------
+  const hasYoy = yoyRow !== null;
+  const yoyTotalSales    = yoyRow ? n(yoyRow.total_sales)         : 0;
+  const yoyDeliverySales = yoyRow ? n(yoyRow.delivery_sales)      : 0;
+  const yoyInStoreSales  = yoyRow ? n(yoyRow.in_store_sales)      : 0;
+  const yoyOwnDelivery   = yoyRow ? n(yoyRow.own_delivery_sales)  : 0;
+  const yoyAggregate     = yoyRow ? n(yoyRow.aggregate_sales)     : 0;
+
+  const netYoy    = hasYoy && yoyTotalSales    > 0 ? share(combined.netSales           - yoyTotalSales,    yoyTotalSales)    : null;
+  const delYoy    = hasYoy && yoyDeliverySales > 0 ? share(combined.delivery.netSales  - yoyDeliverySales, yoyDeliverySales) : null;
+  const inStYoy   = hasYoy && yoyInStoreSales  > 0 ? share(combined.inStore.netSales   - yoyInStoreSales,  yoyInStoreSales)  : null;
+  const ownDelYoy = hasYoy && yoyOwnDelivery   > 0 ? share(ownDel.netSales             - yoyOwnDelivery,   yoyOwnDelivery)   : null;
+  const aggYoy    = hasYoy && yoyAggregate     > 0 ? share(aggDel.netSales             - yoyAggregate,     yoyAggregate)     : null;
 
   // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
   const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
@@ -176,10 +194,22 @@ export default async function ExecutivePage({
   // Green for margin-friendly rows (in-store / own delivery), red for aggregator.
   const toneClass = (tone?: "good" | "bad") =>
     tone === "good"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? "text-success"
       : tone === "bad"
-      ? "text-rose-600 dark:text-rose-400"
+      ? "text-danger"
       : "";
+
+  const getYoyCellValue = (kpiLabel: string, yoy: YoyRow | null): string => {
+    if (!yoy) return "—";
+    switch (kpiLabel) {
+      case "Net Sales":                return gbp(n(yoy.total_sales));
+      case "Net Sales — Delivery":     return gbp(n(yoy.delivery_sales));
+      case "Net Sales — Own Delivery": return gbp(n(yoy.own_delivery_sales));
+      case "Net Sales — Aggregator":   return gbp(n(yoy.aggregate_sales));
+      case "Net Sales — In-store":     return gbp(n(yoy.in_store_sales));
+      default:                         return "—";
+    }
+  };
 
   const summaryColumns: Column<KpiRowDef>[] = [
     {
@@ -214,6 +244,16 @@ export default async function ExecutivePage({
       align: "right" as const,
       render: (r: KpiRowDef) => (
         <span className="text-tertiary">{hasPrev ? r.cell(prevCombined) : "—"}</span>
+      ),
+    },
+    {
+      key: "yoy",
+      header: `YoY (${yoyWeek})`,
+      align: "right" as const,
+      render: (r: KpiRowDef) => (
+        <span className="text-text-muted text-sm">
+          {getYoyCellValue(r.kpi, yoyRow)}
+        </span>
       ),
     },
   ];
@@ -337,11 +377,11 @@ export default async function ExecutivePage({
       />
 
       <KpiGrid>
-        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} />
-        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} />
-        <KpiCard label="Net Sales — Own Delivery" value={gbp(ownDel.netSales)} delta={netOwnWow} tone="good" />
-        <KpiCard label="Net Sales — Aggregator" value={gbp(aggDel.netSales)} delta={netAggWow} hint="Deliveroo + Uber + Just Eat" tone="bad" />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} tone="good" />
+        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} yoy={netYoy} />
+        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} yoy={delYoy} />
+        <KpiCard label="Net Sales — Own Delivery" value={gbp(ownDel.netSales)} delta={netOwnWow} yoy={ownDelYoy} tone="good" />
+        <KpiCard label="Net Sales — Aggregator" value={gbp(aggDel.netSales)} delta={netAggWow} yoy={aggYoy} hint="Deliveroo + Uber + Just Eat" tone="bad" />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} yoy={inStYoy} tone="good" />
         <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} />
         <KpiCard
           label="AOV (Blended)"
@@ -362,6 +402,11 @@ export default async function ExecutivePage({
           label="Net Sales WoW"
           value={signedPct(netWow)}
           hint={hasPrev ? "vs previous week" : "no prior week"}
+        />
+        <KpiCard
+          label="Net Sales YoY"
+          value={signedPct(netYoy)}
+          hint={hasYoy ? `vs ${yoyWeek}` : "no YoY data"}
         />
       </KpiGrid>
 

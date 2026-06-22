@@ -31,7 +31,7 @@ export default async function VmAnalyticsLayout({
       {/* Sidebar — the VM Analytics module lives here */}
       <aside className="border-b border-border bg-surface px-5 py-5 lg:border-b-0 lg:border-r">
         <div className="mb-6 flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold text-sm font-bold text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gold text-sm font-bold text-black">
             P
           </div>
           <div>
