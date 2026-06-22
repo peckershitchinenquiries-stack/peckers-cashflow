@@ -10,16 +10,18 @@ import { EditEmployeeModal } from "./EditEmployeeModal";
 import { ScheduleEditModal } from "./ScheduleEditModal";
 import { LogHoursForm } from "./LogHoursForm";
 import { HoursTable } from "./HoursTable";
+import { CoverDriversCard } from "./CoverDriversCard";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { UsersIcon } from "@/components/ui/icons";
 import { Select } from "@/components/ui/Input";
-import type { ClockWeeklySummary, Employee, EmployeeHoursComputed, Store } from "@/lib/types";
+import type { ClockWeeklySummary, CoverDriverRecord, Employee, EmployeeHoursComputed, Store } from "@/lib/types";
 import type { MinWageBands } from "@/lib/settings";
 
 type Props = {
   initialEmployees: Employee[];
   initialHours: EmployeeHoursComputed[];
+  initialCoverDrivers?: CoverDriverRecord[];
   clockSummaries?: ClockWeeklySummary[];
   stores: Store[];
   defaultStoreId?: string | null;
@@ -36,6 +38,7 @@ type Props = {
 export function EmployeesView({
   initialEmployees,
   initialHours,
+  initialCoverDrivers = [],
   clockSummaries = [],
   stores,
   defaultStoreId,
@@ -62,6 +65,13 @@ export function EmployeesView({
     setHours(initialHours);
   }, [initialHours]);
 
+  // Cover-driver records — kept in state so add/delete updates instantly.
+  const [coverDrivers, setCoverDrivers] =
+    React.useState<CoverDriverRecord[]>(initialCoverDrivers);
+  React.useEffect(() => {
+    setCoverDrivers(initialCoverDrivers);
+  }, [initialCoverDrivers]);
+
   const employees = initialEmployees;
 
   const filtered = employees.filter((e) => {
@@ -87,6 +97,21 @@ export function EmployeesView({
     setHours((prev) => prev.filter((r) => r.id !== deletedId));
     router.refresh();
   }
+
+  function handleCoverDriverCreated(record: CoverDriverRecord) {
+    setCoverDrivers((prev) => [record, ...prev]);
+    router.refresh();
+  }
+
+  function handleCoverDriverDeleted(deletedId: string) {
+    setCoverDrivers((prev) => prev.filter((r) => r.id !== deletedId));
+    router.refresh();
+  }
+
+  // Admin can view all stores; scope the cover-driver list to the active filter.
+  const visibleCoverDrivers = coverDrivers.filter(
+    (r) => storeFilter === "all" || r.store_id === storeFilter,
+  );
 
   const refresh = () => router.refresh();
 
@@ -184,6 +209,18 @@ export function EmployeesView({
           onApproved={handleLogged}
         />
       </Card>
+
+      <CoverDriversCard
+        records={visibleCoverDrivers}
+        stores={stores}
+        defaultStoreId={
+          storeFilter !== "all" ? storeFilter : defaultStoreId
+        }
+        lockToStore={lockToStore}
+        showStoreColumn={!lockToStore && storeFilter === "all"}
+        onCreated={handleCoverDriverCreated}
+        onDeleted={handleCoverDriverDeleted}
+      />
 
       {showAdd && (
         <AddEmployeeModal

@@ -153,6 +153,20 @@ export type EmployeeHoursComputed = {
   created_at: string;
 };
 
+// One ad-hoc payment to a part-time "cover driver" (not a permanent employee).
+export type CoverDriverRecord = {
+  id: string;
+  store_id: string;
+  driver_name: string;
+  work_date: string;
+  hours_worked: number;
+  hourly_rate: number;
+  total_pay: number;
+  created_by: string | null;
+  created_by_name: string | null;
+  created_at: string;
+};
+
 export type RotaShift = {
   id: string;
   employee_id: string;
