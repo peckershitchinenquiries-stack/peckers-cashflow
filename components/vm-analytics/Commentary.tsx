@@ -48,16 +48,16 @@ export function Commentary({
   const isClaude = insight.source === "claude";
 
   return (
-<div className="rounded-xl border border-white/10 bg-gradient-to-br from-zinc-900 via-black to-zinc-800 p-5 shadow-sm">
+    <div className="vm-card p-5">
       <div className="mb-2 flex items-center gap-2">
-        <span className="text-sm font-semibold text-brand-dark">
+        <span className="text-sm font-semibold text-text-primary">
           Automated Commentary
         </span>
         <span
           className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
             isClaude
-              ? "bg-white text-black"
-              : "bg-slate-200 text-black"
+              ? "bg-gold/20 text-gold"
+              : "bg-surface-hover text-text-muted border border-border"
           }`}
           title={
             isClaude
@@ -68,17 +68,17 @@ export function Commentary({
           {isClaude ? "Claude" : "Auto"}
         </span>
         {loading && (
-          <span className="text-[10px] text-ink-faint">refining…</span>
+          <span className="text-[10px] text-text-muted">refining…</span>
         )}
       </div>
       {insight.summary && (
-        <p className="text-sm leading-relaxed text-ink">{insight.summary}</p>
+        <p className="text-sm leading-relaxed text-text-primary">{insight.summary}</p>
       )}
       {insight.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5">
           {insight.bullets.map((b, i) => (
-            <li key={i} className="flex gap-2 text-sm text-ink-soft">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+            <li key={i} className="flex gap-2 text-sm text-text-muted">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />
               <span>{b}</span>
             </li>
           ))}

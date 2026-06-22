@@ -109,7 +109,7 @@ export default async function StoreComparisonPage({
             (!r.higherIsBetter && r.values[i] <= r.values[1 - i])) &&
           r.values[i] !== r.values[1 - i];
         return (
-          <span className={isLead ? "font-semibold text-emerald-600" : ""}>
+          <span className={isLead ? "font-semibold text-success" : ""}>
             {r.fmt(r.values[i])}
           </span>
         );
@@ -126,9 +126,9 @@ export default async function StoreComparisonPage({
         const base = Math.max(Math.abs(a), Math.abs(b));
         const pctGap = base > 0 ? (Math.abs(diff) / Math.min(a, b || 1)) * 100 : 0;
         return (
-          <span className="text-ink-soft">
+          <span className="text-text-muted">
             {r.fmt(Math.abs(diff))}{" "}
-            <span className="text-ink-faint">({pct(pctGap)})</span>
+            <span className="text-text-muted opacity-60">({pct(pctGap)})</span>
           </span>
         );
       },
@@ -182,16 +182,16 @@ export default async function StoreComparisonPage({
         {STORES.map((s) => {
           const r = get(s);
           return (
-            <div key={s} className="rounded-xl border border-slate-200 bg-black p-4 shadow-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+            <div key={s} className="vm-card p-4">
+              <div className="text-xs font-medium uppercase tracking-wide text-text-muted">
                 {shortStore(s)}
               </div>
-              <div className="mt-1 text-2xl font-semibold text-ink">
+              <div className="mt-1 text-2xl font-semibold text-text-primary">
                 {gbp(n(r?.net_sales))}
               </div>
               <div className="mt-1 text-xs">
                 <span className={deltaClass(wowFor(s))}>{signedPct(wowFor(s))} WoW</span>
-                <span className="ml-2 text-ink-faint">{int(n(r?.total_orders))} orders</span>
+                <span className="ml-2 text-text-muted">{int(n(r?.total_orders))} orders</span>
               </div>
             </div>
           );

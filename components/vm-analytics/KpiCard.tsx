@@ -4,12 +4,14 @@ export function KpiCard({
   label,
   value,
   delta,
+  yoy,
   hint,
   tone,
 }: {
   label: string;
   value: string;
   delta?: number | string | null;
+  yoy?: number | null;
   hint?: string;
   // Semantic colour for the value: "good" (green — in-store / own delivery,
   // margin-friendly) or "bad" (red — aggregator commission). Omit for neutral.
@@ -18,20 +20,33 @@ export function KpiCard({
   const showDelta = delta !== undefined;
   const valueClass =
     tone === "good"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? "text-success"
       : tone === "bad"
-      ? "text-rose-600 dark:text-rose-400"
-      : "text-primary";
+      ? "text-danger"
+      : "text-text-primary";
   return (
     <div className="vm-card p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-secondary">
         {label}
       </div>
       <div className={`mt-2 text-3xl font-bold ${valueClass}`}>{value}</div>
-      <div className="mt-3 flex items-center gap-2 text-xs">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
         {showDelta && (
           <span className={`font-semibold ${deltaClass(delta)}`}>
             {signedPct(delta)} WoW
+          </span>
+        )}
+        {typeof yoy === "number" && (
+          <span
+            className={[
+              "font-medium px-1.5 py-0.5 rounded",
+              yoy >= 0
+                ? "bg-success/10 text-success"
+                : "bg-danger/10 text-danger",
+            ].join(" ")}
+            title="Year-on-Year vs same week last year"
+          >
+            {yoy >= 0 ? "+" : ""}{yoy.toFixed(1)}% YoY
           </span>
         )}
         {hint && <span className="text-tertiary">{hint}</span>}
