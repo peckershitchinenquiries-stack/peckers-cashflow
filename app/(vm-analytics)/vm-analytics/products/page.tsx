@@ -143,7 +143,7 @@ export default async function ProductsPage({
     <div className="space-y-7">
       <PageTitle
         title="Product Performance"
-        subtitle={`Best & worst sellers (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`Most & least sellers (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <Commentary initial={draft} input={insightInput} />

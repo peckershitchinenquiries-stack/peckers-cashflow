@@ -199,6 +199,21 @@ export interface LunchDealChannelDetailRow {
   aov: Num;
 }
 
+// Menu-category × channel breakdown, from vm_v_menu_category_channel
+// (line-item derived). channel_group is "delivery" | "in_store"; channel_name
+// is one of the executive channels. Powers the "Meal Boxes & Platters" /
+// "Platters" tables on the Daypart dashboard (AOV per channel).
+export interface MenuCategoryChannelRow {
+  store: string;
+  week_start: string;
+  menu_category: string;
+  channel_group: string;
+  channel_name: string;
+  orders: Num;
+  net_sales: Num;
+  aov: Num;
+}
+
 // Real menu categories (from products-with-modifiers), with WoW. Used by the
 // exception report — the external-category report is mostly blank for these
 // stores.
@@ -220,4 +235,27 @@ export interface Insight {
   source: "claude" | "rules";
   summary: string;
   bullets: string[];
+}
+
+// Historical weekly row from one of the vm_yoy_* tables.
+// week_commencing is the Monday ISO date (YYYY-MM-DD) one year prior.
+export interface YoyRow {
+  week_commencing:    string;
+  click_collect:      Num;
+  kiosk:              Num;
+  till_eat_in:        Num;
+  till_takeaway:      Num;
+  own_delivery:       Num;
+  deliveroo:          Num;
+  just_eat:           Num;
+  uber_eats:          Num;
+  total_sales:        Num;
+  in_store_sales:     Num;
+  delivery_sales:     Num;
+  in_store_pct:       Num;
+  delivery_pct:       Num;
+  own_delivery_sales: Num;
+  aggregate_sales:    Num;
+  own_delivery_pct:   Num;
+  aggregate_pct:      Num;
 }

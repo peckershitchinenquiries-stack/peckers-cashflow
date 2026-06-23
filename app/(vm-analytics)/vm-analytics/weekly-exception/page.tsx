@@ -97,8 +97,8 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
       <span
         className={
           r.overThreshold
-            ? "font-bold text-rose-600 dark:text-rose-400"
-            : "font-bold text-amber-600 dark:text-amber-400"
+            ? "font-bold text-danger"
+            : "font-bold text-warning"
         }
       >
         {pct(r.aggregatorPct)}
@@ -110,7 +110,7 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
     header: "Own Delivery",
     align: "right",
     render: (r) => (
-      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+      <span className="font-bold text-success">
         {pct(r.ownDeliveryPct)}
       </span>
     ),
@@ -213,7 +213,7 @@ export default async function WeeklyExceptionPage({
       >
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (
-          <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
+          <p className="mt-2 text-xs text-warning">
             ⚠ Labour % looks low (under 15% of net) — the rota data for this week may be incomplete,
             so labour-based figures should be treated as indicative.
           </p>
@@ -221,9 +221,9 @@ export default async function WeeklyExceptionPage({
       </Section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="vm-card p-5 border-l-4 border-l-emerald-500">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
-            <span className="text-emerald-600 dark:text-emerald-400">▲</span> Opportunities
+        <div className="vm-card p-5 border-l-4 border-l-success">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <span className="text-success">▲</span> Opportunities
           </h3>
           {opportunities.length === 0 ? (
             <p className="text-sm text-tertiary">No standout opportunities this week.</p>
@@ -232,9 +232,9 @@ export default async function WeeklyExceptionPage({
           )}
         </div>
 
-        <div className="vm-card p-5 border-l-4 border-l-rose-500">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
-            <span className="text-rose-600 dark:text-rose-400">▼</span> Risks
+        <div className="vm-card p-5 border-l-4 border-l-danger">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <span className="text-danger">▼</span> Risks
           </h3>
           {risks.length === 0 ? (
             <p className="text-sm text-tertiary">Nothing needs attention this week.</p>

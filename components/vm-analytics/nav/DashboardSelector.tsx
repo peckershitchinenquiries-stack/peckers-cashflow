@@ -30,10 +30,10 @@ export function DashboardSelector() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-left shadow-sm transition hover:border-brand"
+        className="flex w-full items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-2.5 text-left shadow-sm transition hover:border-border-strong"
       >
         <span className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand text-xs font-bold text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-gold text-xs font-bold text-black">
             VM
           </span>
           <span>
