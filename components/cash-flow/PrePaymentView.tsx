@@ -210,7 +210,7 @@ export function PrePaymentView({
               <SummaryRow label="Vita Mojo cash sales (Tue – Mon)" value={formatGBP(fin.vita_mojo_total)} />
               <SummaryRow label="Less: logged differences / cash used" value={`(${formatGBP(fin.logged_differences)})`} tone="bad" />
               {fin.supermarket_cash > 0.001 && (
-                <SummaryRow label="Plus: supermarket cash (default float)" value={`+ ${formatGBP(fin.supermarket_cash)}`} tone="good" />
+                <SummaryRow label="Plus: Walkern and watton-at-stone money" value={`+ ${formatGBP(fin.supermarket_cash)}`} tone="good" />
               )}
               <SummaryRow label="Actual cash available" value={formatGBP(fin.actual_cash_available)} strong />
               <SummaryRow label="Total cash wages due" value={`(${formatGBP(fin.total_cash_wages)})`} tone="bad" />

@@ -29,6 +29,7 @@ import type {
   RotaShift,
   Store,
 } from "@/lib/types";
+import { hasRole } from "@/lib/types";
 
 type Props = {
   employee: Employee;
@@ -66,7 +67,7 @@ export function CrewClockApp({
   );
 
   const today = todayISO();
-  const isDriver = employee.position === "Driver";
+  const isDriver = hasRole(employee.position, "Driver");
   const weekStart = startOfISOWeek(new Date());
 
   const scheduleByWeekday = React.useMemo(() => {

@@ -14,7 +14,7 @@ export default async function EmployeesPage() {
 
   const eightWeeksBack = toISODate(addDays(startOfISOWeek(new Date()), -56));
 
-  const [empRes, hoursRes, storesRes, clocksRes] = await Promise.all([
+  const [empRes, hoursRes, storesRes, clocksRes, coverRes] = await Promise.all([
     supabase
       .from("employees")
       .select("*")
@@ -32,6 +32,11 @@ export default async function EmployeesPage() {
       .gte("event_date", eightWeeksBack)
       .not("clock_out_at", "is", null)
       .order("event_date", { ascending: false }),
+    supabase
+      .from("cover_driver_records")
+      .select("*")
+      .order("work_date", { ascending: false })
+      .limit(500),
   ]);
 
   const employees = (empRes.data ?? []) as Employee[];
@@ -54,6 +59,7 @@ export default async function EmployeesPage() {
       <EmployeesView
         initialEmployees={employees}
         initialHours={(hoursRes.data ?? []) as any[]}
+        initialCoverDrivers={(coverRes.data ?? []) as any[]}
         clockSummaries={clockSummaries}
         stores={storesRes.data ?? []}
         defaultStoreId={user.allowed?.store_id ?? null}

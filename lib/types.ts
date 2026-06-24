@@ -106,6 +106,17 @@ export type Employee = {
   delivery_rate: number | null;
 };
 
+/** Parse pipe-delimited positions string into array. */
+export function parsePositions(positionStr: string | null): EmployeePosition[] {
+  if (!positionStr) return [];
+  return positionStr.split("|").filter((p) => p.trim() && POSITION_OPTIONS.includes(p.trim() as EmployeePosition)) as EmployeePosition[];
+}
+
+/** Check if employee has a specific role. */
+export function hasRole(positionStr: string | null, role: EmployeePosition): boolean {
+  return parsePositions(positionStr).includes(role);
+}
+
 export type EmployeeHoursSource = "manual" | "clocked";
 
 export type EmployeeHoursRow = {
@@ -139,6 +150,20 @@ export type EmployeeHoursComputed = {
   approved: boolean;
   approved_at: string | null;
   source: EmployeeHoursSource;
+  created_at: string;
+};
+
+// One ad-hoc payment to a part-time "cover driver" (not a permanent employee).
+export type CoverDriverRecord = {
+  id: string;
+  store_id: string;
+  driver_name: string;
+  work_date: string;
+  hours_worked: number;
+  hourly_rate: number;
+  total_pay: number;
+  created_by: string | null;
+  created_by_name: string | null;
   created_at: string;
 };
 

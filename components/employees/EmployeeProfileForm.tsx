@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { DatePicker } from "@/components/ui/DatePicker";
-import { POSITION_OPTIONS } from "@/lib/types";
+import { POSITION_OPTIONS, parsePositions, hasRole } from "@/lib/types";
 import { ageFromDOB, minWageForAge } from "@/lib/compliance";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import type {
@@ -19,7 +19,7 @@ export type EmployeeFormState = {
   phone: string;
   date_of_birth: string;
   gender: string;
-  position: EmployeePosition | "";
+  position: string; // Pipe-delimited positions (e.g. "Kitchen Team Member|Driver")
   employment_start_date: string;
   hourly_ni_rate: string;
   hourly_cash_rate: string;
@@ -62,7 +62,7 @@ export function employeeToForm(emp: Employee): EmployeeFormState {
     phone: emp.phone ?? "",
     date_of_birth: emp.date_of_birth ?? "",
     gender: emp.gender ?? "",
-    position: (emp.position as EmployeePosition) ?? "",
+    position: emp.position ?? "",
     employment_start_date:
       emp.employment_start_date ?? emp.joined_date ?? "",
     hourly_ni_rate:
@@ -164,13 +164,6 @@ export function EmployeeProfileForm({
 
   const service = calcLengthOfService(form.employment_start_date);
 
-  // Position options exclude "Manager" (managers aren't employees). Keep any
-  // legacy value already on the record so editing it never silently blanks it.
-  const positionOptions =
-    form.position && !POSITION_OPTIONS.includes(form.position)
-      ? [form.position, ...POSITION_OPTIONS]
-      : POSITION_OPTIONS;
-
   // Indicative minimum-wage check (uses default bands; the configured bands
   // drive the authoritative alert/badge). Advisory only — never blocks saving.
   const mwBands = DEFAULT_SETTINGS.min_wage_bands;
@@ -224,19 +217,39 @@ export function EmployeeProfileForm({
           Role & Store
         </h4>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select
-            label="Position *"
-            value={form.position}
-            onChange={(e) => set("position", e.target.value as EmployeePosition)}
-            error={errors.position}
-          >
-            <option value="">Select…</option>
-            {positionOptions.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </Select>
+          <div>
+            <label className="block text-sm font-medium text-text-main mb-2">
+              Positions *
+              {errors.position && (
+                <span className="text-danger text-xs ml-1">{errors.position}</span>
+              )}
+            </label>
+            <div className="space-y-2 border border-input rounded px-3 py-2 bg-bg-secondary">
+              {POSITION_OPTIONS.map((p) => {
+                const positions = parsePositions(form.position);
+                const isChecked = positions.includes(p);
+                return (
+                  <label key={p} className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={(e) => {
+                        const newPositions = parsePositions(form.position);
+                        if (e.target.checked) {
+                          newPositions.push(p);
+                        } else {
+                          newPositions.splice(newPositions.indexOf(p), 1);
+                        }
+                        set("position", newPositions.join("|"));
+                      }}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className="text-sm">{p}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
           <Select
             label="Store *"
             value={form.store_id}
@@ -298,7 +311,7 @@ export function EmployeeProfileForm({
             onChange={(e) => set("hourly_cash_rate", e.target.value)}
             hint="Leave blank if not applicable"
           />
-          {form.position === "Driver" && (
+          {hasRole(form.position, "Driver") && (
             <Input
               type="number"
               step="0.01"

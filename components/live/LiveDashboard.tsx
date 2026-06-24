@@ -21,6 +21,7 @@ import type {
   RotaShift,
   Store,
 } from "@/lib/types";
+import { hasRole } from "@/lib/types";
 
 type Props = {
   stores: Store[];
@@ -376,7 +377,7 @@ export function LiveDashboard({
                             {actualWage > 0 ? formatGBP(actualWage) : "—"}
                           </td>
                           <td className="px-2 py-2 text-center text-xs text-text-subtle">
-                            {emp.position === "Driver"
+                            {hasRole(emp.position, "Driver")
                               ? clock?.deliveries_count ?? "—"
                               : "—"}
                           </td>
