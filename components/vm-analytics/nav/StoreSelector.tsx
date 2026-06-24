@@ -29,7 +29,7 @@ export function StoreSelector() {
       <select
         value={selected}
         onChange={onChange}
-        className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-brand focus:outline-none"
+        className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-gold focus:outline-none"
       >
         <option value="" className="bg-surface text-primary">
           All Stores

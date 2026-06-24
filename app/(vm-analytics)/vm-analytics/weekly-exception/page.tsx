@@ -6,10 +6,9 @@ import {
   getDelivery,
   getLaborCost,
   getMealDeals,
-  resolveWeek,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
-import { gbp, int, pct, weekRange } from "@/lib/vm-analytics/format";
+import { n, gbp, int, pct, weekRange } from "@/lib/vm-analytics/format";
 import { canonicalStore, resolveStore, shortStore } from "@/lib/vm-analytics/constants";
 import {
   buildExceptionReport,
@@ -97,8 +96,8 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
       <span
         className={
           r.overThreshold
-            ? "font-bold text-rose-600 dark:text-rose-400"
-            : "font-bold text-amber-600 dark:text-amber-400"
+            ? "font-bold text-danger"
+            : "font-bold text-warning"
         }
       >
         {pct(r.aggregatorPct)}
@@ -110,7 +109,7 @@ const deliveryColumns: Column<DeliveryDependenceRow>[] = [
     header: "Own Delivery",
     align: "right",
     render: (r) => (
-      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+      <span className="font-bold text-success">
         {pct(r.ownDeliveryPct)}
       </span>
     ),
@@ -149,10 +148,14 @@ export default async function WeeklyExceptionPage({
   let report: ReturnType<typeof buildExceptionReport>;
 
   try {
-    weekIso = await resolveWeek(searchParams.week);
+    const weeks = await getWeeks();
+    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
+    weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
+    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+    const prevWeekIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
 
-    const [exec, channels, products, dayparts, delivery, labour, mealDeals, weeks] =
+    const [exec, channels, products, dayparts, delivery, labour, mealDeals, prevExec, prevProducts] =
       await Promise.all([
         getExec(weekIso),
         getExecChannels(weekIso),
@@ -161,10 +164,9 @@ export default async function WeeklyExceptionPage({
         getDelivery(weekIso),
         getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
         getMealDeals(weekIso),
-        getWeeks(),
+        prevWeekIso ? getExec(prevWeekIso) : Promise.resolve([]),
+        prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve([]),
       ]);
-
-    weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
 
     if (exec.length === 0) {
       return (
@@ -174,6 +176,36 @@ export default async function WeeklyExceptionPage({
         </>
       );
     }
+
+    // Build prev-week lookup maps for WoW computation.
+    const prevExecMap = new Map(prevExec.map((e) => [e.store, e]));
+    const prevProductMap = new Map<string, { revenue: number; units: number }>();
+    for (const r of prevProducts) {
+      const key = `${r.store}::${r.item_name}`;
+      const cur = prevProductMap.get(key) ?? { revenue: 0, units: 0 };
+      cur.revenue += n(r.gross_sales);
+      cur.units += n(r.units_sold);
+      prevProductMap.set(key, cur);
+    }
+
+    // Override pre-rounded DB WoW fields with exact values computed from raw data.
+    const augmentedExec = exec.map((e) => {
+      const prev = prevExecMap.get(e.store);
+      const prevSales = prev ? n(prev.net_sales) : 0;
+      if (prevSales <= 0) return e;
+      return { ...e, net_sales_wow_pct: (n(e.net_sales) - prevSales) / prevSales * 100 };
+    });
+
+    const augmentedProducts = products.map((p) => {
+      const key = `${p.store}::${p.item_name}`;
+      const prev = prevProductMap.get(key);
+      if (!prev || prev.revenue <= 0) return p;
+      return {
+        ...p,
+        revenue_wow_pct: (n(p.gross_sales) - prev.revenue) / prev.revenue * 100,
+        units_wow_pct: prev.units > 0 ? (n(p.units_sold) - prev.units) / prev.units * 100 : p.units_wow_pct,
+      };
+    });
 
     // Scope every dataset to the selected store so the whole report (KPIs,
     // opportunities, risks) is store-specific. Labour uses a different store
@@ -185,9 +217,9 @@ export default async function WeeklyExceptionPage({
       scope ? rows.filter((r) => canonicalStore(r.store) === canonicalStore(scope)) : rows;
 
     report = buildExceptionReport({
-      exec: byStore(exec),
+      exec: byStore(augmentedExec),
       channels: byStore(channels),
-      products: byStore(products),
+      products: byStore(augmentedProducts),
       dayparts: byStore(dayparts),
       delivery: byStore(delivery),
       labour: byCanonical(labour),
@@ -213,7 +245,7 @@ export default async function WeeklyExceptionPage({
       >
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (
-          <p className="mt-2 text-xs text-amber-600 dark:text-amber-500">
+          <p className="mt-2 text-xs text-warning">
             ⚠ Labour % looks low (under 15% of net) — the rota data for this week may be incomplete,
             so labour-based figures should be treated as indicative.
           </p>
@@ -221,9 +253,9 @@ export default async function WeeklyExceptionPage({
       </Section>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="vm-card p-5 border-l-4 border-l-emerald-500">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
-            <span className="text-emerald-600 dark:text-emerald-400">▲</span> Opportunities
+        <div className="vm-card p-5 border-l-4 border-l-success">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <span className="text-success">▲</span> Opportunities
           </h3>
           {opportunities.length === 0 ? (
             <p className="text-sm text-tertiary">No standout opportunities this week.</p>
@@ -232,9 +264,9 @@ export default async function WeeklyExceptionPage({
           )}
         </div>
 
-        <div className="vm-card p-5 border-l-4 border-l-rose-500">
-          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-primary">
-            <span className="text-rose-600 dark:text-rose-400">▼</span> Risks
+        <div className="vm-card p-5 border-l-4 border-l-danger">
+          <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text-primary">
+            <span className="text-danger">▼</span> Risks
           </h3>
           {risks.length === 0 ? (
             <p className="text-sm text-tertiary">Nothing needs attention this week.</p>

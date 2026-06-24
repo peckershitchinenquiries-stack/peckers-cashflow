@@ -11,6 +11,7 @@ import type {
   DaypartRow,
   DaypartChannelRow,
   DaypartChannelDetailRow,
+  MenuCategoryChannelRow,
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
@@ -19,6 +20,7 @@ import type {
   MealDealRow,
   MenuCategoryRow,
   WeekOption,
+  YoyRow,
 } from "@/lib/vm-analytics/types";
 
 // All KPI views are weekly. Most queries take an optional ISO week_start; when
@@ -242,6 +244,26 @@ export async function getDaypartChannelDetail(
   return (data ?? []) as DaypartChannelDetailRow[];
 }
 
+// Menu-category × channel breakdown, from vm_v_menu_category_channel (line-item
+// derived). Lets the Daypart dashboard show per-channel AOV for the
+// "Meal Boxes & Platters" / "Platters" categories. Returns [] if the view is
+// missing (e.g. before the SQL has been run) so the dashboard degrades
+// gracefully.
+export async function getMenuCategoryChannels(
+  weekIso: string,
+): Promise<MenuCategoryChannelRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_menu_category_channel")
+    .select("store, week_start, menu_category, channel_group, channel_name, orders, net_sales, aov")
+    .eq("week_start", weekIso);
+  if (error) {
+    console.warn(`getMenuCategoryChannels: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as MenuCategoryChannelRow[];
+}
+
 export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
@@ -374,4 +396,47 @@ export async function getLaborCost(weekIso: string): Promise<LaborCostRow[]> {
     return [...rows, total];
   }
   return rows;
+}
+
+/**
+ * Returns the Monday ISO date 364 days before `weekIso`.
+ * 364 days = 52 × 7, so the result always lands on the same weekday in the
+ * prior year — the standard QSR YoY baseline convention.
+ */
+export function yoyWeekIso(weekIso: string): string {
+  const d = new Date(weekIso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() - 364);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Fetch the single YoY row for `weekIso` from the appropriate table.
+ * Returns null if no historical data exists for that week.
+ */
+export async function getYoy(
+  weekIso: string,
+  store: string | null
+): Promise<YoyRow | null> {
+  const sb = getVMSupabaseServer();
+
+  const table =
+    store === "Peckers Hitchin"
+      ? "vm_yoy_hitchin"
+      : store === "Peckers Stevenage"
+      ? "vm_yoy_stevenage"
+      : "vm_yoy_both_stores";
+
+  const yoyWeek = yoyWeekIso(weekIso);
+
+  const { data, error } = await sb
+    .from(table)
+    .select("*")
+    .eq("week_commencing", yoyWeek)
+    .maybeSingle();
+
+  if (error) {
+    console.warn(`getYoy (${table}): ${error.message}`);
+    return null;
+  }
+  return data as YoyRow | null;
 }

@@ -1,4 +1,9 @@
-import { getDaypartChannels, getDaypartChannelDetail, getWeeks } from "@/lib/vm-analytics/queries";
+import {
+  getDaypartChannels,
+  getDaypartChannelDetail,
+  getMenuCategoryChannels,
+  getWeeks,
+} from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange } from "@/lib/vm-analytics/format";
 import { shortStore, resolveStore } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
@@ -7,7 +12,11 @@ import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type DaypartInput } from "@/lib/vm-analytics/insights";
-import type { DaypartChannelRow, DaypartChannelDetailRow } from "@/lib/vm-analytics/types";
+import type {
+  DaypartChannelRow,
+  DaypartChannelDetailRow,
+  MenuCategoryChannelRow,
+} from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -147,6 +156,88 @@ function finalise(list: DaypartAgg[], detailed: boolean): DaypartAgg[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
+// Menu categories surfaced as their own per-channel AOV table, in display
+// order. These match btrim(category_name) in the line-item source.
+const MENU_CATEGORIES = ["Meal Boxes & Platters", "Platters"] as const;
+
+interface CategoryAgg {
+  category: string;
+  orders: number;
+  revenue: number;
+  aov: number;
+  inStoreOrders: number;
+  inStoreRevenue: number;
+  inStoreAov: number;
+  deliveryOrders: number;
+  deliveryRevenue: number;
+  deliveryAov: number;
+  ownOrders: number;
+  ownRevenue: number;
+  ownAov: number;
+  aggOrders: number;
+  aggRevenue: number;
+  aggAov: number;
+}
+
+// Roll the per-channel rows up into one CategoryAgg per target category, using
+// the same channel-group / Own-vs-Aggregate split as the daypart table above.
+function aggregateCategories(rows: MenuCategoryChannelRow[]): CategoryAgg[] {
+  const m = new Map<string, CategoryAgg>();
+  for (const r of rows) {
+    if (!(MENU_CATEGORIES as readonly string[]).includes(r.menu_category)) continue;
+    const cur =
+      m.get(r.menu_category) ??
+      ({
+        category: r.menu_category,
+        orders: 0,
+        revenue: 0,
+        aov: 0,
+        inStoreOrders: 0,
+        inStoreRevenue: 0,
+        inStoreAov: 0,
+        deliveryOrders: 0,
+        deliveryRevenue: 0,
+        deliveryAov: 0,
+        ownOrders: 0,
+        ownRevenue: 0,
+        ownAov: 0,
+        aggOrders: 0,
+        aggRevenue: 0,
+        aggAov: 0,
+      } as CategoryAgg);
+    const orders = n(r.orders);
+    const revenue = n(r.net_sales);
+    cur.orders += orders;
+    cur.revenue += revenue;
+    if (r.channel_group === "delivery") {
+      cur.deliveryOrders += orders;
+      cur.deliveryRevenue += revenue;
+    } else {
+      cur.inStoreOrders += orders;
+      cur.inStoreRevenue += revenue;
+    }
+    if (isOwn(r.channel_name)) {
+      cur.ownOrders += orders;
+      cur.ownRevenue += revenue;
+    } else if (isAggregate(r.channel_name)) {
+      cur.aggOrders += orders;
+      cur.aggRevenue += revenue;
+    }
+    m.set(r.menu_category, cur);
+  }
+  // Keep MENU_CATEGORIES order; drop categories with no sales this week.
+  return MENU_CATEGORIES.map((c) => m.get(c))
+    .filter((p): p is CategoryAgg => p !== undefined)
+    .map((p) => ({
+      ...p,
+      aov: aov(p.revenue, p.orders),
+      inStoreAov: aov(p.inStoreRevenue, p.inStoreOrders),
+      deliveryAov: aov(p.deliveryRevenue, p.deliveryOrders),
+      ownAov: aov(p.ownRevenue, p.ownOrders),
+      aggAov: aov(p.aggRevenue, p.aggOrders),
+    }));
+}
+
 export default async function DaypartPage({
   searchParams,
 }: {
@@ -158,15 +249,17 @@ export default async function DaypartPage({
   let weekIso: string | null;
   let detailRows: DaypartChannelDetailRow[];
   let basicRows: DaypartChannelRow[];
+  let categoryRows: MenuCategoryChannelRow[];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [detailRows, basicRows] = await Promise.all([
+    [detailRows, basicRows, categoryRows] = await Promise.all([
       getDaypartChannelDetail(weekIso),
       getDaypartChannels(weekIso),
+      getMenuCategoryChannels(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -176,7 +269,10 @@ export default async function DaypartPage({
   if (activeStore) {
     detailRows = detailRows.filter((c) => c.store === activeStore);
     basicRows = basicRows.filter((c) => c.store === activeStore);
+    categoryRows = categoryRows.filter((c) => c.store === activeStore);
   }
+
+  const categories = aggregateCategories(categoryRows);
 
   const hasDetail = detailRows.length > 0;
   const periods = hasDetail ? fromDetail(detailRows) : fromBasic(basicRows);
@@ -210,6 +306,21 @@ export default async function DaypartPage({
     { key: "inStoreOrders", header: "In-store — Orders", align: "right", render: (r) => int(r.inStoreOrders) },
     { key: "inStoreRevenue", header: "In-store — Revenue", align: "right", render: (r) => gbp(r.inStoreRevenue) },
     { key: "inStoreAov", header: "In-store — AOV", align: "right", render: (r) => gbp(r.inStoreAov) },
+  ];
+
+  // AOV cell: show "—" rather than a misleading £0.00 when a channel had no
+  // orders for the category this week.
+  const catAov = (rev: number, ord: number) => (ord > 0 ? gbp(rev / ord) : "—");
+
+  const catColumns: Column<CategoryAgg>[] = [
+    { key: "cat", header: "Category", render: (r) => <span className="font-medium">{r.category}</span> },
+    { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
+    { key: "revenue", header: "Revenue", align: "right", render: (r) => gbp(r.revenue) },
+    { key: "aov", header: "AOV", align: "right", render: (r) => catAov(r.revenue, r.orders) },
+    { key: "inStoreAov", header: "AOV — In-store", align: "right", render: (r) => catAov(r.inStoreRevenue, r.inStoreOrders) },
+    { key: "deliveryAov", header: "AOV — Delivery", align: "right", render: (r) => catAov(r.deliveryRevenue, r.deliveryOrders) },
+    { key: "ownAov", header: "AOV — Own Delivery", align: "right", render: (r) => catAov(r.ownRevenue, r.ownOrders) },
+    { key: "aggAov", header: "AOV — Aggregator", align: "right", render: (r) => catAov(r.aggRevenue, r.aggOrders) },
   ];
 
   const dpChart = periods.map((p) => ({
@@ -249,6 +360,21 @@ export default async function DaypartPage({
         }
       >
         <DataTable columns={dpColumns} rows={periods} />
+      </Section>
+
+      <Section
+        title="Meal Boxes & Platters / Platters"
+        description={
+          categories.length > 0
+            ? "Orders, revenue and per-channel AOV (= revenue ÷ orders) for these menu categories, with Own Delivery and Aggregate (Deliveroo + Uber Eats + Just Eat) cuts. Derived from line items so totals reconcile with the menu-category report."
+            : "No sales in these categories this week, or vm_v_menu_category_channel is not yet present — run menu_category_channel_views.sql in Supabase to unlock this table."
+        }
+      >
+        <DataTable
+          columns={catColumns}
+          rows={categories}
+          emptyMessage="No Meal Boxes & Platters / Platters sales for this week."
+        />
       </Section>
 
       <Section title="Trading Patterns">
