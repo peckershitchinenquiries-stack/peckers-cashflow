@@ -1,7 +1,7 @@
 import { getComparison, getExec, getExecChannels, resolveWeek, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 import { shortStore, STORES } from "@/lib/vm-analytics/constants";
-import { buildBreakdown, ownDelivery, aggregator, type Breakdown } from "@/lib/vm-analytics/channels";
+import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown } from "@/lib/vm-analytics/channels";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
@@ -21,16 +21,22 @@ export default async function StoreComparisonPage({
   let rows: ComparisonRow[];
   let execRows: ExecRow[] = [];
   let chanRows: ExecChannelRow[] = [];
+  let prevExecRows: ExecRow[] = [];
+  let prevChanRows: ExecChannelRow[] = [];
   let weekEnd = "";
   try {
-    weekIso = await resolveWeek(searchParams.week);
-    if (!weekIso) return <EmptyWeek />;
     const weeks = await getWeeks();
+    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
+    if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [rows, execRows, chanRows] = await Promise.all([
+    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+    const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+    [rows, execRows, chanRows, prevExecRows, prevChanRows] = await Promise.all([
       getComparison(weekIso),
       getExec(weekIso),
       getExecChannels(weekIso),
+      prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
+      prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -52,6 +58,11 @@ export default async function StoreComparisonPage({
     STORES.map((s) => [s, buildBreakdown([s], execRows, chanRows)])
   );
   const bd = (s: string) => breakdowns.get(s);
+
+  const hasPrev = prevExecRows.length > 0;
+  const prevBreakdowns = hasPrev
+    ? new Map<string, Breakdown>(STORES.map((s) => [s, buildBreakdown([s], prevExecRows, prevChanRows)]))
+    : null;
 
   interface MetricRow {
     metric: string;
@@ -164,9 +175,12 @@ export default async function StoreComparisonPage({
   };
   const draft = buildInsights(insightInput);
 
-  const wowFor = (s: string) => {
-    const r = get(s);
-    return r ? r.gross_sales_wow_pct : null;
+  const wowFor = (s: string): number | null => {
+    if (!prevBreakdowns) return null;
+    const cur = bd(s);
+    const prev = prevBreakdowns.get(s);
+    if (!cur || !prev || prev.netSales <= 0) return null;
+    return share(cur.netSales - prev.netSales, prev.netSales);
   };
 
   return (

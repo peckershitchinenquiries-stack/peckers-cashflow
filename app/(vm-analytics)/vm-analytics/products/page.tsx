@@ -16,29 +16,45 @@ interface AggItem {
   units: number;
   revenue: number;
   revWow: number | null;
+  prevRevenue: number;
+  prevUnits: number;
 }
 
-function aggregate(rows: ProductRow[]): AggItem[] {
-  const map = new Map<string, AggItem & { wowParts: number[] }>();
+// Compute WoW from raw gross_sales across both stores so combined-view WoW is
+// (totalCurRevenue - totalPrevRevenue) / totalPrevRevenue — never an average of
+// two store percentages, which would give a different (and wrong) result.
+function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
+  const prevMap = new Map<string, { revenue: number; units: number }>();
+  for (const r of prevRows) {
+    const key = `${r.store}::${r.item_name}`;
+    const cur = prevMap.get(key) ?? { revenue: 0, units: 0 };
+    cur.revenue += n(r.gross_sales);
+    cur.units += n(r.units_sold);
+    prevMap.set(key, cur);
+  }
+
+  const map = new Map<string, { item: string; units: number; revenue: number; prevRevenue: number; prevUnits: number }>();
   for (const r of rows) {
     const key = r.item_name;
-    const cur =
-      map.get(key) ??
-      { item: key, units: 0, revenue: 0, revWow: null, wowParts: [] as number[] };
+    const cur = map.get(key) ?? { item: key, units: 0, revenue: 0, prevRevenue: 0, prevUnits: 0 };
     cur.units += n(r.units_sold);
     cur.revenue += n(r.gross_sales);
-    if (r.revenue_wow_pct !== null && r.revenue_wow_pct !== undefined)
-      cur.wowParts.push(n(r.revenue_wow_pct));
+    const prev = prevMap.get(`${r.store}::${r.item_name}`);
+    if (prev) {
+      cur.prevRevenue += prev.revenue;
+      cur.prevUnits += prev.units;
+    }
     map.set(key, cur);
   }
+
   return Array.from(map.values())
     .map((c) => ({
       item: c.item,
       units: c.units,
       revenue: c.revenue,
-      revWow: c.wowParts.length
-        ? c.wowParts.reduce((a, b) => a + b, 0) / c.wowParts.length
-        : null,
+      prevRevenue: c.prevRevenue,
+      prevUnits: c.prevUnits,
+      revWow: c.prevRevenue > 0 ? (c.revenue - c.prevRevenue) / c.prevRevenue * 100 : null,
     }))
     // Rank by UNITS sold (volume). Prices change week to week, so units are the
     // more stable measure of what's actually popular.
@@ -55,13 +71,19 @@ export default async function ProductsPage({
 
   let weekIso: string | null;
   let rows: ProductRow[];
+  let prevRows: ProductRow[] = [];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    rows = await getProducts(weekIso);
+    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+    const prevWeekIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+    [rows, prevRows] = await Promise.all([
+      getProducts(weekIso),
+      prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
+    ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
@@ -69,6 +91,7 @@ export default async function ProductsPage({
   // Scope to the selected store (or keep both when "All Stores" is chosen).
   if (activeStore) {
     rows = rows.filter((r) => r.store === activeStore);
+    prevRows = prevRows.filter((r) => r.store === activeStore);
   }
 
   if (rows.length === 0) {
@@ -80,7 +103,7 @@ export default async function ProductsPage({
     );
   }
 
-  const items = aggregate(rows);
+  const items = aggregate(rows, prevRows);
   const top = items.slice(0, 15);
   const withWow = items.filter((i) => i.revWow !== null);
   const rising = [...withWow].sort((a, b) => (b.revWow! - a.revWow!)).filter((i) => i.revWow! > 0).slice(0, 5);
@@ -102,12 +125,6 @@ export default async function ProductsPage({
 
   const topChart = top.slice(0, 8).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
 
-  // Calculate previous week values from current + WoW %
-  const calcPrev = (current: number, wowPct: number | null) =>
-    wowPct !== null && wowPct !== undefined
-      ? current / (1 + wowPct / 100)
-      : undefined;
-
   const insightInput: ProductInput = {
     dashboard: "products",
     week: weekIso,
@@ -117,24 +134,24 @@ export default async function ProductsPage({
       units: t.units,
       revenue: t.revenue,
       revWow: t.revWow,
-      prevRevenue: calcPrev(t.revenue, t.revWow),
-      prevUnits: calcPrev(t.units, t.revWow),
+      prevRevenue: t.prevRevenue > 0 ? t.prevRevenue : undefined,
+      prevUnits: t.prevUnits > 0 ? t.prevUnits : undefined,
     })),
     rising: rising.map((r) => ({
       item: r.item,
       revWow: r.revWow!,
       revenue: r.revenue,
-      prevRevenue: calcPrev(r.revenue, r.revWow)!,
+      prevRevenue: r.prevRevenue,
       units: r.units,
-      prevUnits: calcPrev(r.units, r.revWow)!,
+      prevUnits: r.prevUnits,
     })),
     falling: falling.map((r) => ({
       item: r.item,
       revWow: r.revWow!,
       revenue: r.revenue,
-      prevRevenue: calcPrev(r.revenue, r.revWow)!,
+      prevRevenue: r.prevRevenue,
       units: r.units,
-      prevUnits: calcPrev(r.units, r.revWow)!,
+      prevUnits: r.prevUnits,
     })),
   };
   const draft = buildInsights(insightInput);

@@ -76,6 +76,10 @@ export default async function ExecutivePage({
   const combined = buildBreakdown(activeStores, rows, chanRows);
   const hasPrev = prevRows.length > 0;
   const prevCombined = buildBreakdown(activeStores, prevRows, prevChanRows);
+  const prevByStore = new Map<string, Breakdown>();
+  if (hasPrev) {
+    for (const s of activeStores) prevByStore.set(s, buildBreakdown([s], prevRows, prevChanRows));
+  }
 
   // ---- Headline WoW deltas (scoped to the selected store/s)
   const netWow = hasPrev ? share(combined.netSales - prevCombined.netSales, prevCombined.netSales) : null;
@@ -126,6 +130,13 @@ export default async function ExecutivePage({
   const inStYoy   = hasYoy && yoyInStoreSales  > 0 ? share(combined.inStore.netSales   - yoyInStoreSales,  yoyInStoreSales)  : null;
   const ownDelYoy = hasYoy && yoyOwnDelivery   > 0 ? share(ownDel.netSales             - yoyOwnDelivery,   yoyOwnDelivery)   : null;
   const aggYoy    = hasYoy && yoyAggregate     > 0 ? share(aggDel.netSales             - yoyAggregate,     yoyAggregate)     : null;
+
+  // YoY deltas for orders and customers (from EPOS data)
+  const yoyTotalOrders    = yoyRow ? n(yoyRow.total_orders)    : 0;
+  const yoyTotalCustomers = yoyRow ? n(yoyRow.total_customers)  : 0;
+
+  const ordYoy  = hasYoy && yoyTotalOrders    > 0 ? share(combined.orders     - yoyTotalOrders,    yoyTotalOrders)    : null;
+  const custYoy = hasYoy && yoyTotalCustomers > 0 ? share(combined.customers  - yoyTotalCustomers, yoyTotalCustomers) : null;
 
   // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
   const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
@@ -201,13 +212,80 @@ export default async function ExecutivePage({
 
   const getYoyCellValue = (kpiLabel: string, yoy: YoyRow | null): string => {
     if (!yoy) return "—";
+
+    // Derived channel groups from the new EPOS order-count columns
+    const yoyOwnDel  = n(yoy.own_delivery);
+    const yoyDel     = n(yoy.deliveroo) + n(yoy.just_eat) + n(yoy.uber_eats);
+    const yoyDelAll  = yoyOwnDel + yoyDel;
+    const yoyIns     = n(yoy.click_collect) + n(yoy.kiosk) + n(yoy.till_eat_in) + n(yoy.till_takeaway);
+    const yoyTotOrd  = n(yoy.total_orders) || (yoyDelAll + yoyIns);
+
     switch (kpiLabel) {
+      // ── Net Sales (already populated) ──────────────────────────────────────
       case "Net Sales":                return gbp(n(yoy.total_sales));
       case "Net Sales — Delivery":     return gbp(n(yoy.delivery_sales));
       case "Net Sales — Own Delivery": return gbp(n(yoy.own_delivery_sales));
       case "Net Sales — Aggregator":   return gbp(n(yoy.aggregate_sales));
       case "Net Sales — In-store":     return gbp(n(yoy.in_store_sales));
-      default:                         return "—";
+
+      // ── Orders & Customers (new EPOS columns) ──────────────────────────────
+      case "Total Orders": return yoyTotOrd > 0 ? int(yoyTotOrd) : "—";
+      case "Customers":    return n(yoy.total_customers) > 0 ? int(n(yoy.total_customers)) : "—";
+
+      // ── AOV (derived from sales ÷ orders) ──────────────────────────────────
+      case "AOV (Blended)":
+        return yoyTotOrd > 0 && n(yoy.total_sales) > 0
+          ? gbp(n(yoy.total_sales) / yoyTotOrd)
+          : "—";
+      case "AOV — Delivery":
+        return yoyDelAll > 0 && n(yoy.delivery_sales) > 0
+          ? gbp(n(yoy.delivery_sales) / yoyDelAll)
+          : "—";
+      case "AOV — Own Delivery":
+        return yoyOwnDel > 0 && n(yoy.own_delivery_sales) > 0
+          ? gbp(n(yoy.own_delivery_sales) / yoyOwnDel)
+          : "—";
+      case "AOV — Aggregator":
+        return yoyDel > 0 && n(yoy.aggregate_sales) > 0
+          ? gbp(n(yoy.aggregate_sales) / yoyDel)
+          : "—";
+      case "AOV — In-store":
+        return yoyIns > 0 && n(yoy.in_store_sales) > 0
+          ? gbp(n(yoy.in_store_sales) / yoyIns)
+          : "—";
+
+      // ── Delivery channel order counts ──────────────────────────────────────
+      case "Delivery Orders":
+        return yoyDelAll > 0
+          ? `${int(yoyDelAll)} · ${pct(n(yoy.delivery_pct))}`
+          : "—";
+      case "Own Delivery":
+        return yoyOwnDel > 0
+          ? `${int(yoyOwnDel)} · ${pct(n(yoy.own_delivery_pct))}`
+          : "—";
+      case "Deliveroo":
+        return n(yoy.deliveroo) > 0 ? int(n(yoy.deliveroo)) : "—";
+      case "Uber Eats":
+        return n(yoy.uber_eats) > 0 ? int(n(yoy.uber_eats)) : "—";
+      case "Just Eat":
+        return n(yoy.just_eat) > 0 ? int(n(yoy.just_eat)) : "—";
+
+      // ── In-store channel order counts ──────────────────────────────────────
+      case "In-store Orders":
+        return yoyIns > 0
+          ? `${int(yoyIns)} · ${pct(n(yoy.in_store_pct))}`
+          : "—";
+      case "Click & Collect":
+        return n(yoy.click_collect) > 0 ? int(n(yoy.click_collect)) : "—";
+      case "Kiosk":
+        return n(yoy.kiosk) > 0 ? int(n(yoy.kiosk)) : "—";
+      case "Till (takeaway)":
+        return n(yoy.till_takeaway) > 0 ? int(n(yoy.till_takeaway)) : "—";
+      case "Till (eat-in)":
+        return n(yoy.till_eat_in) > 0 ? int(n(yoy.till_eat_in)) : "—";
+
+      default:
+        return "—";
     }
   };
 
@@ -363,7 +441,11 @@ export default async function ExecutivePage({
         inStorePct: share(b.inStore.netSales, b.netSales),
         collectionPct: row ? n(row.collection_pct) : 0,
         eatInPct: row ? n(row.eat_in_pct) : 0,
-        netSalesWow: row ? (row.net_sales_wow_pct === null ? null : n(row.net_sales_wow_pct)) : null,
+        netSalesWow: (() => {
+          const prevB = prevByStore.get(s);
+          if (!hasPrev || !prevB || prevB.netSales <= 0) return null;
+          return share(b.netSales - prevB.netSales, prevB.netSales);
+        })(),
       };
     }),
   };
@@ -382,7 +464,7 @@ export default async function ExecutivePage({
         <KpiCard label="Net Sales — Own Delivery" value={gbp(ownDel.netSales)} delta={netOwnWow} yoy={ownDelYoy} tone="good" />
         <KpiCard label="Net Sales — Aggregator" value={gbp(aggDel.netSales)} delta={netAggWow} yoy={aggYoy} hint="Deliveroo + Uber + Just Eat" tone="bad" />
         <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} yoy={inStYoy} tone="good" />
-        <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} />
+        <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} yoy={ordYoy} />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
@@ -393,7 +475,7 @@ export default async function ExecutivePage({
         <KpiCard label="AOV — Own Delivery" value={gbp(ownDel.aov)} delta={aovOwnWow} tone="good" />
         <KpiCard label="AOV — Aggregator" value={gbp(aggDel.aov)} delta={aovAggWow} hint="Deliveroo + Uber + Just Eat" tone="bad" />
         <KpiCard label="AOV — In-store" value={gbp(combined.inStore.aov)} delta={aovInWow} tone="good" />
-        <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} />
+        <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} yoy={custYoy} />
         <KpiCard label="Own Delivery %" value={pct(share(ownDel.netSales, combined.netSales))} hint="of net sales" tone="good" />
         <KpiCard label="Aggregate %" value={pct(share(aggDel.netSales, combined.netSales))} hint="of net sales" tone="bad" />
         <KpiCard label="Delivery %" value={pct(share(combined.delivery.netSales, combined.netSales))} hint="of net sales" />
