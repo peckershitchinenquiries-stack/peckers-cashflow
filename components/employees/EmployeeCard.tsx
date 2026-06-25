@@ -22,6 +22,7 @@ import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
 export function EmployeeCard({
   employee,
   stores,
+  onView,
   onEdit,
   onSchedule,
   onChanged,
@@ -29,6 +30,7 @@ export function EmployeeCard({
 }: {
   employee: Employee;
   stores: Store[];
+  onView: () => void;
   onEdit: () => void;
   onSchedule: () => void;
   onChanged: () => void;
@@ -65,7 +67,12 @@ export function EmployeeCard({
   return (
     <Card className="flex flex-col">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        {/* Clickable info area — opens detail popup */}
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left cursor-pointer"
+          onClick={onView}
+        >
           <h3 className="text-lg font-semibold tracking-wide text-text-primary truncate">
             {employee.name}
           </h3>
@@ -89,8 +96,8 @@ export function EmployeeCard({
               </span>
             )}
           </div>
-        </div>
-        <div className="flex items-center gap-1">
+        </button>
+        <div className="flex items-center gap-1 shrink-0">
           <Button
             variant="ghost"
             size="icon"
@@ -125,29 +132,36 @@ export function EmployeeCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 mt-4 text-xs">
-        <div>
-          <div className="text-text-muted">NI rate</div>
-          <div className="text-text-primary font-medium">{formatGBP(niRate)}/h</div>
-        </div>
-        <div>
-          <div className="text-text-muted">Cash rate</div>
-          <div className="text-text-primary font-medium">
-            {cashRate ? `${formatGBP(cashRate)}/h` : "—"}
+      {/* Lower info area also opens detail popup */}
+      <button
+        type="button"
+        className="text-left cursor-pointer mt-4"
+        onClick={onView}
+      >
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <div className="text-text-muted">NI rate</div>
+            <div className="text-text-primary font-medium">{formatGBP(niRate)}/h</div>
+          </div>
+          <div>
+            <div className="text-text-muted">Cash rate</div>
+            <div className="text-text-primary font-medium">
+              {cashRate ? `${formatGBP(cashRate)}/h` : "—"}
+            </div>
           </div>
         </div>
-      </div>
 
-      {employee.phone && (
-        <div className="flex items-center gap-2 mt-3 text-sm text-text-muted">
-          <PhoneIcon size={14} />
-          <span>{employee.phone}</span>
-        </div>
-      )}
+        {employee.phone && (
+          <div className="flex items-center gap-2 mt-3 text-sm text-text-muted">
+            <PhoneIcon size={14} />
+            <span>{employee.phone}</span>
+          </div>
+        )}
 
-      {employee.notes && (
-        <p className="text-sm text-text-muted mt-3 line-clamp-2">{employee.notes}</p>
-      )}
+        {employee.notes && (
+          <p className="text-sm text-text-muted mt-3 line-clamp-2">{employee.notes}</p>
+        )}
+      </button>
     </Card>
   );
 }
