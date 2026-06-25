@@ -46,7 +46,7 @@ export function KpiCard({
             ].join(" ")}
             title="Year-on-Year vs same week last year"
           >
-            {yoy >= 0 ? "+" : ""}{yoy.toFixed(1)}% YoY
+            {signedPct(yoy)} YoY
           </span>
         )}
         {hint && <span className="text-tertiary">{hint}</span>}

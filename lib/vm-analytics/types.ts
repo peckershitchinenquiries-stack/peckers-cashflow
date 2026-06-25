@@ -258,4 +258,9 @@ export interface YoyRow {
   aggregate_sales:    Num;
   own_delivery_pct:   Num;
   aggregate_pct:      Num;
+  // From EPOS channel exports
+  total_orders:      Num;
+  new_customers:     Num;
+  return_customers:  Num;
+  total_customers:   Num;
 }
