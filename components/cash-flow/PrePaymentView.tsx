@@ -24,7 +24,8 @@ type DisplayLine = {
   role: string | null;
   cash_hours: number;
   cash_rate: number;
-  deliveries_count: number;
+  short_deliveries_count: number;
+  long_deliveries_count: number;
   delivery_wages: number;
   total_payment: number;
   id?: string;
@@ -287,7 +288,16 @@ export function PrePaymentView({
                       <td className="px-4 py-3 text-right tabular-nums">{l.cash_hours.toFixed(2)}h</td>
                       <td className="px-4 py-3 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">
-                        {l.deliveries_count > 0 ? l.deliveries_count : "—"}
+                        {l.short_deliveries_count + l.long_deliveries_count > 0 ? (
+                          <>
+                            {l.short_deliveries_count + l.long_deliveries_count}
+                            <span className="block text-[10px] text-text-muted">
+                              {l.short_deliveries_count}S / {l.long_deliveries_count}L
+                            </span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {l.delivery_wages > 0 ? formatGBP(l.delivery_wages) : "—"}

@@ -8,8 +8,10 @@
 //  - Cash wage uses the NI/bank split: the first `bank_weekly_hours_limit` hours
 //    (default 20) of the week are NI/bank wages; only hours ABOVE that are paid
 //    in cash, at the employee's hourly_cash_rate.
-//  - Drivers are paid hourly like everyone else PLUS £2 per delivery (petrol).
-//    Extra deliveries (logged with a reason) are paid the same £2.
+//  - Drivers are paid hourly like everyone else PLUS a per-delivery petrol
+//    allowance, split into SHORT and LONG deliveries each with its own
+//    per-driver rate (default £2 when unset). Extra deliveries of each type
+//    (logged with a reason) are paid the matching rate.
 //  - Wages paid on a Tuesday are for the PREVIOUS week's work (Mon–Sun);
 //    the cash used to pay them is what this week's envelopes collected, plus a
 //    default supermarket cash float.
@@ -163,8 +165,10 @@ export function runningBalanceRows(
 export type WeekWorked = {
   /** Worked hours for the week (from clock records, else scheduled rota). */
   hours: number;
-  /** Total deliveries completed in the week. */
-  deliveries: number;
+  /** Short deliveries completed in the week (incl. extras). */
+  shortDeliveries: number;
+  /** Long deliveries completed in the week (incl. extras). */
+  longDeliveries: number;
 };
 
 /**
@@ -182,7 +186,8 @@ export function buildWageLines(
     // Leavers are NOT skipped: wages are a week in arrears, so an employee who
     // left this week is still owed for the pay week. Anyone with nothing due is
     // dropped by the total<=0 check below.
-    const worked = workedByEmployee.get(emp.id) ?? { hours: 0, deliveries: 0 };
+    const worked =
+      workedByEmployee.get(emp.id) ?? { hours: 0, shortDeliveries: 0, longDeliveries: 0 };
     // No cash rate ⇒ no cash hours at all (every hour is NI), even past the
     // weekly bank limit. Otherwise hours above the limit are paid in cash.
     const { cashHours } = splitHoursForEmployee(emp, worked.hours);
@@ -190,14 +195,20 @@ export function buildWageLines(
     const cashWage = round2(cashHours * cashRate);
 
     const isDriver = hasRole(emp.position, "Driver");
-    const deliveries = isDriver ? Math.max(0, Math.round(worked.deliveries)) : 0;
+    const shortDeliveries = isDriver ? Math.max(0, Math.round(worked.shortDeliveries)) : 0;
+    const longDeliveries = isDriver ? Math.max(0, Math.round(worked.longDeliveries)) : 0;
     // £2/delivery petrol allowance unless a custom per-driver rate is set.
-    const deliveryRate = isDriver
-      ? emp.delivery_rate != null
-        ? Number(emp.delivery_rate)
+    const shortRate = isDriver
+      ? emp.short_delivery_rate != null
+        ? Number(emp.short_delivery_rate)
         : DELIVERY_PETROL_RATE
       : 0;
-    const deliveryWages = round2(deliveries * deliveryRate);
+    const longRate = isDriver
+      ? emp.long_delivery_rate != null
+        ? Number(emp.long_delivery_rate)
+        : DELIVERY_PETROL_RATE
+      : 0;
+    const deliveryWages = round2(shortDeliveries * shortRate + longDeliveries * longRate);
 
     const total = round2(cashWage + deliveryWages);
     if (total <= 0) continue;
@@ -209,8 +220,10 @@ export function buildWageLines(
       cash_hours: cashHours,
       cash_rate: cashRate,
       cash_wage: cashWage,
-      deliveries_count: deliveries,
-      delivery_rate: deliveryRate,
+      short_deliveries_count: shortDeliveries,
+      long_deliveries_count: longDeliveries,
+      short_delivery_rate: shortRate,
+      long_delivery_rate: longRate,
       delivery_wages: deliveryWages,
       total_payment: total,
     });
@@ -264,9 +277,11 @@ type ClockRow = {
   employee_id: string;
   clock_in_at: string | null;
   clock_out_at: string | null;
-  deliveries_count: number | null;
-  /** Deliveries beyond the normal round — paid the same per-delivery rate. */
-  extra_deliveries?: number | null;
+  short_deliveries_count: number | null;
+  long_deliveries_count: number | null;
+  /** Deliveries beyond the normal round — paid the matching per-type rate. */
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
 };
 
 type ShiftRow = {
@@ -286,11 +301,18 @@ export function aggregateWorked(
   shifts: ShiftRow[],
 ): Map<string, WeekWorked> {
   const clockHours = new Map<string, number>();
-  const deliveries = new Map<string, number>();
+  const shortDeliveries = new Map<string, number>();
+  const longDeliveries = new Map<string, number>();
   for (const c of clocks) {
-    const delivered = (Number(c.deliveries_count) || 0) + (Number(c.extra_deliveries) || 0);
-    if (delivered > 0) {
-      deliveries.set(c.employee_id, (deliveries.get(c.employee_id) ?? 0) + delivered);
+    const shortDelivered =
+      (Number(c.short_deliveries_count) || 0) + (Number(c.extra_short_deliveries) || 0);
+    const longDelivered =
+      (Number(c.long_deliveries_count) || 0) + (Number(c.extra_long_deliveries) || 0);
+    if (shortDelivered > 0) {
+      shortDeliveries.set(c.employee_id, (shortDeliveries.get(c.employee_id) ?? 0) + shortDelivered);
+    }
+    if (longDelivered > 0) {
+      longDeliveries.set(c.employee_id, (longDeliveries.get(c.employee_id) ?? 0) + longDelivered);
     }
     if (c.clock_in_at && c.clock_out_at) {
       const ms = new Date(c.clock_out_at).getTime() - new Date(c.clock_in_at).getTime();
@@ -312,14 +334,16 @@ export function aggregateWorked(
   const result = new Map<string, WeekWorked>();
   const ids = new Set<string>([
     ...Array.from(clockHours.keys()),
-    ...Array.from(deliveries.keys()),
+    ...Array.from(shortDeliveries.keys()),
+    ...Array.from(longDeliveries.keys()),
     ...Array.from(scheduledHours.keys()),
   ]);
   for (const id of Array.from(ids)) {
     const hours = clockHours.has(id) ? clockHours.get(id)! : scheduledHours.get(id) ?? 0;
     result.set(id, {
       hours: round2(hours),
-      deliveries: deliveries.get(id) ?? 0,
+      shortDeliveries: shortDeliveries.get(id) ?? 0,
+      longDeliveries: longDeliveries.get(id) ?? 0,
     });
   }
   return result;

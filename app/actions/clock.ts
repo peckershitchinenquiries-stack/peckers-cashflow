@@ -212,9 +212,12 @@ export async function clockOut(input: {
   latitude: number;
   longitude: number;
   accuracy?: number | null;
-  deliveries_count?: number | null;
-  extra_deliveries?: number | null;
-  extra_delivery_reason?: string | null;
+  short_deliveries_count?: number | null;
+  long_deliveries_count?: number | null;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+  extra_short_reason?: string | null;
+  extra_long_reason?: string | null;
 }) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
@@ -246,15 +249,28 @@ export async function clockOut(input: {
   }
 
   const isDriver = hasRole(employee.position, "Driver");
-  if (isDriver && (input.deliveries_count == null || Number.isNaN(input.deliveries_count))) {
-    throw new Error("Drivers must enter the number of deliveries before clocking out.");
+  const shortMissing =
+    input.short_deliveries_count == null || Number.isNaN(input.short_deliveries_count);
+  const longMissing =
+    input.long_deliveries_count == null || Number.isNaN(input.long_deliveries_count);
+  if (isDriver && shortMissing && longMissing) {
+    throw new Error(
+      "Drivers must enter their short and long delivery counts before clocking out.",
+    );
   }
   if (
     isDriver &&
-    Number(input.extra_deliveries) > 0 &&
-    !input.extra_delivery_reason?.trim()
+    Number(input.extra_short_deliveries) > 0 &&
+    !input.extra_short_reason?.trim()
   ) {
-    throw new Error("Please give a reason for the extra deliveries.");
+    throw new Error("Please give a reason for the extra short deliveries.");
+  }
+  if (
+    isDriver &&
+    Number(input.extra_long_deliveries) > 0 &&
+    !input.extra_long_reason?.trim()
+  ) {
+    throw new Error("Please give a reason for the extra long deliveries.");
   }
 
   const now = new Date().toISOString();
@@ -264,10 +280,14 @@ export async function clockOut(input: {
     clock_out_lng: input.longitude,
   };
   if (isDriver) {
-    payload.deliveries_count = Number(input.deliveries_count);
-    const extra = Math.max(0, Number(input.extra_deliveries) || 0);
-    payload.extra_deliveries = extra;
-    payload.extra_delivery_reason = extra > 0 ? input.extra_delivery_reason?.trim() || null : null;
+    payload.short_deliveries_count = Math.max(0, Number(input.short_deliveries_count) || 0);
+    payload.long_deliveries_count = Math.max(0, Number(input.long_deliveries_count) || 0);
+    const extraShort = Math.max(0, Number(input.extra_short_deliveries) || 0);
+    const extraLong = Math.max(0, Number(input.extra_long_deliveries) || 0);
+    payload.extra_short_deliveries = extraShort;
+    payload.extra_long_deliveries = extraLong;
+    payload.extra_short_reason = extraShort > 0 ? input.extra_short_reason?.trim() || null : null;
+    payload.extra_long_reason = extraLong > 0 ? input.extra_long_reason?.trim() || null : null;
   }
 
   const { error } = await supabase
@@ -304,7 +324,8 @@ export async function clockOut(input: {
     changes: {
       date: today,
       location: [input.latitude, input.longitude],
-      deliveries: input.deliveries_count ?? null,
+      short_deliveries: input.short_deliveries_count ?? null,
+      long_deliveries: input.long_deliveries_count ?? null,
     },
   });
 
@@ -320,9 +341,12 @@ export async function clockOut(input: {
 }
 
 export async function updateDeliveryCount(input: {
-  count: number;
-  extra_deliveries?: number | null;
-  extra_delivery_reason?: string | null;
+  short_count: number;
+  long_count: number;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+  extra_short_reason?: string | null;
+  extra_long_reason?: string | null;
 }) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
@@ -333,9 +357,13 @@ export async function updateDeliveryCount(input: {
     throw new Error("Only drivers can update deliveries.");
   }
 
-  const extra = Math.max(0, Number(input.extra_deliveries) || 0);
-  if (extra > 0 && !input.extra_delivery_reason?.trim()) {
-    throw new Error("Please give a reason for the extra deliveries.");
+  const extraShort = Math.max(0, Number(input.extra_short_deliveries) || 0);
+  const extraLong = Math.max(0, Number(input.extra_long_deliveries) || 0);
+  if (extraShort > 0 && !input.extra_short_reason?.trim()) {
+    throw new Error("Please give a reason for the extra short deliveries.");
+  }
+  if (extraLong > 0 && !input.extra_long_reason?.trim()) {
+    throw new Error("Please give a reason for the extra long deliveries.");
   }
 
   const today = todayISO();
@@ -350,9 +378,12 @@ export async function updateDeliveryCount(input: {
   const { error } = await supabase
     .from("clock_events")
     .update({
-      deliveries_count: Number(input.count),
-      extra_deliveries: extra,
-      extra_delivery_reason: extra > 0 ? input.extra_delivery_reason!.trim() : null,
+      short_deliveries_count: Math.max(0, Number(input.short_count) || 0),
+      long_deliveries_count: Math.max(0, Number(input.long_count) || 0),
+      extra_short_deliveries: extraShort,
+      extra_long_deliveries: extraLong,
+      extra_short_reason: extraShort > 0 ? input.extra_short_reason!.trim() : null,
+      extra_long_reason: extraLong > 0 ? input.extra_long_reason!.trim() : null,
     })
     .eq("id", existing.id);
   if (error) throw new Error(error.message);
@@ -361,7 +392,7 @@ export async function updateDeliveryCount(input: {
     action: "update_deliveries",
     entity: "clock_event",
     entity_id: existing.id,
-    changes: { count: input.count, extra },
+    changes: { short: input.short_count, long: input.long_count, extraShort, extraLong },
   });
 
   revalidatePath("/employee/attendance");
@@ -379,9 +410,12 @@ export async function updateDeliveryCount(input: {
 export async function setClockDeliveries(input: {
   employee_id: string;
   event_date: string;
-  deliveries_count: number;
-  extra_deliveries?: number | null;
-  extra_delivery_reason?: string | null;
+  short_deliveries_count: number;
+  long_deliveries_count: number;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+  extra_short_reason?: string | null;
+  extra_long_reason?: string | null;
 }) {
   const user = await requireAllowed();
   if (user.allowed!.role !== "admin" && user.allowed!.role !== "manager") {
@@ -400,10 +434,15 @@ export async function setClockDeliveries(input: {
     throw new Error("You can only edit drivers at your own store.");
   }
 
-  const count = Math.max(0, Number(input.deliveries_count) || 0);
-  const extra = Math.max(0, Number(input.extra_deliveries) || 0);
-  if (extra > 0 && !input.extra_delivery_reason?.trim()) {
-    throw new Error("Please give a reason for the extra deliveries.");
+  const shortCount = Math.max(0, Number(input.short_deliveries_count) || 0);
+  const longCount = Math.max(0, Number(input.long_deliveries_count) || 0);
+  const extraShort = Math.max(0, Number(input.extra_short_deliveries) || 0);
+  const extraLong = Math.max(0, Number(input.extra_long_deliveries) || 0);
+  if (extraShort > 0 && !input.extra_short_reason?.trim()) {
+    throw new Error("Please give a reason for the extra short deliveries.");
+  }
+  if (extraLong > 0 && !input.extra_long_reason?.trim()) {
+    throw new Error("Please give a reason for the extra long deliveries.");
   }
 
   const { data: existing } = await supabase
@@ -414,9 +453,12 @@ export async function setClockDeliveries(input: {
     .maybeSingle();
 
   const fields = {
-    deliveries_count: count,
-    extra_deliveries: extra,
-    extra_delivery_reason: extra > 0 ? input.extra_delivery_reason!.trim() : null,
+    short_deliveries_count: shortCount,
+    long_deliveries_count: longCount,
+    extra_short_deliveries: extraShort,
+    extra_long_deliveries: extraLong,
+    extra_short_reason: extraShort > 0 ? input.extra_short_reason!.trim() : null,
+    extra_long_reason: extraLong > 0 ? input.extra_long_reason!.trim() : null,
   };
 
   if (existing) {

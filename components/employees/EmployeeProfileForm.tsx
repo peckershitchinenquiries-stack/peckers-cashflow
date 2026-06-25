@@ -23,7 +23,8 @@ export type EmployeeFormState = {
   employment_start_date: string;
   hourly_ni_rate: string;
   hourly_cash_rate: string;
-  delivery_rate: string;
+  short_delivery_rate: string;
+  long_delivery_rate: string;
   store_id: string;
   bank_account_name: string;
   bank_name: string;
@@ -44,7 +45,8 @@ export function emptyEmployeeForm(): EmployeeFormState {
     employment_start_date: "",
     hourly_ni_rate: "",
     hourly_cash_rate: "",
-    delivery_rate: "",
+    short_delivery_rate: "",
+    long_delivery_rate: "",
     store_id: "",
     bank_account_name: "",
     bank_name: "",
@@ -73,7 +75,8 @@ export function employeeToForm(emp: Employee): EmployeeFormState {
           : "",
     hourly_cash_rate:
       emp.hourly_cash_rate != null ? String(emp.hourly_cash_rate) : "",
-    delivery_rate: emp.delivery_rate != null ? String(emp.delivery_rate) : "",
+    short_delivery_rate: emp.short_delivery_rate != null ? String(emp.short_delivery_rate) : "",
+    long_delivery_rate: emp.long_delivery_rate != null ? String(emp.long_delivery_rate) : "",
     store_id: emp.store_id ?? "",
     bank_account_name: emp.bank_account_name ?? "",
     bank_name: emp.bank_name ?? "",
@@ -312,16 +315,28 @@ export function EmployeeProfileForm({
             hint="Leave blank if not applicable"
           />
           {hasRole(form.position, "Driver") && (
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              label="Delivery rate (per delivery)"
-              prefix="£"
-              value={form.delivery_rate}
-              onChange={(e) => set("delivery_rate", e.target.value)}
-              hint="Paid per completed delivery, on top of hourly pay"
-            />
+            <>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                label="Short delivery rate (per delivery)"
+                prefix="£"
+                value={form.short_delivery_rate}
+                onChange={(e) => set("short_delivery_rate", e.target.value)}
+                hint="Paid per short delivery, on top of hourly pay"
+              />
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                label="Long delivery rate (per delivery)"
+                prefix="£"
+                value={form.long_delivery_rate}
+                onChange={(e) => set("long_delivery_rate", e.target.value)}
+                hint="Paid per long delivery, on top of hourly pay"
+              />
+            </>
           )}
         </div>
         {belowMinWage && mwAge != null && mwRequired != null && (

@@ -138,9 +138,10 @@ export function RotaView({
     const weekSet = new Set(weekDays.map((d) => toISODate(d)));
     const m = new Map<string, number>();
     for (const c of clocks) {
-      if (c.deliveries_count == null) continue;
+      if (c.short_deliveries_count == null && c.long_deliveries_count == null) continue;
       if (!weekSet.has(c.event_date)) continue;
-      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + Number(c.deliveries_count));
+      const total = (Number(c.short_deliveries_count) || 0) + (Number(c.long_deliveries_count) || 0);
+      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + total);
     }
     return m;
   }, [clocks, weekDays]);
@@ -150,9 +151,10 @@ export function RotaView({
     const weekSet = new Set(weekDays.map((d) => toISODate(d)));
     const m = new Map<string, number>();
     for (const c of clocks) {
-      if (!c.extra_deliveries) continue;
+      const extra = (Number(c.extra_short_deliveries) || 0) + (Number(c.extra_long_deliveries) || 0);
+      if (!extra) continue;
       if (!weekSet.has(c.event_date)) continue;
-      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + Number(c.extra_deliveries));
+      m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + extra);
     }
     return m;
   }, [clocks, weekDays]);

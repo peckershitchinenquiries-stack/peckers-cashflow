@@ -378,7 +378,11 @@ export function LiveDashboard({
                           </td>
                           <td className="px-2 py-2 text-center text-xs text-text-subtle">
                             {hasRole(emp.position, "Driver")
-                              ? clock?.deliveries_count ?? "—"
+                              ? clock?.short_deliveries_count == null &&
+                                clock?.long_deliveries_count == null
+                                ? "—"
+                                : (Number(clock?.short_deliveries_count) || 0) +
+                                  (Number(clock?.long_deliveries_count) || 0)
                               : "—"}
                           </td>
                         </tr>

@@ -48,15 +48,25 @@ export function DeliveryEditModal({
 
   // Per-day clocked deliveries (editable by manager/admin). All edits are
   // persisted together by the single Save button at the bottom of the modal.
-  type DayEdit = { count: string; extra: string; reason: string };
+  type DayEdit = {
+    short: string;
+    long: string;
+    extraShort: string;
+    extraLong: string;
+    reasonShort: string;
+    reasonLong: string;
+  };
   const initialDayEdits = React.useMemo(() => {
     const init: Record<string, DayEdit> = {};
     for (const d of weekDays) {
       const ev = events.find((e) => e.event_date === d);
       init[d] = {
-        count: ev?.deliveries_count != null ? String(ev.deliveries_count) : "",
-        extra: ev?.extra_deliveries ? String(ev.extra_deliveries) : "",
-        reason: ev?.extra_delivery_reason ?? "",
+        short: ev?.short_deliveries_count != null ? String(ev.short_deliveries_count) : "",
+        long: ev?.long_deliveries_count != null ? String(ev.long_deliveries_count) : "",
+        extraShort: ev?.extra_short_deliveries ? String(ev.extra_short_deliveries) : "",
+        extraLong: ev?.extra_long_deliveries ? String(ev.extra_long_deliveries) : "",
+        reasonShort: ev?.extra_short_reason ?? "",
+        reasonLong: ev?.extra_long_reason ?? "",
       };
     }
     return init;
@@ -72,7 +82,14 @@ export function DeliveryEditModal({
     const a = dayEdits[date];
     const b = initialDayEdits[date];
     if (!a || !b) return false;
-    return a.count !== b.count || a.extra !== b.extra || a.reason !== b.reason;
+    return (
+      a.short !== b.short ||
+      a.long !== b.long ||
+      a.extraShort !== b.extraShort ||
+      a.extraLong !== b.extraLong ||
+      a.reasonShort !== b.reasonShort ||
+      a.reasonLong !== b.reasonLong
+    );
   }
 
   const needsReason =
@@ -88,8 +105,12 @@ export function DeliveryEditModal({
     const changedDays = weekDays.filter(dayChanged);
     for (const d of changedDays) {
       const edit = dayEdits[d];
-      if (Number(edit.extra) > 0 && !edit.reason.trim()) {
-        toast.error(`Reason required for the extra deliveries on ${formatDDMMYYYY(d)}.`);
+      if (Number(edit.extraShort) > 0 && !edit.reasonShort.trim()) {
+        toast.error(`Reason required for the extra short deliveries on ${formatDDMMYYYY(d)}.`);
+        return;
+      }
+      if (Number(edit.extraLong) > 0 && !edit.reasonLong.trim()) {
+        toast.error(`Reason required for the extra long deliveries on ${formatDDMMYYYY(d)}.`);
         return;
       }
     }
@@ -110,9 +131,12 @@ export function DeliveryEditModal({
         await setClockDeliveries({
           employee_id: driver.id,
           event_date: d,
-          deliveries_count: Number(edit.count) || 0,
-          extra_deliveries: Number(edit.extra) || 0,
-          extra_delivery_reason: edit.reason.trim() || null,
+          short_deliveries_count: Number(edit.short) || 0,
+          long_deliveries_count: Number(edit.long) || 0,
+          extra_short_deliveries: Number(edit.extraShort) || 0,
+          extra_long_deliveries: Number(edit.extraLong) || 0,
+          extra_short_reason: edit.reasonShort.trim() || null,
+          extra_long_reason: edit.reasonLong.trim() || null,
         });
       }
       router.refresh();
@@ -186,37 +210,60 @@ export function DeliveryEditModal({
             <div className="flex flex-col gap-3">
               {weekDays.map((d) => {
                 const edit = dayEdits[d];
-                const showReason = Number(edit?.extra) > 0;
                 return (
                   <div key={d} className="rounded-lg border border-border p-3">
-                    <div className="flex items-end gap-2 flex-wrap">
-                      <span className="text-xs text-text-muted w-20 shrink-0">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs text-text-muted">
                         {formatDDMMYYYY(d)}
-                        {dayChanged(d) && <span className="block text-gold">edited</span>}
                       </span>
+                      {dayChanged(d) && <span className="text-[10px] text-gold">edited</span>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
                       <Input
                         type="number"
                         min="0"
-                        label="Deliveries"
-                        value={edit?.count ?? ""}
-                        onChange={(e) => setDay(d, { count: e.target.value })}
-                        containerClassName="w-24"
+                        label="Short"
+                        value={edit?.short ?? ""}
+                        onChange={(e) => setDay(d, { short: e.target.value })}
                       />
                       <Input
                         type="number"
                         min="0"
-                        label="Extra"
-                        value={edit?.extra ?? ""}
-                        onChange={(e) => setDay(d, { extra: e.target.value })}
-                        containerClassName="w-20"
+                        label="Long"
+                        value={edit?.long ?? ""}
+                        onChange={(e) => setDay(d, { long: e.target.value })}
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Extra short"
+                        value={edit?.extraShort ?? ""}
+                        onChange={(e) => setDay(d, { extraShort: e.target.value })}
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Extra long"
+                        value={edit?.extraLong ?? ""}
+                        onChange={(e) => setDay(d, { extraLong: e.target.value })}
                       />
                     </div>
-                    {showReason && (
+                    {Number(edit?.extraShort) > 0 && (
                       <Input
-                        label="Reason for extra *"
-                        value={edit?.reason ?? ""}
-                        onChange={(e) => setDay(d, { reason: e.target.value })}
+                        label="Reason for extra short *"
+                        value={edit?.reasonShort ?? ""}
+                        onChange={(e) => setDay(d, { reasonShort: e.target.value })}
                         placeholder="e.g. covered a second area"
+                        maxLength={200}
+                        containerClassName="mt-2"
+                      />
+                    )}
+                    {Number(edit?.extraLong) > 0 && (
+                      <Input
+                        label="Reason for extra long *"
+                        value={edit?.reasonLong ?? ""}
+                        onChange={(e) => setDay(d, { reasonLong: e.target.value })}
+                        placeholder="e.g. out-of-area drop-off"
                         maxLength={200}
                         containerClassName="mt-2"
                       />

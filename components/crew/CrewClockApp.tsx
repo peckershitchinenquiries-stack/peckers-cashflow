@@ -56,14 +56,23 @@ export function CrewClockApp({
   const toast = useToast();
   const [geo, setGeo] = React.useState<GeoState>({ status: "idle" });
   const [busy, setBusy] = React.useState(false);
-  const [deliveries, setDeliveries] = React.useState<string>(
-    todayClock?.deliveries_count?.toString() ?? "",
+  const [shortDeliveries, setShortDeliveries] = React.useState<string>(
+    todayClock?.short_deliveries_count?.toString() ?? "",
   );
-  const [extraDeliveries, setExtraDeliveries] = React.useState<string>(
-    todayClock?.extra_deliveries ? String(todayClock.extra_deliveries) : "",
+  const [longDeliveries, setLongDeliveries] = React.useState<string>(
+    todayClock?.long_deliveries_count?.toString() ?? "",
   );
-  const [extraReason, setExtraReason] = React.useState<string>(
-    todayClock?.extra_delivery_reason ?? "",
+  const [extraShort, setExtraShort] = React.useState<string>(
+    todayClock?.extra_short_deliveries ? String(todayClock.extra_short_deliveries) : "",
+  );
+  const [extraLong, setExtraLong] = React.useState<string>(
+    todayClock?.extra_long_deliveries ? String(todayClock.extra_long_deliveries) : "",
+  );
+  const [extraShortReason, setExtraShortReason] = React.useState<string>(
+    todayClock?.extra_short_reason ?? "",
+  );
+  const [extraLongReason, setExtraLongReason] = React.useState<string>(
+    todayClock?.extra_long_reason ?? "",
   );
 
   const today = todayISO();
@@ -172,12 +181,16 @@ export function CrewClockApp({
       toast.error("Capture your location first.");
       return;
     }
-    if (isDriver && !deliveries.trim()) {
-      toast.error("Enter your delivery count before clocking out.");
+    if (isDriver && !shortDeliveries.trim() && !longDeliveries.trim()) {
+      toast.error("Enter your short and long delivery counts before clocking out.");
       return;
     }
-    if (isDriver && Number(extraDeliveries) > 0 && !extraReason.trim()) {
-      toast.error("Please give a reason for the extra deliveries.");
+    if (isDriver && Number(extraShort) > 0 && !extraShortReason.trim()) {
+      toast.error("Please give a reason for the extra short deliveries.");
+      return;
+    }
+    if (isDriver && Number(extraLong) > 0 && !extraLongReason.trim()) {
+      toast.error("Please give a reason for the extra long deliveries.");
       return;
     }
     setBusy(true);
@@ -186,9 +199,12 @@ export function CrewClockApp({
         latitude: geo.lat,
         longitude: geo.lng,
         accuracy: geo.accuracy,
-        deliveries_count: isDriver ? Number(deliveries) : null,
-        extra_deliveries: isDriver ? Number(extraDeliveries) || 0 : null,
-        extra_delivery_reason: isDriver ? extraReason.trim() || null : null,
+        short_deliveries_count: isDriver ? Number(shortDeliveries) || 0 : null,
+        long_deliveries_count: isDriver ? Number(longDeliveries) || 0 : null,
+        extra_short_deliveries: isDriver ? Number(extraShort) || 0 : null,
+        extra_long_deliveries: isDriver ? Number(extraLong) || 0 : null,
+        extra_short_reason: isDriver ? extraShortReason.trim() || null : null,
+        extra_long_reason: isDriver ? extraLongReason.trim() || null : null,
       });
       toast.success("Clocked out. Thanks!");
       router.refresh();
@@ -200,17 +216,24 @@ export function CrewClockApp({
   }
 
   async function saveLiveDeliveries() {
-    if (!deliveries.trim()) return;
-    if (Number(extraDeliveries) > 0 && !extraReason.trim()) {
-      toast.error("Please give a reason for the extra deliveries.");
+    if (!shortDeliveries.trim() && !longDeliveries.trim()) return;
+    if (Number(extraShort) > 0 && !extraShortReason.trim()) {
+      toast.error("Please give a reason for the extra short deliveries.");
+      return;
+    }
+    if (Number(extraLong) > 0 && !extraLongReason.trim()) {
+      toast.error("Please give a reason for the extra long deliveries.");
       return;
     }
     setBusy(true);
     try {
       await updateDeliveryCount({
-        count: Number(deliveries),
-        extra_deliveries: Number(extraDeliveries) || 0,
-        extra_delivery_reason: extraReason.trim() || null,
+        short_count: Number(shortDeliveries) || 0,
+        long_count: Number(longDeliveries) || 0,
+        extra_short_deliveries: Number(extraShort) || 0,
+        extra_long_deliveries: Number(extraLong) || 0,
+        extra_short_reason: extraShortReason.trim() || null,
+        extra_long_reason: extraLongReason.trim() || null,
       });
       toast.success("Live delivery count updated.");
       router.refresh();
@@ -310,31 +333,60 @@ export function CrewClockApp({
               </div>
             ) : (
               <div className="flex flex-col gap-3">
-                {/* Drivers enter deliveries before clocking out */}
+                {/* Drivers enter short + long deliveries before clocking out */}
                 {phase === "out" && isDriver && (
                   <>
-                    <Input
-                      type="number"
-                      min="0"
-                      label="Deliveries today *"
-                      value={deliveries}
-                      onChange={(e) => setDeliveries(e.target.value)}
-                      placeholder="0"
-                    />
-                    <Input
-                      type="number"
-                      min="0"
-                      label="Extra deliveries (beyond your normal round)"
-                      value={extraDeliveries}
-                      onChange={(e) => setExtraDeliveries(e.target.value)}
-                      placeholder="0"
-                    />
-                    {Number(extraDeliveries) > 0 && (
+                    <div className="grid grid-cols-2 gap-2">
                       <Input
-                        label="Reason for extra deliveries *"
-                        value={extraReason}
-                        onChange={(e) => setExtraReason(e.target.value)}
+                        type="number"
+                        min="0"
+                        label="Short deliveries *"
+                        value={shortDeliveries}
+                        onChange={(e) => setShortDeliveries(e.target.value)}
+                        placeholder="0"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Long deliveries *"
+                        value={longDeliveries}
+                        onChange={(e) => setLongDeliveries(e.target.value)}
+                        placeholder="0"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Extra short (beyond round)"
+                        value={extraShort}
+                        onChange={(e) => setExtraShort(e.target.value)}
+                        placeholder="0"
+                      />
+                      <Input
+                        type="number"
+                        min="0"
+                        label="Extra long (beyond round)"
+                        value={extraLong}
+                        onChange={(e) => setExtraLong(e.target.value)}
+                        placeholder="0"
+                      />
+                    </div>
+                    {Number(extraShort) > 0 && (
+                      <Input
+                        label="Reason for extra short deliveries *"
+                        value={extraShortReason}
+                        onChange={(e) => setExtraShortReason(e.target.value)}
                         placeholder="e.g. covered a second area after a no-show"
+                        maxLength={200}
+                      />
+                    )}
+                    {Number(extraLong) > 0 && (
+                      <Input
+                        label="Reason for extra long deliveries *"
+                        value={extraLongReason}
+                        onChange={(e) => setExtraLongReason(e.target.value)}
+                        placeholder="e.g. out-of-area drop-off"
                         maxLength={200}
                       />
                     )}
@@ -376,37 +428,59 @@ export function CrewClockApp({
                   Update during your shift &mdash; cross-checked against Vita Mojo by your
                   manager.
                 </p>
-                <div className="mt-3 flex items-end gap-2">
+                <div className="mt-3 grid grid-cols-2 gap-2">
                   <Input
                     type="number"
                     min="0"
-                    label="Deliveries so far"
-                    value={deliveries}
-                    onChange={(e) => setDeliveries(e.target.value)}
-                    containerClassName="flex-1"
+                    label="Short so far"
+                    value={shortDeliveries}
+                    onChange={(e) => setShortDeliveries(e.target.value)}
                   />
                   <Input
                     type="number"
                     min="0"
-                    label="Extra"
-                    value={extraDeliveries}
-                    onChange={(e) => setExtraDeliveries(e.target.value)}
-                    containerClassName="w-24"
+                    label="Long so far"
+                    value={longDeliveries}
+                    onChange={(e) => setLongDeliveries(e.target.value)}
                   />
-                  <Button onClick={saveLiveDeliveries} loading={busy}>
-                    Update
-                  </Button>
+                  <Input
+                    type="number"
+                    min="0"
+                    label="Extra short"
+                    value={extraShort}
+                    onChange={(e) => setExtraShort(e.target.value)}
+                  />
+                  <Input
+                    type="number"
+                    min="0"
+                    label="Extra long"
+                    value={extraLong}
+                    onChange={(e) => setExtraLong(e.target.value)}
+                  />
                 </div>
-                {Number(extraDeliveries) > 0 && (
+                {Number(extraShort) > 0 && (
                   <Input
-                    label="Reason for extra deliveries *"
-                    value={extraReason}
-                    onChange={(e) => setExtraReason(e.target.value)}
+                    label="Reason for extra short deliveries *"
+                    value={extraShortReason}
+                    onChange={(e) => setExtraShortReason(e.target.value)}
                     placeholder="e.g. covered a second area after a no-show"
                     maxLength={200}
                     containerClassName="mt-2"
                   />
                 )}
+                {Number(extraLong) > 0 && (
+                  <Input
+                    label="Reason for extra long deliveries *"
+                    value={extraLongReason}
+                    onChange={(e) => setExtraLongReason(e.target.value)}
+                    placeholder="e.g. out-of-area drop-off"
+                    maxLength={200}
+                    containerClassName="mt-2"
+                  />
+                )}
+                <Button onClick={saveLiveDeliveries} loading={busy} className="mt-3 w-full">
+                  Update
+                </Button>
               </div>
             )}
           </div>

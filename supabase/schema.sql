@@ -444,10 +444,15 @@ create table if not exists public.clock_events (
   clock_in_lng        numeric(10,7),
   clock_out_lat       numeric(10,7),
   clock_out_lng       numeric(10,7),
-  deliveries_count    integer,
-  -- Deliveries beyond the normal round, with a reason (see migration 003).
-  extra_deliveries      integer not null default 0,
-  extra_delivery_reason text,
+  -- Deliveries split into short vs long, each with its own per-driver rate
+  -- (see migration 011). Entered by the driver at clock-out.
+  short_deliveries_count integer,
+  long_deliveries_count  integer,
+  -- Deliveries beyond the normal round, per type, each with a reason.
+  extra_short_deliveries integer not null default 0,
+  extra_long_deliveries  integer not null default 0,
+  extra_short_reason     text,
+  extra_long_reason      text,
   created_at          timestamptz not null default now()
 );
 
@@ -552,7 +557,7 @@ weekly_actual as (
         else 0
       end
     ) as actual_hours,
-    sum(coalesce(ce.deliveries_count, 0)) as deliveries_total
+    sum(coalesce(ce.short_deliveries_count, 0) + coalesce(ce.long_deliveries_count, 0)) as deliveries_total
   from public.clock_events ce
   group by ce.employee_id, date_trunc('week', ce.event_date)
 )
@@ -794,10 +799,12 @@ update public.allowed_users set must_change_password = false where temp_password
 -- =============================================================
 -- =============================================================
 
--- Per-driver fixed rate paid per completed delivery (£). Drives delivery wages
--- in the Saturday payout. Only meaningful for employees whose position = Driver.
+-- Per-driver rates paid per completed delivery (£), split into short and long
+-- deliveries (see migration 011). Drive delivery wages in the Saturday payout.
+-- Only meaningful for employees whose position = Driver.
 alter table public.employees
-  add column if not exists delivery_rate numeric(8,2);
+  add column if not exists short_delivery_rate numeric(8,2),
+  add column if not exists long_delivery_rate  numeric(8,2);
 
 -- Store of the currently-authenticated login account (for manager scoping).
 create or replace function public.current_user_store_id()
@@ -955,8 +962,10 @@ create table if not exists public.cash_payout_lines (
   cash_hours       numeric(6,2) not null default 0,
   cash_rate        numeric(8,2) not null default 0,
   cash_wage        numeric(10,2) not null default 0,
-  deliveries_count integer not null default 0,
-  delivery_rate    numeric(8,2) not null default 0,
+  short_deliveries_count integer not null default 0,
+  long_deliveries_count  integer not null default 0,
+  short_delivery_rate    numeric(8,2) not null default 0,
+  long_delivery_rate     numeric(8,2) not null default 0,
   delivery_wages   numeric(10,2) not null default 0,
   total_payment    numeric(10,2) not null default 0,
   is_paid          boolean not null default false,

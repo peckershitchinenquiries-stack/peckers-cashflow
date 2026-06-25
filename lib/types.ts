@@ -102,8 +102,10 @@ export type Employee = {
   employment_status: EmploymentStatus;
   auth_user_id: string | null;
   email: string | null;
-  /** Per-driver fixed £/delivery rate (cash-flow module). Null for non-drivers. */
-  delivery_rate: number | null;
+  /** Per-driver £/delivery rate for SHORT deliveries. Null for non-drivers. */
+  short_delivery_rate: number | null;
+  /** Per-driver £/delivery rate for LONG deliveries. Null for non-drivers. */
+  long_delivery_rate: number | null;
 };
 
 /** Parse pipe-delimited positions string into array. */
@@ -213,9 +215,12 @@ export type ClockEvent = {
   clock_in_lng: number | null;
   clock_out_lat: number | null;
   clock_out_lng: number | null;
-  deliveries_count: number | null;
-  extra_deliveries: number;
-  extra_delivery_reason: string | null;
+  short_deliveries_count: number | null;
+  long_deliveries_count: number | null;
+  extra_short_deliveries: number;
+  extra_long_deliveries: number;
+  extra_short_reason: string | null;
+  extra_long_reason: string | null;
   created_at: string;
 };
 
@@ -391,8 +396,10 @@ export type CashPayoutLine = {
   cash_hours: number;
   cash_rate: number;
   cash_wage: number;
-  deliveries_count: number;
-  delivery_rate: number;
+  short_deliveries_count: number;
+  long_deliveries_count: number;
+  short_delivery_rate: number;
+  long_delivery_rate: number;
   delivery_wages: number;
   total_payment: number;
   is_paid: boolean;
@@ -419,8 +426,10 @@ export type WageLine = {
   cash_hours: number;
   cash_rate: number;
   cash_wage: number;
-  deliveries_count: number;
-  delivery_rate: number;
+  short_deliveries_count: number;
+  long_deliveries_count: number;
+  short_delivery_rate: number;
+  long_delivery_rate: number;
   delivery_wages: number;
   total_payment: number;
 };
