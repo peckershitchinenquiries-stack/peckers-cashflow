@@ -328,10 +328,11 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
   // -------- delivery_payout_high: this-week deliveries > multiplier × 4-week avg --------
   const deliveriesByDriverWeek = new Map<string, Map<string, number>>();
   for (const ce of clocks) {
-    if (!ce.deliveries_count) continue;
+    const total = (Number(ce.short_deliveries_count) || 0) + (Number(ce.long_deliveries_count) || 0);
+    if (!total) continue;
     const map = deliveriesByDriverWeek.get(ce.employee_id) ?? new Map<string, number>();
     const wk = toISODate(startOfISOWeek(new Date(ce.event_date)));
-    map.set(wk, (map.get(wk) ?? 0) + Number(ce.deliveries_count));
+    map.set(wk, (map.get(wk) ?? 0) + total);
     deliveriesByDriverWeek.set(ce.employee_id, map);
   }
   for (const [driverId, weeks] of Array.from(deliveriesByDriverWeek.entries())) {

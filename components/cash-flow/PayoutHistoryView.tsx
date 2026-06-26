@@ -51,7 +51,7 @@ export function PayoutHistoryView({
     const headers = [
       "Week start", "Store", "Payment date", "Confirmed by", "Status",
       "Employee", "Role", "Cash hours", "Cash rate", "Cash wage",
-      "Deliveries", "Delivery wages", "Total paid",
+      "Short deliveries", "Long deliveries", "Delivery wages", "Total paid",
     ];
     const rows: (string | number)[][] = [];
     for (const p of filtered) {
@@ -68,7 +68,8 @@ export function PayoutHistoryView({
           l.cash_hours,
           formatGBPPlain(l.cash_rate),
           formatGBPPlain(l.cash_wage),
-          l.deliveries_count,
+          l.short_deliveries_count,
+          l.long_deliveries_count,
           formatGBPPlain(l.delivery_wages),
           formatGBPPlain(l.total_payment),
         ]);
@@ -183,7 +184,18 @@ export function PayoutHistoryView({
                               <td className="px-4 py-2.5 text-right tabular-nums">{l.cash_hours.toFixed(2)}h</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_wage)}</td>
-                              <td className="px-4 py-2.5 text-right tabular-nums">{l.deliveries_count || "—"}</td>
+                              <td className="px-4 py-2.5 text-right tabular-nums">
+                                {l.short_deliveries_count + l.long_deliveries_count > 0 ? (
+                                  <>
+                                    {l.short_deliveries_count + l.long_deliveries_count}
+                                    <span className="block text-[10px] text-text-muted">
+                                      {l.short_deliveries_count}S / {l.long_deliveries_count}L
+                                    </span>
+                                  </>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{l.delivery_wages > 0 ? formatGBP(l.delivery_wages) : "—"}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{formatGBP(l.total_payment)}</td>
                             </tr>

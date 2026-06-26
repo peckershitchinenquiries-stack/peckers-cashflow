@@ -124,7 +124,7 @@ async function computeSummary(
       .eq("store_id", storeId),
     supabase
       .from("clock_events")
-      .select("employee_id, clock_in_at, clock_out_at, deliveries_count, extra_deliveries")
+      .select("employee_id, clock_in_at, clock_out_at, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries")
       .eq("store_id", storeId)
       .gte("event_date", payWeek.start)
       .lte("event_date", payWeek.end),
@@ -256,8 +256,10 @@ export async function generatePayout(input: {
       cash_hours: line.cash_hours,
       cash_rate: line.cash_rate,
       cash_wage: line.cash_wage,
-      deliveries_count: line.deliveries_count,
-      delivery_rate: line.delivery_rate,
+      short_deliveries_count: line.short_deliveries_count,
+      long_deliveries_count: line.long_deliveries_count,
+      short_delivery_rate: line.short_delivery_rate,
+      long_delivery_rate: line.long_delivery_rate,
       delivery_wages: line.delivery_wages,
       total_payment: line.total_payment,
       is_paid: prior?.is_paid ?? false,

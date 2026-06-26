@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { PlusIcon } from "@/components/ui/icons";
 import { EmployeeCard } from "./EmployeeCard";
+import { EmployeeDetailModal } from "./EmployeeDetailModal";
 import { AddEmployeeModal } from "./AddEmployeeModal";
 import { EditEmployeeModal } from "./EditEmployeeModal";
 import { ScheduleEditModal } from "./ScheduleEditModal";
@@ -48,6 +49,7 @@ export function EmployeesView({
 }: Props) {
   const router = useRouter();
   const [showAdd, setShowAdd] = React.useState(false);
+  const [viewing, setViewing] = React.useState<Employee | null>(null);
   const [editing, setEditing] = React.useState<Employee | null>(null);
   const [scheduling, setScheduling] = React.useState<Employee | null>(null);
   const [showArchived, setShowArchived] = React.useState(false);
@@ -169,6 +171,7 @@ export function EmployeesView({
               key={emp.id}
               employee={emp}
               stores={stores}
+              onView={() => setViewing(emp)}
               onEdit={() => setEditing(emp)}
               onSchedule={() => setScheduling(emp)}
               onChanged={refresh}
@@ -222,6 +225,16 @@ export function EmployeesView({
         onDeleted={handleCoverDriverDeleted}
       />
 
+      {viewing && (
+        <EmployeeDetailModal
+          employee={viewing}
+          stores={stores}
+          onClose={() => setViewing(null)}
+          onEdit={() => { setViewing(null); setEditing(viewing); }}
+          onSchedule={() => { setViewing(null); setScheduling(viewing); }}
+          minWageBands={minWageBands}
+        />
+      )}
       {showAdd && (
         <AddEmployeeModal
           stores={stores}
