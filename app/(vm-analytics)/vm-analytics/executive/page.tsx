@@ -1,5 +1,5 @@
 import { getExec, getExecChannels, getWeeks, getYoy, yoyWeekIso } from "@/lib/vm-analytics/queries";
-import { n, gbp, int, pct, weekRange, signedPct } from "@/lib/vm-analytics/format";
+import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 import {
   shortStore,
   STORES,
@@ -137,6 +137,14 @@ export default async function ExecutivePage({
 
   const ordYoy  = hasYoy && yoyTotalOrders    > 0 ? share(combined.orders     - yoyTotalOrders,    yoyTotalOrders)    : null;
   const custYoy = hasYoy && yoyTotalCustomers > 0 ? share(combined.customers  - yoyTotalCustomers, yoyTotalCustomers) : null;
+
+  const yoyPctMap: Record<string, number | null> = {
+    "Net Sales": netYoy,
+    "Net Sales — Delivery": delYoy,
+    "Net Sales — Own Delivery": ownDelYoy,
+    "Net Sales — Aggregator": aggYoy,
+    "Net Sales — In-store": inStYoy,
+  };
 
   // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
   const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
@@ -328,11 +336,19 @@ export default async function ExecutivePage({
       key: "yoy",
       header: `YoY (${yoyWeek})`,
       align: "right" as const,
-      render: (r: KpiRowDef) => (
-        <span className="text-text-muted text-sm">
-          {getYoyCellValue(r.kpi, yoyRow)}
-        </span>
-      ),
+      render: (r: KpiRowDef) => {
+        const yoyPct = yoyPctMap[r.kpi] ?? null;
+        return (
+          <span className="text-text-muted text-sm">
+            {getYoyCellValue(r.kpi, yoyRow)}
+            {yoyPct !== null && (
+              <span className={`ml-1.5 font-medium ${deltaClass(yoyPct)}`}>
+                ({signedPct(yoyPct)})
+              </span>
+            )}
+          </span>
+        );
+      },
     },
   ];
 

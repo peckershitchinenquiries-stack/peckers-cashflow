@@ -21,6 +21,7 @@ import type {
   MenuCategoryRow,
   WeekOption,
   YoyRow,
+  WeeklySummaryInputRow,
 } from "@/lib/vm-analytics/types";
 
 // All KPI views are weekly. Most queries take an optional ISO week_start; when
@@ -396,6 +397,41 @@ export async function getLaborCost(weekIso: string): Promise<LaborCostRow[]> {
     return [...rows, total];
   }
   return rows;
+}
+
+/**
+ * Fetch manager-entered inputs for a single store + week.
+ * Returns null if no data has been entered yet.
+ */
+export async function getWeeklySummaryInputs(
+  store: string,
+  weekIso: string,
+): Promise<WeeklySummaryInputRow | null> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("weekly_summary_inputs")
+    .select("*")
+    .eq("store", store)
+    .eq("week_start_iso", weekIso)
+    .maybeSingle();
+  if (error) throw new Error(`getWeeklySummaryInputs: ${error.message}`);
+  return data as WeeklySummaryInputRow | null;
+}
+
+/**
+ * Fetch manager-entered inputs for ALL stores for a given week.
+ * Used in the combined / "all stores" view.
+ */
+export async function getWeeklySummaryInputsForWeek(
+  weekIso: string,
+): Promise<WeeklySummaryInputRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("weekly_summary_inputs")
+    .select("*")
+    .eq("week_start_iso", weekIso);
+  if (error) throw new Error(`getWeeklySummaryInputsForWeek: ${error.message}`);
+  return (data ?? []) as WeeklySummaryInputRow[];
 }
 
 /**

@@ -85,6 +85,7 @@ export type DashboardKey =
   | "daypart"
   | "delivery"
   | "store-comparison"
+  | "weekly-summary"
   | "labor-cost";
 
 export interface DashboardDef {
@@ -130,6 +131,12 @@ export const DASHBOARDS: DashboardDef[] = [
     href: "/vm-analytics/store-comparison",
     title: "Store Comparison",
     blurb: "Hitchin vs Stevenage head-to-head",
+  },
+  {
+    key: "weekly-summary",
+    href: "/vm-analytics/weekly-summary",
+    title: "Weekly Summary",
+    blurb: "Manager P&L: costs, margins & net margin by store",
   },
   {
     key: "labor-cost",

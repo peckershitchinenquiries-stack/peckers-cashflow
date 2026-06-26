@@ -231,6 +231,26 @@ export interface WeekOption {
   week_start_iso: string;
 }
 
+// Row from the `weekly_summary_inputs` Supabase table.
+// Numeric columns arrive as strings via PostgREST.
+export interface WeeklySummaryInputRow {
+  id?: number;
+  store: string;
+  week_start_iso: string;
+  cogs?: number | string | null;
+  cogs_hitchin?: number | string | null;
+  fillings_and_samosas?: number | string | null;
+  packaging_costs?: number | string | null;
+  marketing?: number | string | null;
+  labour_cost?: number | string | null;
+  occupancy_cost?: number | string | null;
+  aggregator_costs?: number | string | null;
+  gross_margin_budget_pct?: number | string | null;
+  labour_budget_pct?: number | string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Insight {
   source: "claude" | "rules";
   summary: string;
