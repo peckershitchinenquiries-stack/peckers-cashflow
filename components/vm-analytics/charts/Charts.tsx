@@ -77,7 +77,7 @@ const WrappedXAxisTick = (props: any) => {
       fontSize={12}
     >
       {lines.map((line, idx) => (
-        <tspan key={idx} x={x} dy={idx === 0 ? 0 : 14}>
+        <tspan key={idx} x={x} dy={idx === 0 ? 12 : 14}>
           {line}
         </tspan>
       ))}
@@ -100,7 +100,7 @@ const AngledXAxisTick = (props: any) => {
       <text
         x={0}
         y={0}
-        dy={10}
+        dy={14}
         textAnchor="end"
         transform="rotate(-35)"
         fill="#64748b"
@@ -134,7 +134,7 @@ export function BarChartCard({
     <ResponsiveContainer width="100%" height={height}>
       <BarChart
         data={data}
-        margin={{ top: 8, right: 8, left: 4, bottom: isMobile ? 80 : 60 }}
+        margin={{ top: 8, right: 8, left: 4, bottom: isMobile ? 0 : 0 }}
       >
         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
         <XAxis

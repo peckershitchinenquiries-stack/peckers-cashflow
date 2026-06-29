@@ -522,7 +522,7 @@ export default async function ExecutivePage({
           >
             <DataTable columns={mixColumns} rows={buildChannelTable(combined.delivery)} />
             {deliveryOrdersChart.length > 0 && (
-              <div className="mt-4">
+              <div className="mt-6">
                 <BarChartCard
                   data={deliveryOrdersChart}
                   xKey="channel"
