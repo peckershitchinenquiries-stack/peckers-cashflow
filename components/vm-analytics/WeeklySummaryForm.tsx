@@ -123,18 +123,20 @@ export function WeeklySummaryForm({
     }
 
     return (
-      <div className="flex gap-2 items-center py-2">
-        <label className="text-sm font-medium text-text-secondary w-48">{label}</label>
-        <input
-          type="number"
-          step="0.01"
-          value={displayValue}
-          onChange={(e) => handleChange(field, e.target.value)}
-          onWheel={(e) => e.currentTarget.blur()}
-          placeholder="0.00"
-          className="flex-1 px-3 py-2 rounded border border-border bg-bg text-text-primary text-sm font-mono"
-        />
-        <span className="text-sm text-text-muted">£</span>
+      <div className="flex flex-col gap-1 py-2 sm:flex-row sm:items-center sm:gap-2">
+        <label className="text-sm font-medium text-text-secondary sm:w-48">{label}</label>
+        <div className="flex flex-1 items-center gap-2">
+          <input
+            type="number"
+            step="0.01"
+            value={displayValue}
+            onChange={(e) => handleChange(field, e.target.value)}
+            onWheel={(e) => e.currentTarget.blur()}
+            placeholder="0.00"
+            className="w-full flex-1 px-3 py-2 rounded border border-border bg-bg text-text-primary text-sm font-mono"
+          />
+          <span className="text-sm text-text-muted">£</span>
+        </div>
       </div>
     );
   };
@@ -154,22 +156,24 @@ export function WeeklySummaryForm({
 
     return (
       <div className="space-y-1 py-2">
-        <div className="flex gap-2 items-center">
-          <label className="text-sm font-medium text-text-secondary w-48">{label}</label>
-          <input
-            type="number"
-            step="1"
-            min="0"
-            max="100"
-            value={displayValue}
-            onChange={(e) => handleChange(field, e.target.value)}
-            onWheel={(e) => e.currentTarget.blur()}
-            placeholder="e.g. 65"
-            className="flex-1 px-3 py-2 rounded border border-border bg-bg text-text-primary text-sm font-mono"
-          />
-          <span className="text-sm text-text-muted">%</span>
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+          <label className="text-sm font-medium text-text-secondary sm:w-48">{label}</label>
+          <div className="flex flex-1 items-center gap-2">
+            <input
+              type="number"
+              step="1"
+              min="0"
+              max="100"
+              value={displayValue}
+              onChange={(e) => handleChange(field, e.target.value)}
+              onWheel={(e) => e.currentTarget.blur()}
+              placeholder="e.g. 65"
+              className="w-full flex-1 px-3 py-2 rounded border border-border bg-bg text-text-primary text-sm font-mono"
+            />
+            <span className="text-sm text-text-muted">%</span>
+          </div>
         </div>
-        <p className="text-xs text-text-muted ml-48 pl-2">Enter as a whole number, e.g. 65 for 65%</p>
+        <p className="text-xs text-text-muted sm:ml-48 sm:pl-2">Enter as a whole number, e.g. 65 for 65%</p>
       </div>
     );
   };

@@ -29,7 +29,7 @@ export function KpiCard({
       <div className="text-xs font-medium uppercase tracking-wide text-secondary">
         {label}
       </div>
-      <div className={`mt-2 text-3xl font-bold ${valueClass}`}>{value}</div>
+      <div className={`mt-2 text-2xl font-bold break-words sm:text-3xl ${valueClass}`}>{value}</div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
         {showDelta && (
           <span className={`font-semibold ${deltaClass(delta)}`}>
