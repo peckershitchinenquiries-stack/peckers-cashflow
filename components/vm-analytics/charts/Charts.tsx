@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -17,6 +18,19 @@ import {
 } from "recharts";
 import { truncTo } from "@/lib/vm-analytics/format";
 
+// Tracks whether the viewport is below the given breakpoint so charts can
+// switch between horizontal (desktop) and angled (mobile) axis labels.
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 const PALETTE = [
   "#e11d2a",
   "#2563eb",
@@ -32,6 +46,70 @@ const axisProps = {
   tick: { fontSize: 12, fill: "#64748b" },
   axisLine: { stroke: "#e2e8f0" },
   tickLine: false,
+};
+
+// Custom X-axis label that wraps long text into multiple lines
+const WrappedXAxisTick = (props: any) => {
+  const { x, y, payload } = props;
+  if (!payload?.value) return null;
+
+  const words = String(payload.value).split(" ");
+  const lines: string[] = [];
+  let currentLine = "";
+
+  // Wrap text at ~15 chars per line or by word boundaries
+  for (const word of words) {
+    if ((currentLine + " " + word).length > 15) {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = currentLine ? currentLine + " " + word : word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      fill="#64748b"
+      fontSize={12}
+    >
+      {lines.map((line, idx) => (
+        <tspan key={idx} x={x} dy={idx === 0 ? 0 : 14}>
+          {line}
+        </tspan>
+      ))}
+    </text>
+  );
+};
+
+// Angled X-axis label for narrow (mobile) widths. Anchoring at the end and
+// rotating around the tick origin makes the labels fan down to the left, so
+// they never overlap each other or the content below them.
+const AngledXAxisTick = (props: any) => {
+  const { x, y, payload } = props;
+  if (!payload?.value) return null;
+
+  const value = String(payload.value);
+  const label = value.length > 20 ? `${value.slice(0, 19)}…` : value;
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={10}
+        textAnchor="end"
+        transform="rotate(-35)"
+        fill="#64748b"
+        fontSize={11}
+      >
+        {label}
+      </text>
+    </g>
+  );
 };
 
 function gbpTick(v: number) {
@@ -51,11 +129,21 @@ export function BarChartCard({
   height?: number;
   currency?: boolean;
 }) {
+  const isMobile = useIsMobile();
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 8, left: 4, bottom: isMobile ? 80 : 60 }}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-        <XAxis dataKey={xKey} {...axisProps} interval={0} angle={0} />
+        <XAxis
+          dataKey={xKey}
+          {...axisProps}
+          interval={0}
+          height={isMobile ? 90 : 70}
+          tick={isMobile ? <AngledXAxisTick /> : <WrappedXAxisTick />}
+        />
         <YAxis {...axisProps} tickFormatter={currency ? gbpTick : undefined} />
         <Tooltip
           formatter={(v: number) =>

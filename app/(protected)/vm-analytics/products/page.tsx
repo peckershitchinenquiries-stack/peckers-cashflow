@@ -123,13 +123,13 @@ export default async function ProductsPage({
     },
   ];
 
-  const topChart = top.slice(0, 8).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
+  const topChart = top.slice(0, 5).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
 
   const insightInput: ProductInput = {
     dashboard: "products",
     week: weekIso,
     store: activeStore,
-    top: top.slice(0, 8).map((t) => ({
+    top: top.slice(0, 5).map((t) => ({
       item: t.item,
       units: t.units,
       revenue: t.revenue,
@@ -170,7 +170,7 @@ export default async function ProductsPage({
       </Section>
 
       <Section title="Volume Leaders">
-        <ChartCard title="Top 8 products by units sold">
+        <ChartCard title="Top 5 products by units sold">
           <BarChartCard
             data={topChart}
             xKey="item"
