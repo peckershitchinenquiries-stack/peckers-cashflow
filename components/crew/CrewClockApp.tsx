@@ -11,6 +11,7 @@ import { clockIn, clockOut, updateDeliveryCount } from "@/app/actions/clock";
 import {
   WEEKDAY_LONG,
   addDays,
+  clockedHours,
   formatDDMMYYYY,
   formatShiftRange,
   formatTimeOnly,
@@ -37,6 +38,8 @@ type Props = {
   weekShifts: RotaShift[];
   schedules?: EmployeeScheduleDay[];
   todayClock: ClockEvent | null;
+  /** This week's clock events (Mon–Sun) — drives the worked-hours history. */
+  weekClocks?: ClockEvent[];
 };
 
 type GeoState =
@@ -51,6 +54,7 @@ export function CrewClockApp({
   weekShifts,
   schedules = [],
   todayClock,
+  weekClocks = [],
 }: Props) {
   const router = useRouter();
   const toast = useToast();
@@ -84,6 +88,27 @@ export function CrewClockApp({
     for (const s of schedules) m.set(s.weekday, s);
     return m;
   }, [schedules]);
+
+  // Clock events keyed by date, plus the week's worked-hours total (completed
+  // shifts only — an in-progress shift is shown per-day but not yet summed).
+  const clockByDate = React.useMemo(() => {
+    const m = new Map<string, ClockEvent>();
+    for (const c of weekClocks) m.set(c.event_date, c);
+    return m;
+  }, [weekClocks]);
+
+  const weekWorkedHours = React.useMemo(
+    () =>
+      weekClocks.reduce(
+        (sum, c) => sum + (c.clock_out_at ? clockedHours(c.clock_in_at, c.clock_out_at) : 0),
+        0,
+      ),
+    [weekClocks],
+  );
+
+  const todayWorkedHours = todayClock?.clock_out_at
+    ? clockedHours(todayClock.clock_in_at, todayClock.clock_out_at)
+    : 0;
 
   // Effective shift for a date: published rota row first, else the employee's
   // recurring schedule template for that weekday.
@@ -323,11 +348,17 @@ export function CrewClockApp({
             {/* Big primary action */}
             {phase === "done" ? (
               <div className="rounded-xl border border-success/30 bg-success/10 p-4 text-sm text-success">
-                <div className="flex items-center gap-2 font-medium">
-                  <ClockIcon size={16} /> Shift complete for today
+                <div className="flex items-center justify-between gap-2 font-medium">
+                  <span className="flex items-center gap-2">
+                    <ClockIcon size={16} /> Shift complete for today
+                  </span>
+                  <span className="text-base font-semibold tabular-nums">
+                    {todayWorkedHours.toFixed(2)}h
+                  </span>
                 </div>
                 <p className="text-xs mt-1 text-success/80">
-                  Clocked in {formatTimeOnly(todayClock?.clock_in_at)} · Clocked out{" "}
+                  You worked {todayWorkedHours.toFixed(2)}h — clocked in{" "}
+                  {formatTimeOnly(todayClock?.clock_in_at)} · clocked out{" "}
                   {formatTimeOnly(todayClock?.clock_out_at)}
                 </p>
               </div>
@@ -489,12 +520,20 @@ export function CrewClockApp({
 
       {/* ---------- Week shifts ---------- */}
       <Card className="p-0 overflow-hidden">
-        <CardHeader className="px-5 pt-5">
+        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>Your week</CardTitle>
             <CardDescription>
-              {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Updates in real time when the manager edits the rota.
+              {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Your scheduled shift and the hours you actually worked.
             </CardDescription>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[10px] uppercase tracking-wider text-text-muted">
+              Worked this week
+            </div>
+            <div className="text-lg font-semibold text-gold tabular-nums">
+              {weekWorkedHours.toFixed(2)}h
+            </div>
           </div>
         </CardHeader>
         <div className="border-t border-border">
@@ -502,6 +541,10 @@ export function CrewClockApp({
             const date = addDays(weekStart, i);
             const dateIso = toISODate(date);
             const eff = effFor(dateIso, i);
+            const clk = clockByDate.get(dateIso);
+            const worked = clk?.clock_out_at
+              ? clockedHours(clk.clock_in_at, clk.clock_out_at)
+              : 0;
             const isToday = dateIso === today;
             return (
               <div
@@ -537,6 +580,19 @@ export function CrewClockApp({
                           )}
                         </>
                     : <span className="text-text-muted">No shift</span>}
+                  {clk?.clock_in_at &&
+                    (clk.clock_out_at ? (
+                      <span className="block text-[11px] mt-0.5">
+                        <span className="text-text-muted">
+                          Worked {formatTimeOnly(clk.clock_in_at)}–{formatTimeOnly(clk.clock_out_at)}
+                        </span>{" "}
+                        <span className="text-success font-medium">{worked.toFixed(2)}h</span>
+                      </span>
+                    ) : (
+                      <span className="block text-[11px] text-success mt-0.5">
+                        On shift since {formatTimeOnly(clk.clock_in_at)}
+                      </span>
+                    ))}
                 </div>
               </div>
             );

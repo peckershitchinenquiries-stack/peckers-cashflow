@@ -7,6 +7,8 @@
 // PURE module (no server/Supabase imports) — safe to import from client UI too.
 // =============================================================
 
+import type { ShiftPreset } from "./types";
+
 /** Thresholds the alert scanner (app/actions/alerts.ts -> runScan) uses. */
 export type AlertThresholds = {
   /** wage_variance: |this-week vs 4-week-avg scheduled hours| deviation, %. */
@@ -56,11 +58,29 @@ export type CashFlowSettings = {
   supermarket_default_cash: number;
 };
 
+/**
+ * Configurable shift preset times (HH:MM, 24h). The rota lets managers pick a
+ * preset instead of typing times; these are the resolved values.
+ *  - "Open" differs by team: drivers start later than the kitchen.
+ *  - "Evening" and "Close" are the same for everyone.
+ */
+export type ShiftTimeSettings = {
+  /** Drivers' open (start of an Open→Close shift). Default 11:30. */
+  driver_open: string;
+  /** Kitchen/other staff open. Default 09:00. */
+  kitchen_open: string;
+  /** Evening start (start of an Evening→Close shift). Default 17:00. */
+  evening_start: string;
+  /** Closing time — end of every preset shift. Default 23:00. */
+  close: string;
+};
+
 export type AppSettings = {
   alert_thresholds: AlertThresholds;
   min_wage_bands: MinWageBands;
   email_alerts: EmailAlertSettings;
   cash_flow: CashFlowSettings;
+  shift_times: ShiftTimeSettings;
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -90,6 +110,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     wages_confirm_hour: 18,
     supermarket_default_cash: 700,
   },
+  shift_times: {
+    driver_open: "11:30",
+    kitchen_open: "09:00",
+    evening_start: "17:00",
+    close: "23:00",
+  },
 };
 
 export const SETTINGS_KEYS = [
@@ -97,6 +123,7 @@ export const SETTINGS_KEYS = [
   "min_wage_bands",
   "email_alerts",
   "cash_flow",
+  "shift_times",
 ] as const;
 export type SettingsKey = (typeof SETTINGS_KEYS)[number];
 
@@ -120,5 +147,22 @@ export function mergeSettings(
     min_wage_bands: pick("min_wage_bands"),
     email_alerts: pick("email_alerts"),
     cash_flow: pick("cash_flow"),
+    shift_times: pick("shift_times"),
   };
+}
+
+/**
+ * Resolve a rota preset to concrete start/end times (HH:MM).
+ * "Open" depends on the team: drivers start later than the kitchen.
+ * Pure — takes an `isDriver` flag so it stays free of type/role imports.
+ */
+export function presetTimes(
+  preset: ShiftPreset,
+  isDriver: boolean,
+  t: ShiftTimeSettings,
+): { start: string; end: string } {
+  const open = isDriver ? t.driver_open : t.kitchen_open;
+  return preset === "open_close"
+    ? { start: open, end: t.close }
+    : { start: t.evening_start, end: t.close };
 }

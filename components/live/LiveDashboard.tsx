@@ -6,18 +6,20 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { Badge } from "@/components/ui/Badge";
 import {
   WEEKDAY_LONG,
+  clockedHours,
   formatDDMMYYYY,
   formatGBP,
   formatShiftRange,
   formatTimeOnly,
   shiftHours,
-  todayISO,
 } from "@/lib/utils";
 import type {
+  AllowedUser,
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
   LiveDashboardStatus,
+  ManagerClockEvent,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -31,6 +33,10 @@ type Props = {
   /** Recurring weekly templates — used as the fallback "expected" shift when no
    *  rota row is published for today (so missed shifts still show). */
   schedules?: EmployeeScheduleDay[];
+  /** Manager login accounts (allowed_users, role=manager) for attendance. */
+  managers?: AllowedUser[];
+  /** Today's manager clock rows, keyed on the login account. */
+  managerClocks?: ManagerClockEvent[];
   userRole: string;
   userStoreId: string | null;
 };
@@ -89,14 +95,18 @@ function rateOf(emp: Employee): number {
   return Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0) || 0;
 }
 
-/** Hours actually worked so far today, from the clock event (open shifts count up to now). */
-function actualHoursOf(clock: ClockEvent | null | undefined, now: Date): number {
-  if (!clock?.clock_in_at) return 0;
-  const start = new Date(clock.clock_in_at).getTime();
-  const end = clock.clock_out_at ? new Date(clock.clock_out_at).getTime() : now.getTime();
-  const ms = end - start;
-  return ms > 0 ? ms / 3_600_000 : 0;
+/** Attendance status for a manager from their clock row. */
+type ManagerStatus = "on_shift" | "clocked_out" | "not_in";
+function managerStatusOf(mc: ManagerClockEvent | null | undefined): ManagerStatus {
+  if (mc?.clock_out_at) return "clocked_out";
+  if (mc?.clock_in_at) return "on_shift";
+  return "not_in";
 }
+const MANAGER_STATUS: Record<ManagerStatus, { label: string; cls: string }> = {
+  on_shift: { label: "On Shift", cls: "bg-success/15 text-success border-success/40" },
+  clocked_out: { label: "Clocked Out", cls: "bg-surface-hover text-text-subtle border-border" },
+  not_in: { label: "Not clocked in", cls: "bg-warning/15 text-warning border-warning/40" },
+};
 
 export function LiveDashboard({
   stores,
@@ -104,6 +114,8 @@ export function LiveDashboard({
   shifts,
   clocks,
   schedules = [],
+  managers = [],
+  managerClocks = [],
   userRole,
   userStoreId,
 }: Props) {
@@ -156,6 +168,7 @@ export function LiveDashboard({
 
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
+  const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
   const scheduleByEmpDay = new Map(
     schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
   );
@@ -209,8 +222,9 @@ export function LiveDashboard({
             return pa - pb || a.name.localeCompare(b.name);
           });
 
-          const manager = sorted.find((e) => e.position === "Manager");
-          const managerShift = manager ? effectiveShiftFor(manager.id).shift : null;
+          // Managers are login accounts (allowed_users), not employees — pulled
+          // from their own table with their own clock rows.
+          const storeManagers = managers.filter((m) => m.store_id === store.id);
 
           const onShiftCount = sorted.filter((e) => {
             const c = clockByEmp.get(e.id);
@@ -232,7 +246,7 @@ export function LiveDashboard({
                   ? Number(realShift.scheduled_hours)
                   : shiftHours(shift.start_time, shift.end_time)
                 : 0;
-            const actHours = actualHoursOf(clock, now);
+            const actHours = clockedHours(clock?.clock_in_at, clock?.clock_out_at, now);
             return {
               emp,
               shift,
@@ -258,24 +272,62 @@ export function LiveDashboard({
                       {sorted.length} scheduled · {onShiftCount} on shift now
                     </p>
                   </div>
-                  {manager && (
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wider text-text-muted">
-                        Manager on Shift
-                      </div>
-                      <div className="text-sm font-medium text-text-primary">
-                        {manager.name}
-                      </div>
-                      <div className="text-xs text-text-subtle">
-                        {formatShiftRange(
-                          managerShift?.is_day_off ?? false,
-                          managerShift?.start_time ?? null,
-                          managerShift?.end_time ?? null,
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
+
+                {/* Manager attendance — clock in/out for monitoring (fixed salary) */}
+                {storeManagers.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-border bg-surface-hover/50 p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-text-muted mb-2">
+                      Manager attendance
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {storeManagers.map((m) => {
+                        const mc = managerClockByMgr.get(m.id);
+                        const status = managerStatusOf(mc);
+                        const style = MANAGER_STATUS[status];
+                        const worked = mc?.clock_in_at
+                          ? clockedHours(mc.clock_in_at, mc.clock_out_at, now)
+                          : 0;
+                        return (
+                          <div
+                            key={m.id}
+                            className="flex items-start justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-text-primary truncate">
+                                {m.name || m.username}
+                              </div>
+                              {isSuperAdmin && m.fixed_monthly_wage != null && (
+                                <div className="text-[11px] text-text-muted">
+                                  {formatGBP(m.fixed_monthly_wage)} / month
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span
+                                className={
+                                  "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border " +
+                                  style.cls
+                                }
+                              >
+                                {style.label}
+                              </span>
+                              {mc?.clock_in_at && (
+                                <div className="text-[11px] text-text-muted mt-0.5 tabular-nums">
+                                  In {formatTimeOnly(mc.clock_in_at)}
+                                  {mc.clock_out_at
+                                    ? ` · Out ${formatTimeOnly(mc.clock_out_at)}`
+                                    : ""}{" "}
+                                  · {worked.toFixed(1)}h
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Daily wage summary — expected (from the schedule) vs actual (clocked so far) */}
                 <div className="mt-3 grid grid-cols-2 gap-2">
