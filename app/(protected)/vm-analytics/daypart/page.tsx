@@ -2,6 +2,7 @@ import {
   getDaypartChannels,
   getDaypartChannelDetail,
   getMenuCategoryChannels,
+  getHourlyActivity,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange } from "@/lib/vm-analytics/format";
@@ -16,6 +17,7 @@ import type {
   DaypartChannelRow,
   DaypartChannelDetailRow,
   MenuCategoryChannelRow,
+  HourlyActivityRow,
 } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
@@ -156,6 +158,39 @@ function finalise(list: DaypartAgg[], detailed: boolean): DaypartAgg[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
+// One row per trading hour, rolled up across the scoped store(s). avg_daily_*
+// per (weekday, hour) are summed the same way vm_v_daypart_summary rolls hours
+// into dayparts, so the hourly rows reconcile with the daypart totals exactly.
+interface HourAgg {
+  hour: number;
+  orders: number;
+  revenue: number;
+  aov: number;
+}
+
+function aggregateHours(rows: HourlyActivityRow[]): HourAgg[] {
+  const m = new Map<number, HourAgg>();
+  for (const r of rows) {
+    const hour = Math.trunc(n(r.order_hour));
+    const cur = m.get(hour) ?? { hour, orders: 0, revenue: 0, aov: 0 };
+    cur.orders += n(r.avg_daily_orders);
+    cur.revenue += n(r.avg_daily_sales);
+    m.set(hour, cur);
+  }
+  return Array.from(m.values())
+    .map((h) => ({ ...h, aov: aov(h.revenue, h.orders) }))
+    .sort((a, b) => a.hour - b.hour);
+}
+
+// "17" -> "5pm", "12" -> "12pm", "0" -> "12am". Used to label an hour bucket as
+// the window it covers, e.g. hour 11 -> "11am-12pm".
+function hour12(h: number): string {
+  const period = h >= 12 && h < 24 ? "pm" : "am";
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${period}`;
+}
+const hourLabel = (h: number) => `${hour12(h)}-${hour12((h + 1) % 24)}`;
+
 // Menu categories surfaced as their own per-channel AOV table, in display
 // order. These match btrim(category_name) in the line-item source.
 const MENU_CATEGORIES = ["Meal Boxes & Platters", "Platters"] as const;
@@ -250,16 +285,18 @@ export default async function DaypartPage({
   let detailRows: DaypartChannelDetailRow[];
   let basicRows: DaypartChannelRow[];
   let categoryRows: MenuCategoryChannelRow[];
+  let hourlyRows: HourlyActivityRow[];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [detailRows, basicRows, categoryRows] = await Promise.all([
+    [detailRows, basicRows, categoryRows, hourlyRows] = await Promise.all([
       getDaypartChannelDetail(weekIso),
       getDaypartChannels(weekIso),
       getMenuCategoryChannels(weekIso),
+      getHourlyActivity(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -270,7 +307,10 @@ export default async function DaypartPage({
     detailRows = detailRows.filter((c) => c.store === activeStore);
     basicRows = basicRows.filter((c) => c.store === activeStore);
     categoryRows = categoryRows.filter((c) => c.store === activeStore);
+    hourlyRows = hourlyRows.filter((c) => c.store === activeStore);
   }
+
+  const hours = aggregateHours(hourlyRows);
 
   const categories = aggregateCategories(categoryRows);
 
@@ -286,26 +326,14 @@ export default async function DaypartPage({
     );
   }
 
-  // Exact values throughout — money to the penny, AOV = revenue ÷ orders.
-  const money = (v: number | null) => (v === null ? "—" : gbp(v));
-  const count = (v: number | null) => (v === null ? "—" : int(v));
-
-  const dpColumns: Column<DaypartAgg>[] = [
-    { key: "dp", header: "Time Period", render: (r) => <span className="font-medium">{r.daypart}</span> },
+  // Hourly "Performance by Time Period" table. The raw hourly report has no
+  // channel dimension, so this view is Orders / Revenue / AOV only (the
+  // Own Delivery / Aggregate / In-store cuts are only defined per daypart).
+  const hourColumns: Column<HourAgg>[] = [
+    { key: "hour", header: "Time Period", render: (r) => <span className="font-medium">{hourLabel(r.hour)}</span> },
     { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
     { key: "revenue", header: "Revenue", align: "right", render: (r) => gbp(r.revenue) },
     { key: "aov", header: "AOV", align: "right", render: (r) => gbp(r.aov) },
-    { key: "deliveryAov", header: "AOV — Delivery", align: "right", render: (r) => gbp(r.deliveryAov) },
-    { key: "inStoreAov", header: "AOV — In-store", align: "right", render: (r) => gbp(r.inStoreAov) },
-    { key: "ownOrders", header: "Own Del — Orders", align: "right", render: (r) => count(r.ownOrders) },
-    { key: "ownRevenue", header: "Own Del — Revenue", align: "right", render: (r) => money(r.ownRevenue) },
-    { key: "ownAov", header: "Own Del — AOV", align: "right", render: (r) => money(r.ownAov) },
-    { key: "aggOrders", header: "Aggregate — Orders", align: "right", render: (r) => count(r.aggOrders) },
-    { key: "aggRevenue", header: "Aggregate — Revenue", align: "right", render: (r) => money(r.aggRevenue) },
-    { key: "aggAov", header: "Aggregate — AOV", align: "right", render: (r) => money(r.aggAov) },
-    { key: "inStoreOrders", header: "In-store — Orders", align: "right", render: (r) => int(r.inStoreOrders) },
-    { key: "inStoreRevenue", header: "In-store — Revenue", align: "right", render: (r) => gbp(r.inStoreRevenue) },
-    { key: "inStoreAov", header: "In-store — AOV", align: "right", render: (r) => gbp(r.inStoreAov) },
   ];
 
   // AOV cell: show "—" rather than a misleading £0.00 when a channel had no
@@ -323,8 +351,11 @@ export default async function DaypartPage({
     { key: "aggAov", header: "AOV — Aggregator", align: "right", render: (r) => catAov(r.aggRevenue, r.aggOrders) },
   ];
 
+  // Bar per daypart: name on the axis (Lunch, Afternoon…), trading window drawn
+  // on top of the bar (e.g. "(11-2pm)"), both taken from the daypart label.
   const dpChart = periods.map((p) => ({
     period: p.daypart.replace(/\s*\(.*\)/, ""),
+    window: (p.daypart.match(/\(([^)]*)\)/)?.[0]) ?? "",
     Revenue: Math.round(p.revenue),
     Orders: Math.round(p.orders),
   }));
@@ -353,13 +384,13 @@ export default async function DaypartPage({
 
       <Section
         title="Performance by Time Period"
-        description={
-          hasDetail
-            ? "Orders, revenue and AOV per daypart, with Own Delivery, Aggregate (Deliveroo + Uber Eats + Just Eat) and In-store cuts so each AOV (= revenue ÷ orders) can be verified. Pre-opening orders (before 12:00 Hitchin / 11:30 Stevenage) are excluded."
-            : "Orders, revenue and AOV per daypart. Run daypart_channel_views.sql in Supabase to unlock the Own Delivery / Aggregate / Eat-in columns."
-        }
+        description="Orders, revenue and AOV per trading hour (AOV = revenue ÷ orders). Figures are the average day's activity for that hour, summed across the week — the same basis as the daypart totals, so the hours in a daypart add up to it exactly."
       >
-        <DataTable columns={dpColumns} rows={periods} />
+        <DataTable
+          columns={hourColumns}
+          rows={hours}
+          emptyMessage="No hourly activity for this week."
+        />
       </Section>
 
       <Section
@@ -383,6 +414,7 @@ export default async function DaypartPage({
             data={dpChart}
             xKey="period"
             bars={[{ key: "Revenue", name: "Revenue" }]}
+            labelKey="window"
             currency
             height={320}
           />

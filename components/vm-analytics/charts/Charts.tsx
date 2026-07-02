@@ -6,6 +6,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -122,12 +123,16 @@ export function BarChartCard({
   bars,
   height = 280,
   currency = false,
+  labelKey,
 }: {
   data: Record<string, unknown>[];
   xKey: string;
   bars: { key: string; name: string; color?: string }[];
   height?: number;
   currency?: boolean;
+  // When set, the value at data[labelKey] is drawn on top of each bar (e.g. the
+  // trading window "(11-2pm)" above each daypart). Only applied to the first bar.
+  labelKey?: string;
 }) {
   const isMobile = useIsMobile();
   return (
@@ -160,7 +165,15 @@ export function BarChartCard({
             fill={b.color ?? PALETTE[i % PALETTE.length]}
             radius={[4, 4, 0, 0]}
             maxBarSize={48}
-          />
+          >
+            {labelKey && i === 0 && (
+              <LabelList
+                dataKey={labelKey}
+                position="top"
+                style={{ fontSize: 11, fill: "#64748b", fontWeight: 500 }}
+              />
+            )}
+          </Bar>
         ))}
       </BarChart>
     </ResponsiveContainer>

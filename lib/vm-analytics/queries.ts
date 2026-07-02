@@ -12,6 +12,7 @@ import type {
   DaypartChannelRow,
   DaypartChannelDetailRow,
   MenuCategoryChannelRow,
+  HourlyActivityRow,
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
@@ -263,6 +264,21 @@ export async function getMenuCategoryChannels(
     return [];
   }
   return (data ?? []) as MenuCategoryChannelRow[];
+}
+
+// Per (store, weekday, hour) trading activity from the raw
+// vm_hourly_order_activity report. Powers the hourly "Performance by Time
+// Period" table on the Daypart dashboard. Summing avg_daily_* per hour across
+// weekdays reconciles to vm_v_daypart_summary to the penny.
+export async function getHourlyActivity(weekIso: string): Promise<HourlyActivityRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_hourly_order_activity")
+    .select("store, week_start, weekday, weekday_id, order_hour, avg_daily_sales, avg_daily_orders")
+    .eq("week_start", weekIso)
+    .order("order_hour", { ascending: true });
+  if (error) throw new Error(`getHourlyActivity: ${error.message}`);
+  return (data ?? []) as HourlyActivityRow[];
 }
 
 export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {
