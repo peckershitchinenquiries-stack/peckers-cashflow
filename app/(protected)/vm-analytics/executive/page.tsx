@@ -85,14 +85,6 @@ export default async function ExecutivePage({
   const netWow = hasPrev ? share(combined.netSales - prevCombined.netSales, prevCombined.netSales) : null;
   const ordWow = hasPrev ? share(combined.orders - prevCombined.orders, prevCombined.orders) : null;
   const custWow = hasPrev ? share(combined.customers - prevCombined.customers, prevCombined.customers) : null;
-  const aovDelWow =
-    hasPrev && prevCombined.delivery.aov > 0
-      ? share(combined.delivery.aov - prevCombined.delivery.aov, prevCombined.delivery.aov)
-      : null;
-  const aovInWow =
-    hasPrev && prevCombined.inStore.aov > 0
-      ? share(combined.inStore.aov - prevCombined.inStore.aov, prevCombined.inStore.aov)
-      : null;
   const netDelWow = hasPrev
     ? share(combined.delivery.netSales - prevCombined.delivery.netSales, prevCombined.delivery.netSales)
     : null;
@@ -102,20 +94,10 @@ export default async function ExecutivePage({
   const aovBlendWow =
     hasPrev && prevCombined.aov > 0 ? share(combined.aov - prevCombined.aov, prevCombined.aov) : null;
 
-  // Own Delivery vs Aggregator (Deliveroo + Uber Eats + Just Eat) — both net
-  // sales and AOV (net ÷ orders), with WoW vs the previous week.
+  // Own Delivery vs Aggregator (Deliveroo + Uber Eats + Just Eat) net sales,
+  // used for the YoY comparisons below.
   const ownDel = ownDelivery(combined.delivery);
   const aggDel = aggregator(combined.delivery);
-  const prevOwnDel = ownDelivery(prevCombined.delivery);
-  const prevAggDel = aggregator(prevCombined.delivery);
-  const netOwnWow =
-    hasPrev && prevOwnDel.netSales > 0 ? share(ownDel.netSales - prevOwnDel.netSales, prevOwnDel.netSales) : null;
-  const netAggWow =
-    hasPrev && prevAggDel.netSales > 0 ? share(aggDel.netSales - prevAggDel.netSales, prevAggDel.netSales) : null;
-  const aovOwnWow =
-    hasPrev && prevOwnDel.aov > 0 ? share(ownDel.aov - prevOwnDel.aov, prevOwnDel.aov) : null;
-  const aovAggWow =
-    hasPrev && prevAggDel.aov > 0 ? share(aggDel.aov - prevAggDel.aov, prevAggDel.aov) : null;
 
   // ---- YoY deltas (from historical Excel data) ----------------------------
   const hasYoy = yoyRow !== null;
@@ -137,6 +119,30 @@ export default async function ExecutivePage({
 
   const ordYoy  = hasYoy && yoyTotalOrders    > 0 ? share(combined.orders     - yoyTotalOrders,    yoyTotalOrders)    : null;
   const custYoy = hasYoy && yoyTotalCustomers > 0 ? share(combined.customers  - yoyTotalCustomers, yoyTotalCustomers) : null;
+
+  // AOV (Blended) YoY — same base as the table's YoY cell: total sales ÷ total
+  // orders (falling back to summed channel order counts when total_orders is 0).
+  const yoyTotalOrdersEff = yoyRow
+    ? n(yoyRow.total_orders) ||
+      (n(yoyRow.own_delivery) + n(yoyRow.deliveroo) + n(yoyRow.just_eat) + n(yoyRow.uber_eats) +
+        n(yoyRow.click_collect) + n(yoyRow.kiosk) + n(yoyRow.till_eat_in) + n(yoyRow.till_takeaway))
+    : 0;
+  const yoyAovBlend = yoyTotalOrdersEff > 0 && yoyTotalSales > 0 ? yoyTotalSales / yoyTotalOrdersEff : 0;
+  const aovBlendYoy = hasYoy && yoyAovBlend > 0 ? share(combined.aov - yoyAovBlend, yoyAovBlend) : null;
+
+  // Delivery % / In-store % — share of net sales, with WoW (vs previous week's
+  // share) and YoY (vs same week last year's sales-based share).
+  const deliveryPct = share(combined.delivery.netSales, combined.netSales);
+  const inStorePct = share(combined.inStore.netSales, combined.netSales);
+  const prevDeliveryPct = share(prevCombined.delivery.netSales, prevCombined.netSales);
+  const prevInStorePct = share(prevCombined.inStore.netSales, prevCombined.netSales);
+  const yoyDeliveryPct = yoyTotalSales > 0 ? share(yoyDeliverySales, yoyTotalSales) : 0;
+  const yoyInStorePct = yoyTotalSales > 0 ? share(yoyInStoreSales, yoyTotalSales) : 0;
+
+  const deliveryPctWow = hasPrev && prevDeliveryPct > 0 ? share(deliveryPct - prevDeliveryPct, prevDeliveryPct) : null;
+  const inStorePctWow = hasPrev && prevInStorePct > 0 ? share(inStorePct - prevInStorePct, prevInStorePct) : null;
+  const deliveryPctYoy = hasYoy && yoyDeliveryPct > 0 ? share(deliveryPct - yoyDeliveryPct, yoyDeliveryPct) : null;
+  const inStorePctYoy = hasYoy && yoyInStorePct > 0 ? share(inStorePct - yoyInStorePct, yoyInStorePct) : null;
 
   const yoyPctMap: Record<string, number | null> = {
     "Net Sales": netYoy,
@@ -162,6 +168,9 @@ export default async function ExecutivePage({
     // for aggregator. Drives the value colour in every store column.
     tone?: "good" | "bad";
     cell: (b: Breakdown) => string;
+    // Primary numeric behind the cell, used to compute the WoW % shown next to
+    // the previous-week value (combined vs previous-week combined).
+    wowVal?: (b: Breakdown) => number;
   };
 
   // Every channel % is now share of the STORE's net sales (channel net ÷ store
@@ -175,11 +184,11 @@ export default async function ExecutivePage({
   };
 
   const kpiRows: KpiRowDef[] = [
-    { kpi: "Net Sales", cell: (b) => gbp(b.netSales) },
-    { kpi: "Net Sales — Delivery", cell: (b) => gbp(b.delivery.netSales) },
-    { kpi: "Net Sales — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).netSales) },
-    { kpi: "Net Sales — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).netSales) },
-    { kpi: "Net Sales — In-store", tone: "good", cell: (b) => gbp(b.inStore.netSales) },
+    { kpi: "Net Sales", cell: (b) => gbp(b.netSales), wowVal: (b) => b.netSales },
+    { kpi: "Net Sales — Delivery", cell: (b) => gbp(b.delivery.netSales), wowVal: (b) => b.delivery.netSales },
+    { kpi: "Net Sales — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).netSales), wowVal: (b) => ownDelivery(b.delivery).netSales },
+    { kpi: "Net Sales — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).netSales), wowVal: (b) => aggregator(b.delivery).netSales },
+    { kpi: "Net Sales — In-store", tone: "good", cell: (b) => gbp(b.inStore.netSales), wowVal: (b) => b.inStore.netSales },
     { kpi: "Total Orders", cell: (b) => int(b.orders) },
     { kpi: "Customers", cell: (b) => int(b.customers) },
     { kpi: "AOV (Blended)", cell: (b) => gbp(b.aov) },
@@ -271,12 +280,15 @@ export default async function ExecutivePage({
         return yoyOwnDel > 0
           ? `${int(yoyOwnDel)} · ${pct(n(yoy.own_delivery_pct))}`
           : "—";
+      // Per-channel YoY has order counts only (no historical per-channel net
+      // sales), so the % here is each channel's share of total orders — not the
+      // net-sales share shown in the current/previous-week columns.
       case "Deliveroo":
-        return n(yoy.deliveroo) > 0 ? int(n(yoy.deliveroo)) : "—";
+        return n(yoy.deliveroo) > 0 ? `${int(n(yoy.deliveroo))} · ${pct(share(n(yoy.deliveroo), yoyTotOrd))}` : "—";
       case "Uber Eats":
-        return n(yoy.uber_eats) > 0 ? int(n(yoy.uber_eats)) : "—";
+        return n(yoy.uber_eats) > 0 ? `${int(n(yoy.uber_eats))} · ${pct(share(n(yoy.uber_eats), yoyTotOrd))}` : "—";
       case "Just Eat":
-        return n(yoy.just_eat) > 0 ? int(n(yoy.just_eat)) : "—";
+        return n(yoy.just_eat) > 0 ? `${int(n(yoy.just_eat))} · ${pct(share(n(yoy.just_eat), yoyTotOrd))}` : "—";
 
       // ── In-store channel order counts ──────────────────────────────────────
       case "In-store Orders":
@@ -284,13 +296,13 @@ export default async function ExecutivePage({
           ? `${int(yoyIns)} · ${pct(n(yoy.in_store_pct))}`
           : "—";
       case "Click & Collect":
-        return n(yoy.click_collect) > 0 ? int(n(yoy.click_collect)) : "—";
+        return n(yoy.click_collect) > 0 ? `${int(n(yoy.click_collect))} · ${pct(share(n(yoy.click_collect), yoyTotOrd))}` : "—";
       case "Kiosk":
-        return n(yoy.kiosk) > 0 ? int(n(yoy.kiosk)) : "—";
+        return n(yoy.kiosk) > 0 ? `${int(n(yoy.kiosk))} · ${pct(share(n(yoy.kiosk), yoyTotOrd))}` : "—";
       case "Till (takeaway)":
-        return n(yoy.till_takeaway) > 0 ? int(n(yoy.till_takeaway)) : "—";
+        return n(yoy.till_takeaway) > 0 ? `${int(n(yoy.till_takeaway))} · ${pct(share(n(yoy.till_takeaway), yoyTotOrd))}` : "—";
       case "Till (eat-in)":
-        return n(yoy.till_eat_in) > 0 ? int(n(yoy.till_eat_in)) : "—";
+        return n(yoy.till_eat_in) > 0 ? `${int(n(yoy.till_eat_in))} · ${pct(share(n(yoy.till_eat_in), yoyTotOrd))}` : "—";
 
       default:
         return "—";
@@ -328,9 +340,25 @@ export default async function ExecutivePage({
       key: "prev",
       header: "Previous Week",
       align: "right" as const,
-      render: (r: KpiRowDef) => (
-        <span className="text-tertiary">{hasPrev ? r.cell(prevCombined) : "—"}</span>
-      ),
+      render: (r: KpiRowDef) => {
+        const wowPct =
+          hasPrev && r.wowVal
+            ? (() => {
+                const prev = r.wowVal(prevCombined);
+                return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
+              })()
+            : null;
+        return (
+          <span className="text-tertiary">
+            {hasPrev ? r.cell(prevCombined) : "—"}
+            {wowPct !== null && (
+              <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
+                ({signedPct(wowPct)})
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "yoy",
@@ -477,35 +505,18 @@ export default async function ExecutivePage({
       <KpiGrid>
         <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} yoy={netYoy} />
         <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} yoy={delYoy} />
-        <KpiCard label="Net Sales — Own Delivery" value={gbp(ownDel.netSales)} delta={netOwnWow} yoy={ownDelYoy} tone="good" />
-        <KpiCard label="Net Sales — Aggregator" value={gbp(aggDel.netSales)} delta={netAggWow} yoy={aggYoy} hint="Deliveroo + Uber + Just Eat" tone="bad" />
         <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} yoy={inStYoy} tone="good" />
         <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} yoy={ordYoy} />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
           delta={aovBlendWow}
+          yoy={aovBlendYoy}
           hint="net sales ÷ orders"
         />
-        <KpiCard label="AOV — Delivery" value={gbp(combined.delivery.aov)} delta={aovDelWow} />
-        <KpiCard label="AOV — Own Delivery" value={gbp(ownDel.aov)} delta={aovOwnWow} tone="good" />
-        <KpiCard label="AOV — Aggregator" value={gbp(aggDel.aov)} delta={aovAggWow} hint="Deliveroo + Uber + Just Eat" tone="bad" />
-        <KpiCard label="AOV — In-store" value={gbp(combined.inStore.aov)} delta={aovInWow} tone="good" />
         <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} yoy={custYoy} />
-        <KpiCard label="Own Delivery %" value={pct(share(ownDel.netSales, combined.netSales))} hint="of net sales" tone="good" />
-        <KpiCard label="Aggregate %" value={pct(share(aggDel.netSales, combined.netSales))} hint="of net sales" tone="bad" />
-        <KpiCard label="Delivery %" value={pct(share(combined.delivery.netSales, combined.netSales))} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(share(combined.inStore.netSales, combined.netSales))} hint="of net sales" tone="good" />
-        <KpiCard
-          label="Net Sales WoW"
-          value={signedPct(netWow)}
-          hint={hasPrev ? "vs previous week" : "no prior week"}
-        />
-        <KpiCard
-          label="Net Sales YoY"
-          value={signedPct(netYoy)}
-          hint={hasYoy ? `vs ${yoyWeek}` : "no YoY data"}
-        />
+        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={deliveryPctWow} yoy={deliveryPctYoy} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(inStorePct)} delta={inStorePctWow} yoy={inStorePctYoy} hint="of net sales" tone="good" />
       </KpiGrid>
 
       <Commentary initial={draft} input={insightInput} />
