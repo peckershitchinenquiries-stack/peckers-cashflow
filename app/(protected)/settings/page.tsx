@@ -10,6 +10,7 @@ import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { StoresAdmin } from "@/components/settings/StoresAdmin";
 import { AuditLogList } from "@/components/settings/AuditLogList";
 import { CashFlowSettingsCard } from "@/components/settings/CashFlowSettingsCard";
+import { ShiftTimesSettingsCard } from "@/components/settings/ShiftTimesSettingsCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
 import { getAppSettings } from "@/app/actions/settings";
 
@@ -79,6 +80,7 @@ export default async function SettingsPage() {
 
       <div className="mt-6 flex flex-col gap-5">
         <CashFlowSettingsCard initial={settings} />
+        <ShiftTimesSettingsCard initial={settings} />
         <StoresAdmin stores={storesRes.data ?? []} />
         <AllowedUsersAdmin
           initialUsers={adminsRes.data ?? []}

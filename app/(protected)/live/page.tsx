@@ -3,9 +3,11 @@ import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import { LiveDashboard } from "@/components/live/LiveDashboard";
 import { todayISO } from "@/lib/utils";
 import type {
+  AllowedUser,
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
+  ManagerClockEvent,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -17,14 +19,23 @@ export default async function LivePage() {
   const supabase = createServerSupabase();
   const today = todayISO();
 
-  const [storesRes, employeesRes, shiftsRes, clocksRes, schedulesRes] =
-    await Promise.all([
-      supabase.from("stores").select("*").order("name"),
-      supabase.from("employees").select("*").neq("employment_status", "left"),
-      supabase.from("rota_shifts").select("*").eq("shift_date", today),
-      supabase.from("clock_events").select("*").eq("event_date", today),
-      supabase.from("employee_schedules").select("*"),
-    ]);
+  const [
+    storesRes,
+    employeesRes,
+    shiftsRes,
+    clocksRes,
+    schedulesRes,
+    managersRes,
+    managerClocksRes,
+  ] = await Promise.all([
+    supabase.from("stores").select("*").order("name"),
+    supabase.from("employees").select("*").neq("employment_status", "left"),
+    supabase.from("rota_shifts").select("*").eq("shift_date", today),
+    supabase.from("clock_events").select("*").eq("event_date", today),
+    supabase.from("employee_schedules").select("*"),
+    supabase.from("allowed_users").select("*").eq("role", "manager"),
+    supabase.from("manager_clock_events").select("*").eq("event_date", today),
+  ]);
 
   return (
     <>
@@ -38,6 +49,8 @@ export default async function LivePage() {
         shifts={(shiftsRes.data ?? []) as RotaShift[]}
         clocks={(clocksRes.data ?? []) as ClockEvent[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
+        managers={(managersRes.data ?? []) as AllowedUser[]}
+        managerClocks={(managerClocksRes.data ?? []) as ManagerClockEvent[]}
         userRole={user.allowed?.role ?? "manager"}
         userStoreId={user.allowed?.store_id ?? null}
       />

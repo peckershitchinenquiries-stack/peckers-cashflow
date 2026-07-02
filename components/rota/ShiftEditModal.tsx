@@ -7,32 +7,56 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { upsertShift, deleteShift } from "@/app/actions/rota";
 import { formatDDMMYYYY, shiftHours, todayISO } from "@/lib/utils";
-import type { Employee, RotaShift } from "@/lib/types";
+import { presetTimes, type ShiftTimeSettings } from "@/lib/settings";
+import { hasRole, type Employee, type RotaShift, type ShiftPreset } from "@/lib/types";
 
 type Props = {
   employee: Employee;
   storeId: string;
   shiftDate: string;
   existing: RotaShift | null;
-  /** Previous day's times, used to pre-fill a brand-new shift for fast entry. */
+  /** Configured open/close/evening times used to resolve the presets. */
+  shiftTimes: ShiftTimeSettings;
+  /** Previous day's times, used to pre-fill a brand-new custom shift. */
   prefill?: { start: string; end: string } | null;
   onClose: () => void;
   onSaved: () => void;
 };
+
+type Mode = ShiftPreset | "day_off" | "custom";
+
+const MODES: { key: Mode; label: string }[] = [
+  { key: "open_close", label: "Open → Close" },
+  { key: "evening_close", label: "Evening → Close" },
+  { key: "custom", label: "Custom times" },
+  { key: "day_off", label: "Day Off" },
+];
+
+/** Pick the initial mode for the modal from the existing shift (if any). */
+function initialMode(existing: RotaShift | null): Mode {
+  if (existing?.is_day_off) return "day_off";
+  if (existing?.shift_type === "open_close" || existing?.shift_type === "evening_close") {
+    return existing.shift_type;
+  }
+  if (existing?.start_time) return "custom";
+  return "open_close"; // most common — one click to save
+}
 
 export function ShiftEditModal({
   employee,
   storeId,
   shiftDate,
   existing,
+  shiftTimes,
   prefill = null,
   onClose,
   onSaved,
 }: Props) {
   const toast = useToast();
-  // For a brand-new shift, seed times from the previous day's shift.
-  const usingPrefill = !existing && !!prefill;
-  const [isDayOff, setIsDayOff] = React.useState(existing?.is_day_off ?? false);
+  const isDriver = hasRole(employee.position, "Driver");
+
+  const [mode, setMode] = React.useState<Mode>(() => initialMode(existing));
+  // Custom-mode manual times (seed from the existing shift, else previous day).
   const [start, setStart] = React.useState(
     existing?.start_time?.slice(0, 5) ?? prefill?.start ?? "",
   );
@@ -43,13 +67,26 @@ export function ShiftEditModal({
   const [reason, setReason] = React.useState(existing?.same_day_edit_reason ?? "");
   const [busy, setBusy] = React.useState(false);
 
+  const isDayOff = mode === "day_off";
+  const isPreset = mode === "open_close" || mode === "evening_close";
+
+  // Effective start/end for the chosen mode (presets resolve from settings).
+  const eff = React.useMemo<{ start: string; end: string }>(() => {
+    if (isDayOff) return { start: "", end: "" };
+    if (isPreset) return presetTimes(mode, isDriver, shiftTimes);
+    return { start, end };
+  }, [mode, isDayOff, isPreset, isDriver, shiftTimes, start, end]);
+
   const isSameDay = shiftDate === todayISO();
   const showReason =
     isSameDay &&
-    existing &&
-    (start !== (existing.start_time?.slice(0, 5) ?? "") ||
-      end !== (existing.end_time?.slice(0, 5) ?? "") ||
+    !!existing &&
+    (eff.start !== (existing.start_time?.slice(0, 5) ?? "") ||
+      eff.end !== (existing.end_time?.slice(0, 5) ?? "") ||
       isDayOff !== existing.is_day_off);
+
+  const calculated = !isDayOff && eff.start && eff.end ? shiftHours(eff.start, eff.end) : 0;
+  const canSave = isDayOff || isPreset || (!!start && !!end);
 
   async function save() {
     setBusy(true);
@@ -59,8 +96,9 @@ export function ShiftEditModal({
         store_id: storeId,
         shift_date: shiftDate,
         is_day_off: isDayOff,
-        start_time: isDayOff ? null : start,
-        end_time: isDayOff ? null : end,
+        shift_type: isPreset ? (mode as ShiftPreset) : null,
+        start_time: isDayOff ? null : eff.start,
+        end_time: isDayOff ? null : eff.end,
         manager_notes: notes || null,
         same_day_edit_reason: showReason ? reason : null,
       });
@@ -87,9 +125,6 @@ export function ShiftEditModal({
     }
   }
 
-  const calculated = !isDayOff && start && end ? shiftHours(start, end) : 0;
-  const canSave = isDayOff || (!!start && !!end);
-
   return (
     <Modal
       open
@@ -98,7 +133,7 @@ export function ShiftEditModal({
       description={
         isSameDay
           ? "Same-day edits require a reason."
-          : "Enter shift times or mark as day off."
+          : "Pick a shift preset, or enter custom times."
       }
       size="md"
       footer={
@@ -118,42 +153,77 @@ export function ShiftEditModal({
       }
     >
       <div className="flex flex-col gap-4">
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isDayOff}
-            onChange={(e) => setIsDayOff(e.target.checked)}
-            className="h-4 w-4 accent-gold"
-          />
-          <span>Day Off</span>
-        </label>
+        {/* Mode selector */}
+        <div className="grid grid-cols-2 gap-2">
+          {MODES.map((m) => {
+            const active = mode === m.key;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => setMode(m.key)}
+                className={
+                  "h-11 rounded-xl border text-sm font-medium transition-colors " +
+                  (active
+                    ? m.key === "day_off"
+                      ? "bg-danger/15 border-danger/50 text-danger"
+                      : "bg-gold text-black border-gold"
+                    : "bg-surface border-border text-text-primary hover:bg-surface-hover")
+                }
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
 
-        {!isDayOff && (
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              type="time"
-              label="Start"
-              value={start}
-              onChange={(e) => setStart(e.target.value)}
-            />
-            <Input
-              type="time"
-              label="End"
-              value={end}
-              onChange={(e) => setEnd(e.target.value)}
-            />
+        {/* Preset preview */}
+        {isPreset && (
+          <div className="rounded-xl border border-border bg-surface-hover/40 px-4 py-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-text-subtle">
+                {mode === "open_close" ? "Open → Close" : "Evening → Close"}
+                <span className="text-text-muted"> · {isDriver ? "Driver" : "Kitchen"}</span>
+              </span>
+              <span className="font-medium text-text-primary tabular-nums">
+                {eff.start}–{eff.end}
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted mt-1">
+              Times come from Settings → Shift times. Change them there to update every preset shift.
+            </p>
           </div>
         )}
 
-        {usingPrefill && !isDayOff && (
-          <p className="text-xs text-gold">
-            Pre-filled from the previous day — adjust if needed.
-          </p>
+        {/* Custom times */}
+        {mode === "custom" && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                type="time"
+                label="Start"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+              />
+              <Input
+                type="time"
+                label="End"
+                value={end}
+                onChange={(e) => setEnd(e.target.value)}
+              />
+            </div>
+            {!existing && prefill && (
+              <p className="text-xs text-gold">
+                Pre-filled from the previous day — adjust if needed.
+              </p>
+            )}
+          </>
         )}
 
         {calculated > 0 && (
           <p className="text-xs text-text-muted">
-            Scheduled hours: <span className="text-text-primary font-medium">{calculated.toFixed(2)}h</span>
+            Scheduled hours:{" "}
+            <span className="text-text-primary font-medium">{calculated.toFixed(2)}h</span>
           </p>
         )}
 

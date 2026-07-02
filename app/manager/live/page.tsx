@@ -2,12 +2,14 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { LiveDashboard } from "@/components/live/LiveDashboard";
 import { ManagerQuickEntry } from "@/components/manager/ManagerQuickEntry";
+import { ManagerClockCard } from "@/components/manager/ManagerClockCard";
 import { todayISO } from "@/lib/utils";
 import type {
   ClockEvent,
   DailyCashEntry,
   Employee,
   EmployeeScheduleDay,
+  ManagerClockEvent,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -20,30 +22,46 @@ export default async function ManagerLivePage() {
   const supabase = createServerSupabase();
   const today = todayISO();
 
-  const [storesRes, employeesRes, shiftsRes, clocksRes, schedulesRes, cashRes] =
-    await Promise.all([
-      storeId
-        ? supabase.from("stores").select("*").eq("id", storeId)
-        : supabase.from("stores").select("*"),
-      supabase
-        .from("employees")
-        .select("*")
-        .eq("store_id", storeId ?? "")
-        .neq("employment_status", "left"),
-      supabase.from("rota_shifts").select("*").eq("shift_date", today).eq("store_id", storeId ?? ""),
-      supabase.from("clock_events").select("*").eq("event_date", today).eq("store_id", storeId ?? ""),
-      supabase.from("employee_schedules").select("*"),
-      storeId
-        ? supabase
-            .from("daily_cash_entries")
-            .select("*")
-            .eq("store_id", storeId)
-            .eq("entry_date", today)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
+  const [
+    storesRes,
+    employeesRes,
+    shiftsRes,
+    clocksRes,
+    schedulesRes,
+    cashRes,
+    managerClockRes,
+  ] = await Promise.all([
+    storeId
+      ? supabase.from("stores").select("*").eq("id", storeId)
+      : supabase.from("stores").select("*"),
+    supabase
+      .from("employees")
+      .select("*")
+      .eq("store_id", storeId ?? "")
+      .neq("employment_status", "left"),
+    supabase.from("rota_shifts").select("*").eq("shift_date", today).eq("store_id", storeId ?? ""),
+    supabase.from("clock_events").select("*").eq("event_date", today).eq("store_id", storeId ?? ""),
+    supabase.from("employee_schedules").select("*"),
+    storeId
+      ? supabase
+          .from("daily_cash_entries")
+          .select("*")
+          .eq("store_id", storeId)
+          .eq("entry_date", today)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    // The manager's own clock row for today (RLS returns only their own).
+    supabase
+      .from("manager_clock_events")
+      .select("*")
+      .eq("event_date", today)
+      .maybeSingle(),
+  ]);
 
   const todayEntry = (cashRes.data ?? null) as DailyCashEntry | null;
+  const stores = (storesRes.data ?? []) as Store[];
+  const myStore = stores.find((s) => s.id === storeId) ?? stores[0] ?? null;
+  const managerClock = (managerClockRes.data ?? null) as ManagerClockEvent | null;
 
   return (
     <>
@@ -51,13 +69,18 @@ export default async function ManagerLivePage() {
         title="Live Dashboard"
         description="Real-time staffing for your store today. Refreshes every 30 seconds."
       />
-      {storeId && (
-        <div className="mb-6 max-w-md">
+      <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <ManagerClockCard
+          managerName={user.allowed?.name ?? "Manager"}
+          store={myStore}
+          todayClock={managerClock}
+        />
+        {storeId && (
           <ManagerQuickEntry storeId={storeId} today={today} existing={todayEntry} />
-        </div>
-      )}
+        )}
+      </div>
       <LiveDashboard
-        stores={(storesRes.data ?? []) as Store[]}
+        stores={stores}
         employees={(employeesRes.data ?? []) as Employee[]}
         shifts={(shiftsRes.data ?? []) as RotaShift[]}
         clocks={(clocksRes.data ?? []) as ClockEvent[]}

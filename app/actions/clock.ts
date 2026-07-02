@@ -5,7 +5,8 @@ import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
-import { haversineMeters, isWithinGeofence, shiftHours, todayISO } from "@/lib/utils";
+import { shiftHours, todayISO } from "@/lib/utils";
+import { verifyGeofenceAtStore } from "@/lib/geofence-verify";
 import { hasRole } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
@@ -48,30 +49,7 @@ async function verifyGeofence(
   lng: number,
   accuracy?: number | null,
 ) {
-  const supabase = createServerSupabase();
-  const { data: store } = await supabase
-    .from("stores")
-    .select("latitude, longitude, geofence_radius_m, name")
-    .eq("id", storeId)
-    .maybeSingle();
-
-  if (!store?.latitude || !store?.longitude) {
-    throw new Error("Store location not configured. Contact your manager.");
-  }
-
-  const distance = haversineMeters(
-    Number(store.latitude),
-    Number(store.longitude),
-    lat,
-    lng,
-  );
-  const radius = Number(store.geofence_radius_m ?? 250);
-  if (!isWithinGeofence(distance, radius, accuracy)) {
-    throw new Error(
-      `You're ${Math.round(distance)}m from ${store.name}. You must be within ${radius}m to clock in or out.`,
-    );
-  }
-  return { distance };
+  return verifyGeofenceAtStore(createServerSupabase(), storeId, lat, lng, accuracy);
 }
 
 export async function clockIn(input: {

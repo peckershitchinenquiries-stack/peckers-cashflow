@@ -80,6 +80,7 @@ export default async function ManagerRotaPage({
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         minWageBands={settings.min_wage_bands}
+        shiftTimes={settings.shift_times}
         rangeStartIso={startIso}
         rangeEndIso={endIso}
         userRole="manager"

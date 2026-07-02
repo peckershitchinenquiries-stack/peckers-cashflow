@@ -25,16 +25,24 @@ import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/ico
 import { applyScheduleToWeek } from "@/app/actions/schedule";
 import { worksForCash } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
-import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
+import { DEFAULT_SETTINGS, type MinWageBands, type ShiftTimeSettings } from "@/lib/settings";
 import type {
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
   RotaShift,
+  ShiftPreset,
   Store,
   WeeklyDelivery,
 } from "@/lib/types";
 import { hasRole } from "@/lib/types";
+
+/** Short label for a rota preset, shown under the time in a filled cell. */
+function presetShort(t: ShiftPreset | null): string | null {
+  if (t === "open_close") return "Open–Close";
+  if (t === "evening_close") return "Eve–Close";
+  return null;
+}
 
 type Props = {
   stores: Store[];
@@ -44,6 +52,7 @@ type Props = {
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
   minWageBands?: MinWageBands;
+  shiftTimes?: ShiftTimeSettings;
   rangeStartIso: string;
   rangeEndIso: string;
   userRole: string;
@@ -58,6 +67,7 @@ export function RotaView({
   weeklyDeliveries,
   schedules = [],
   minWageBands = DEFAULT_SETTINGS.min_wage_bands,
+  shiftTimes = DEFAULT_SETTINGS.shift_times,
   rangeStartIso,
   rangeEndIso,
   userRole,
@@ -482,11 +492,18 @@ export function RotaView({
                       const cellInner = (
                         <>
                           {cell ? (
-                            formatShiftRange(
-                              cell.is_day_off,
-                              cell.start_time,
-                              cell.end_time,
-                            )
+                            <>
+                              {formatShiftRange(
+                                cell.is_day_off,
+                                cell.start_time,
+                                cell.end_time,
+                              )}
+                              {!cell.is_day_off && cell.shift_type && (
+                                <span className="block text-[9px] uppercase tracking-wide opacity-70">
+                                  {presetShort(cell.shift_type)}
+                                </span>
+                              )}
+                            </>
                           ) : showGhost ? (
                             <span className="opacity-60">
                               {ghost}
@@ -652,6 +669,7 @@ export function RotaView({
           storeId={activeStoreId}
           shiftDate={editingShift.date}
           existing={editingShift.existing}
+          shiftTimes={shiftTimes}
           prefill={editingShift.prefill}
           onClose={() => setEditingShift(null)}
           onSaved={() => {

@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
+import { getAppSettings } from "./settings";
 import { shiftHours, todayISO } from "@/lib/utils";
+import { presetTimes } from "@/lib/settings";
+import { hasRole, type ShiftPreset } from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -19,6 +22,10 @@ export type RotaShiftInput = {
   start_time?: string | null;
   end_time?: string | null;
   is_day_off?: boolean;
+  /** Rota preset. When set, start/end are recomputed server-side from the
+   *  configured shift_times + the employee's position (Settings is the source
+   *  of truth). Null = custom times or day off. */
+  shift_type?: ShiftPreset | null;
   manager_notes?: string | null;
   same_day_edit_reason?: string | null;
 };
@@ -40,8 +47,37 @@ export async function upsertShift(input: RotaShiftInput) {
   }
 
   const isDayOff = !!input.is_day_off;
-  const start = isDayOff ? null : input.start_time?.slice(0, 5) || null;
-  const end = isDayOff ? null : input.end_time?.slice(0, 5) || null;
+  const shiftType: ShiftPreset | null =
+    !isDayOff && (input.shift_type === "open_close" || input.shift_type === "evening_close")
+      ? input.shift_type
+      : null;
+
+  // Resolve the shift's start/end. A preset is authoritative: recompute the
+  // times from the configured shift_times + the employee's position so Settings
+  // is the single source of truth and the client can't submit mismatched times.
+  // Otherwise use the entered (custom) times.
+  let start: string | null;
+  let end: string | null;
+  if (isDayOff) {
+    start = null;
+    end = null;
+  } else if (shiftType) {
+    const [settings, empRes] = await Promise.all([
+      getAppSettings(),
+      supabase.from("employees").select("position").eq("id", input.employee_id).maybeSingle(),
+    ]);
+    const times = presetTimes(
+      shiftType,
+      hasRole(empRes.data?.position ?? null, "Driver"),
+      settings.shift_times,
+    );
+    start = times.start;
+    end = times.end;
+  } else {
+    start = input.start_time?.slice(0, 5) || null;
+    end = input.end_time?.slice(0, 5) || null;
+  }
+
   if (!isDayOff && (!start || !end)) {
     throw new Error(
       "Enter both a start and end time, or mark the day as a Day Off.",
@@ -80,6 +116,7 @@ export async function upsertShift(input: RotaShiftInput) {
     end_time: end,
     is_day_off: isDayOff,
     scheduled_hours: hours,
+    shift_type: shiftType,
     manager_notes: input.manager_notes?.trim() || null,
     same_day_edit_reason:
       isSameDay && changed ? input.same_day_edit_reason?.trim() || null : existing?.same_day_edit_reason ?? null,
