@@ -574,21 +574,23 @@ export function CrewClockApp({
 
       {/* ---------- Week shifts ---------- */}
       <Card className="p-0 overflow-hidden">
-        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3">
-          <div>
-            <CardTitle>Your week</CardTitle>
-            <CardDescription>
-              {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Your scheduled shift and the hours you actually worked.
-            </CardDescription>
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-[10px] uppercase tracking-wider text-text-muted">
-              Worked this week
+        <CardHeader
+          className="px-5 pt-5 mb-0"
+          action={
+            <div className="text-right shrink-0">
+              <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                Worked this week
+              </div>
+              <div className="text-lg font-semibold text-gold tabular-nums">
+                {weekWorkedHours.toFixed(2)}h
+              </div>
             </div>
-            <div className="text-lg font-semibold text-gold tabular-nums">
-              {weekWorkedHours.toFixed(2)}h
-            </div>
-          </div>
+          }
+        >
+          <CardTitle>Your week</CardTitle>
+          <CardDescription>
+            {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Your scheduled shift and the hours you actually worked.
+          </CardDescription>
         </CardHeader>
         <div className="border-t border-border">
           {Array.from({ length: 7 }, (_, i) => {
