@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { shiftHours, todayISO } from "@/lib/utils";
-import { verifyGeofenceAtStore } from "@/lib/geofence-verify";
+import { detectStoreForLocation, verifyGeofenceAtStore } from "@/lib/geofence-verify";
 import { hasRole } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
@@ -62,17 +62,20 @@ export async function clockIn(input: {
 
   const employee = await getEmployeeForUser(user.id, user.email);
   if (!employee) throw new Error("Your account is not linked to a crew profile.");
-  if (!employee.store_id) throw new Error("You're not assigned to a store yet.");
   if (employee.employment_status === "left" || employee.employment_status === "inactive") {
     throw new Error("Your account is not active.");
   }
 
-  await verifyGeofence(
-    employee.store_id,
+  // Staff can work at any store, not only their home one. Detect which store
+  // they're physically standing in from their location; that store is where the
+  // day's work (and wages) are attributed. Also verifies they're in range.
+  const detected = await detectStoreForLocation(
+    supabase,
     input.latitude,
     input.longitude,
     input.accuracy,
   );
+  const workedStoreId = detected.id;
 
   const today = todayISO();
 
@@ -118,7 +121,7 @@ export async function clockIn(input: {
         .from("rota_shifts")
         .insert({
           employee_id: employee.id,
-          store_id: employee.store_id,
+          store_id: workedStoreId,
           shift_date: today,
           start_time: startTime,
           end_time: null,
@@ -131,10 +134,12 @@ export async function clockIn(input: {
       // Best-effort: a failed auto-shift never blocks the clock-in itself.
       if (!shiftErr && created) shiftId = created.id;
     } else {
-      // Convert the existing day-off / empty shift into a worked one.
+      // Convert the existing day-off / empty shift into a worked one at the store
+      // they actually turned up to (they may be covering at another store).
       await admin
         .from("rota_shifts")
         .update({
+          store_id: workedStoreId,
           start_time: startTime,
           end_time: null,
           is_day_off: false,
@@ -149,7 +154,7 @@ export async function clockIn(input: {
   const payload = {
     employee_id: employee.id,
     shift_id: shiftId,
-    store_id: employee.store_id,
+    store_id: workedStoreId,
     event_date: today,
     clock_in_at: now,
     clock_in_lat: input.latitude,
@@ -202,14 +207,6 @@ export async function clockOut(input: {
 
   const employee = await getEmployeeForUser(user.id, user.email);
   if (!employee) throw new Error("Your account is not linked to a crew profile.");
-  if (!employee.store_id) throw new Error("You're not assigned to a store yet.");
-
-  await verifyGeofence(
-    employee.store_id,
-    input.latitude,
-    input.longitude,
-    input.accuracy,
-  );
 
   const today = todayISO();
   const { data: existing } = await supabase
@@ -225,6 +222,15 @@ export async function clockOut(input: {
   if (existing.clock_out_at) {
     throw new Error("You've already clocked out today.");
   }
+
+  // Clock out at the same store they clocked in at — that's where the day's
+  // work is recorded, so it's where they must be to sign off.
+  await verifyGeofence(
+    existing.store_id,
+    input.latitude,
+    input.longitude,
+    input.accuracy,
+  );
 
   const isDriver = hasRole(employee.position, "Driver");
   const shortMissing =
@@ -401,15 +407,29 @@ export async function setClockDeliveries(input: {
   }
   const supabase = createServerSupabase();
 
-  // Managers are limited to their own store's drivers.
   const { data: employee } = await supabase
     .from("employees")
     .select("id, store_id")
     .eq("id", input.employee_id)
     .maybeSingle();
   if (!employee) throw new Error("Employee not found.");
-  if (user.allowed!.role === "manager" && employee.store_id !== user.allowed!.store_id) {
-    throw new Error("You can only edit drivers at your own store.");
+
+  // Find the day's clock event first — its store is where the driver actually
+  // worked that day (which may not be their home store).
+  const { data: existing } = await supabase
+    .from("clock_events")
+    .select("id, store_id")
+    .eq("employee_id", input.employee_id)
+    .eq("event_date", input.event_date)
+    .maybeSingle();
+
+  // Managers are limited to their own store: they can edit a driver's deliveries
+  // for any day that driver worked AT the manager's store. When no clock row
+  // exists yet, a manager creates one at their own store.
+  const managerStoreId = user.allowed!.role === "manager" ? user.allowed!.store_id ?? null : null;
+  const eventStoreId = existing?.store_id ?? managerStoreId ?? employee.store_id ?? null;
+  if (user.allowed!.role === "manager" && eventStoreId !== managerStoreId) {
+    throw new Error("You can only edit drivers for days they worked at your store.");
   }
 
   const shortCount = Math.max(0, Number(input.short_deliveries_count) || 0);
@@ -422,13 +442,6 @@ export async function setClockDeliveries(input: {
   if (extraLong > 0 && !input.extra_long_reason?.trim()) {
     throw new Error("Please give a reason for the extra long deliveries.");
   }
-
-  const { data: existing } = await supabase
-    .from("clock_events")
-    .select("id")
-    .eq("employee_id", input.employee_id)
-    .eq("event_date", input.event_date)
-    .maybeSingle();
 
   const fields = {
     short_deliveries_count: shortCount,
@@ -443,10 +456,10 @@ export async function setClockDeliveries(input: {
     const { error } = await supabase.from("clock_events").update(fields).eq("id", existing.id);
     if (error) throw new Error(error.message);
   } else {
-    if (!employee.store_id) throw new Error("Driver has no store assigned.");
+    if (!eventStoreId) throw new Error("Driver has no store assigned.");
     const { error } = await supabase.from("clock_events").insert({
       employee_id: input.employee_id,
-      store_id: employee.store_id,
+      store_id: eventStoreId,
       event_date: input.event_date,
       ...fields,
     });

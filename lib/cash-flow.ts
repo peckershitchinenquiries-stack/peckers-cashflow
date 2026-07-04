@@ -348,3 +348,175 @@ export function aggregateWorked(
   }
   return result;
 }
+
+// ---------------- cross-store weekly wage attribution ----------------
+//
+// Employees are not locked to one store: someone can work Mon–Wed at Hitchin and
+// Thu–Fri at Stevenage. Each DAY's work (and pay) is attributed to the store it
+// was worked at (one clock/shift row per day, so a day maps to exactly one
+// store). The NI/bank vs cash split, however, is a per-employee-per-week rule:
+// the first `bank_weekly_hours_limit` hours of the WHOLE week are NI/bank, and
+// only hours beyond that are cash — attributed to whichever store those later
+// hours were worked at (chronological by day). So each store's payout pays only
+// the cash hours + deliveries that happened there, but no one loses cash hours
+// just because their week was split across two stores.
+
+/** A clock row carrying which store + day it belongs to. */
+export type StoreClockRow = {
+  employee_id: string;
+  store_id: string;
+  event_date: string;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
+  short_deliveries_count: number | null;
+  long_deliveries_count: number | null;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+};
+
+/** A scheduled shift row carrying which store + day it belongs to. */
+export type StoreShiftRow = {
+  employee_id: string;
+  store_id: string;
+  shift_date: string;
+  is_day_off: boolean;
+  scheduled_hours: number | null;
+};
+
+/** One resolved working day: the store worked and the hours that count. */
+type DayWork = { date: string; store_id: string; hours: number };
+
+/**
+ * Resolve an employee's working days for the week. Clock records are the source
+ * of truth: if the employee clocked in AND out on ANY day that week, only
+ * clocked days count (each attributed to the store it was clocked at). If they
+ * never completed a clock all week, fall back to their scheduled rota days so a
+ * payout can still be produced.
+ */
+function resolveWorkingDays(clocks: StoreClockRow[], shifts: StoreShiftRow[]): DayWork[] {
+  const clockedDays: DayWork[] = [];
+  for (const c of clocks) {
+    if (c.clock_in_at && c.clock_out_at) {
+      const ms = new Date(c.clock_out_at).getTime() - new Date(c.clock_in_at).getTime();
+      if (ms > 0) {
+        clockedDays.push({ date: c.event_date, store_id: c.store_id, hours: ms / 3_600_000 });
+      }
+    }
+  }
+  if (clockedDays.length > 0) return clockedDays;
+
+  const scheduledDays: DayWork[] = [];
+  for (const s of shifts) {
+    if (s.is_day_off) continue;
+    const hours = Number(s.scheduled_hours) || 0;
+    if (hours > 0) scheduledDays.push({ date: s.shift_date, store_id: s.store_id, hours });
+  }
+  return scheduledDays;
+}
+
+/**
+ * Split an employee's week into cash hours per store. The first
+ * `bank_weekly_hours_limit` hours of the week (default 20, across ALL stores)
+ * are NI/bank; hours beyond that are cash, credited to the store where those
+ * later hours were worked (chronological by day). No cash rate ⇒ no cash hours.
+ */
+function cashHoursByStore(
+  days: DayWork[],
+  emp: { hourly_cash_rate?: number | null; bank_weekly_hours_limit?: number | null },
+): Map<string, number> {
+  const byStore = new Map<string, number>();
+  if (!worksForCash(emp)) return byStore;
+  const limit = Math.max(0, Number(emp.bank_weekly_hours_limit ?? 20) || 0);
+  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+  let cumulative = 0;
+  for (const d of sorted) {
+    const before = cumulative;
+    cumulative += d.hours;
+    // The portion of this day's hours that fall above the weekly bank limit.
+    const cashThisDay = Math.max(0, cumulative - Math.max(before, limit));
+    if (cashThisDay > 0) byStore.set(d.store_id, (byStore.get(d.store_id) ?? 0) + cashThisDay);
+  }
+  return byStore;
+}
+
+/**
+ * Build the wage lines for ONE store's pay week, correctly handling employees
+ * whose week spans multiple stores. `clocks`/`shifts` must cover the whole pay
+ * week across ALL stores (so the weekly NI/cash split is computed per employee
+ * globally, then attributed per store). Only employees with cash and/or
+ * deliveries AT `storeId` produce a line — so it can be handed the full employee
+ * roster and it will keep just those who worked at the store.
+ */
+export function buildWageLinesForStore(
+  storeId: string,
+  employees: Employee[],
+  clocks: StoreClockRow[],
+  shifts: StoreShiftRow[],
+): WageLine[] {
+  const clocksByEmp = new Map<string, StoreClockRow[]>();
+  for (const c of clocks) {
+    const arr = clocksByEmp.get(c.employee_id) ?? [];
+    arr.push(c);
+    clocksByEmp.set(c.employee_id, arr);
+  }
+  const shiftsByEmp = new Map<string, StoreShiftRow[]>();
+  for (const s of shifts) {
+    const arr = shiftsByEmp.get(s.employee_id) ?? [];
+    arr.push(s);
+    shiftsByEmp.set(s.employee_id, arr);
+  }
+
+  const lines: WageLine[] = [];
+  for (const emp of employees) {
+    const empClocks = clocksByEmp.get(emp.id) ?? [];
+    const empShifts = shiftsByEmp.get(emp.id) ?? [];
+    const days = resolveWorkingDays(empClocks, empShifts);
+    const cashHours = round2(cashHoursByStore(days, emp).get(storeId) ?? 0);
+
+    // Deliveries always come from the actual clock rows AT this store.
+    const isDriver = hasRole(emp.position, "Driver");
+    let shortDeliveries = 0;
+    let longDeliveries = 0;
+    if (isDriver) {
+      for (const c of empClocks) {
+        if (c.store_id !== storeId) continue;
+        shortDeliveries += (Number(c.short_deliveries_count) || 0) + (Number(c.extra_short_deliveries) || 0);
+        longDeliveries += (Number(c.long_deliveries_count) || 0) + (Number(c.extra_long_deliveries) || 0);
+      }
+    }
+    shortDeliveries = Math.max(0, Math.round(shortDeliveries));
+    longDeliveries = Math.max(0, Math.round(longDeliveries));
+
+    const cashRate = Number(emp.hourly_cash_rate ?? 0) || 0;
+    const cashWage = round2(cashHours * cashRate);
+    const shortRate = isDriver
+      ? emp.short_delivery_rate != null
+        ? Number(emp.short_delivery_rate)
+        : DELIVERY_PETROL_RATE
+      : 0;
+    const longRate = isDriver
+      ? emp.long_delivery_rate != null
+        ? Number(emp.long_delivery_rate)
+        : DELIVERY_PETROL_RATE
+      : 0;
+    const deliveryWages = round2(shortDeliveries * shortRate + longDeliveries * longRate);
+    const total = round2(cashWage + deliveryWages);
+    if (total <= 0) continue;
+
+    lines.push({
+      employee_id: emp.id,
+      employee_name: emp.name,
+      role: emp.position ?? null,
+      cash_hours: cashHours,
+      cash_rate: cashRate,
+      cash_wage: cashWage,
+      short_deliveries_count: shortDeliveries,
+      long_deliveries_count: longDeliveries,
+      short_delivery_rate: shortRate,
+      long_delivery_rate: longRate,
+      delivery_wages: deliveryWages,
+      total_payment: total,
+    });
+  }
+  return lines.sort((a, b) => b.total_payment - a.total_payment);
+}
