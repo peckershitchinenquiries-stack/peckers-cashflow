@@ -1,5 +1,13 @@
 export type StoreCode = "stevenage" | "hitchin";
 
+/** Per-store rota preset times (HH:MM, 24h). Mirrors lib/settings ShiftTimeSettings. */
+export type StoreShiftTimes = {
+  driver_open: string;
+  kitchen_open: string;
+  evening_start: string;
+  close: string;
+};
+
 export type Store = {
   id: string;
   code: StoreCode;
@@ -7,6 +15,8 @@ export type Store = {
   latitude: number | null;
   longitude: number | null;
   geofence_radius_m: number;
+  /** Open/Evening/Close times used by this store's rota presets. */
+  shift_times: StoreShiftTimes;
   created_at: string;
 };
 

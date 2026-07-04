@@ -329,8 +329,16 @@ create table if not exists public.stores (
   latitude            numeric(10,7),
   longitude           numeric(10,7),
   geofence_radius_m   integer not null default 250,
+  -- Per-store rota preset times (each store trades on its own hours).
+  shift_times         jsonb not null default
+    '{"driver_open":"11:30","kitchen_open":"09:00","evening_start":"17:00","close":"23:00"}'::jsonb,
   created_at          timestamptz not null default now()
 );
+
+-- Back-fill for existing deployments created before shift_times existed.
+alter table public.stores
+  add column if not exists shift_times jsonb not null default
+    '{"driver_open":"11:30","kitchen_open":"09:00","evening_start":"17:00","close":"23:00"}'::jsonb;
 
 insert into public.stores (code, name, latitude, longitude, geofence_radius_m)
 values

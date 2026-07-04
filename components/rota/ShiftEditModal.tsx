@@ -190,7 +190,7 @@ export function ShiftEditModal({
               </span>
             </div>
             <p className="text-[11px] text-text-muted mt-1">
-              Times come from Settings → Shift times. Change them there to update every preset shift.
+              Times come from this store's shift times (Settings → Stores). Change them there to update every preset shift.
             </p>
           </div>
         )}

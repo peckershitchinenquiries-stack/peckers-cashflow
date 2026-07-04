@@ -80,7 +80,7 @@ export default async function SettingsPage() {
 
       <div className="mt-6 flex flex-col gap-5">
         <CashFlowSettingsCard initial={settings} />
-        <ShiftTimesSettingsCard initial={settings} />
+        <ShiftTimesSettingsCard stores={storesRes.data ?? []} />
         <StoresAdmin stores={storesRes.data ?? []} />
         <AllowedUsersAdmin
           initialUsers={adminsRes.data ?? []}
