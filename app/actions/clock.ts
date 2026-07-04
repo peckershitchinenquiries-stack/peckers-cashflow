@@ -2,15 +2,37 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
-import { createAdminClient } from "@/lib/supabase-admin";
+import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { shiftHours, todayISO } from "@/lib/utils";
 import { detectStoreForLocation, verifyGeofenceAtStore } from "@/lib/geofence-verify";
-import { hasRole } from "@/lib/types";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
+import { hasRole, type ActionResult } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
 const AUTO_SHIFT_NOTE = "Auto-created from clock-in";
+
+/**
+ * Boundary for user-triggered clock actions: converts a thrown error into a
+ * returned { ok:false, error } so the message survives production. Next.js
+ * masks messages thrown from server actions in prod builds — without this,
+ * every validation error ("You're 300m from the store", "account not active",
+ * …) surfaces to the employee as a generic 500.
+ */
+async function asResult(run: () => Promise<void>): Promise<ActionResult> {
+  try {
+    await run();
+    return { ok: true };
+  } catch (err) {
+    console.error("[clock] action failed:", err);
+    const message =
+      err instanceof Error && err.message
+        ? err.message
+        : "Something went wrong. Please try again.";
+    return { ok: false, error: message };
+  }
+}
 
 /**
  * HH:MM in UK wall-clock time. Shift times are stored as plain time-of-day, so
@@ -33,14 +55,7 @@ async function requireAllowed() {
 }
 
 async function getEmployeeForUser(userId: string, userEmail: string) {
-  const supabase = createServerSupabase();
-  const { data } = await supabase
-    .from("employees")
-    .select("*")
-    .or(`auth_user_id.eq.${userId},email.eq.${userEmail.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
-  return data;
+  return findEmployeeForUser(createServerSupabase(), userId, userEmail);
 }
 
 async function verifyGeofence(
@@ -53,6 +68,14 @@ async function verifyGeofence(
 }
 
 export async function clockIn(input: {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+}): Promise<ActionResult> {
+  return asResult(() => performClockIn(input));
+}
+
+async function performClockIn(input: {
   latitude: number;
   longitude: number;
   accuracy?: number | null;
@@ -115,39 +138,51 @@ export async function clockIn(input: {
   let shiftId = shift?.id ?? null;
   const needsAutoShift = !shift || shift.is_day_off || !shift.start_time;
   if (needsAutoShift) {
-    const admin = createAdminClient();
-    if (!shift) {
-      const { data: created, error: shiftErr } = await admin
-        .from("rota_shifts")
-        .insert({
-          employee_id: employee.id,
-          store_id: workedStoreId,
-          shift_date: today,
-          start_time: startTime,
-          end_time: null,
-          is_day_off: false,
-          scheduled_hours: 0,
-          manager_notes: AUTO_SHIFT_NOTE,
-        })
-        .select("id")
-        .maybeSingle();
-      // Best-effort: a failed auto-shift never blocks the clock-in itself.
-      if (!shiftErr && created) shiftId = created.id;
-    } else {
-      // Convert the existing day-off / empty shift into a worked one at the store
-      // they actually turned up to (they may be covering at another store).
-      await admin
-        .from("rota_shifts")
-        .update({
-          store_id: workedStoreId,
-          start_time: startTime,
-          end_time: null,
-          is_day_off: false,
-          scheduled_hours: 0,
-          manager_notes: AUTO_SHIFT_NOTE,
-        })
-        .eq("id", shift.id);
-      shiftId = shift.id;
+    // Best-effort: reflecting the clock-in on the rota is a convenience, not a
+    // requirement. It needs the service-role client (employees can't write
+    // rota_shifts under RLS), so if provisioning isn't configured — or anything
+    // else fails — swallow it. It must NEVER block the actual clock-in below.
+    try {
+      if (isProvisioningConfigured()) {
+        const admin = createAdminClient();
+        if (!shift) {
+          const { data: created } = await admin
+            .from("rota_shifts")
+            .insert({
+              employee_id: employee.id,
+              store_id: workedStoreId,
+              shift_date: today,
+              start_time: startTime,
+              end_time: null,
+              is_day_off: false,
+              scheduled_hours: 0,
+              manager_notes: AUTO_SHIFT_NOTE,
+            })
+            .select("id")
+            .maybeSingle();
+          if (created) shiftId = created.id;
+        } else {
+          // Convert the existing day-off / empty shift into a worked one at the
+          // store they actually turned up to (they may be covering elsewhere).
+          await admin
+            .from("rota_shifts")
+            .update({
+              store_id: workedStoreId,
+              start_time: startTime,
+              end_time: null,
+              is_day_off: false,
+              scheduled_hours: 0,
+              manager_notes: AUTO_SHIFT_NOTE,
+            })
+            .eq("id", shift.id);
+          shiftId = shift.id;
+        }
+      }
+    } catch (err) {
+      console.error(
+        "[clock] auto-shift creation failed (clock-in continues):",
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 
@@ -188,10 +223,9 @@ export async function clockIn(input: {
   revalidatePath("/manager/live");
   revalidatePath("/rota");
   revalidatePath("/manager/rota");
-  return { ok: true };
 }
 
-export async function clockOut(input: {
+type ClockOutInput = {
   latitude: number;
   longitude: number;
   accuracy?: number | null;
@@ -201,7 +235,13 @@ export async function clockOut(input: {
   extra_long_deliveries?: number | null;
   extra_short_reason?: string | null;
   extra_long_reason?: string | null;
-}) {
+};
+
+export async function clockOut(input: ClockOutInput): Promise<ActionResult> {
+  return asResult(() => performClockOut(input));
+}
+
+async function performClockOut(input: ClockOutInput) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
 
@@ -282,22 +322,31 @@ export async function clockOut(input: {
 
   // If the shift was auto-created at clock-in, stamp its end time now so the
   // rota shows the real worked window (clock-in → clock-out).
-  if (existing.shift_id) {
-    const { data: shift } = await supabase
-      .from("rota_shifts")
-      .select("id, start_time, manager_notes")
-      .eq("id", existing.shift_id)
-      .maybeSingle();
-    if (shift?.manager_notes === AUTO_SHIFT_NOTE && shift.start_time) {
-      const endTime = londonHHMM(new Date());
-      const admin = createAdminClient();
-      await admin
+  if (existing.shift_id && isProvisioningConfigured()) {
+    // Best-effort, same as clock-in: stamping the auto-shift's end time must not
+    // block the clock-out itself.
+    try {
+      const { data: shift } = await supabase
         .from("rota_shifts")
-        .update({
-          end_time: endTime,
-          scheduled_hours: shiftHours(shift.start_time.slice(0, 5), endTime),
-        })
-        .eq("id", shift.id);
+        .select("id, start_time, manager_notes")
+        .eq("id", existing.shift_id)
+        .maybeSingle();
+      if (shift?.manager_notes === AUTO_SHIFT_NOTE && shift.start_time) {
+        const endTime = londonHHMM(new Date());
+        const admin = createAdminClient();
+        await admin
+          .from("rota_shifts")
+          .update({
+            end_time: endTime,
+            scheduled_hours: shiftHours(shift.start_time.slice(0, 5), endTime),
+          })
+          .eq("id", shift.id);
+      }
+    } catch (err) {
+      console.error(
+        "[clock] auto-shift end-stamp failed (clock-out continues):",
+        err instanceof Error ? err.message : err,
+      );
     }
   }
 
@@ -321,17 +370,24 @@ export async function clockOut(input: {
   revalidatePath("/manager/live");
   revalidatePath("/rota");
   revalidatePath("/manager/rota");
-  return { ok: true };
 }
 
-export async function updateDeliveryCount(input: {
+type DeliveryCountInput = {
   short_count: number;
   long_count: number;
   extra_short_deliveries?: number | null;
   extra_long_deliveries?: number | null;
   extra_short_reason?: string | null;
   extra_long_reason?: string | null;
-}) {
+};
+
+export async function updateDeliveryCount(
+  input: DeliveryCountInput,
+): Promise<ActionResult> {
+  return asResult(() => performUpdateDeliveryCount(input));
+}
+
+async function performUpdateDeliveryCount(input: DeliveryCountInput) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
 
@@ -383,15 +439,9 @@ export async function updateDeliveryCount(input: {
   revalidatePath("/live");
   revalidatePath("/manager/live");
   revalidatePath("/rota");
-  return { ok: true };
 }
 
-/**
- * Staff (manager/admin) edit of a driver's clocked deliveries for a given day.
- * Drivers usually enter these themselves at clock-out; managers and admins can
- * correct the count or log extra deliveries (with a reason) after the fact.
- */
-export async function setClockDeliveries(input: {
+type SetClockDeliveriesInput = {
   employee_id: string;
   event_date: string;
   short_deliveries_count: number;
@@ -400,7 +450,20 @@ export async function setClockDeliveries(input: {
   extra_long_deliveries?: number | null;
   extra_short_reason?: string | null;
   extra_long_reason?: string | null;
-}) {
+};
+
+/**
+ * Staff (manager/admin) edit of a driver's clocked deliveries for a given day.
+ * Drivers usually enter these themselves at clock-out; managers and admins can
+ * correct the count or log extra deliveries (with a reason) after the fact.
+ */
+export async function setClockDeliveries(
+  input: SetClockDeliveriesInput,
+): Promise<ActionResult> {
+  return asResult(() => performSetClockDeliveries(input));
+}
+
+async function performSetClockDeliveries(input: SetClockDeliveriesInput) {
   const user = await requireAllowed();
   if (user.allowed!.role !== "admin" && user.allowed!.role !== "manager") {
     throw new Error("Only managers and admins can edit clocked deliveries.");
@@ -477,5 +540,4 @@ export async function setClockDeliveries(input: {
   revalidatePath("/manager/rota");
   revalidatePath("/live");
   revalidatePath("/manager/live");
-  return { ok: true };
 }

@@ -101,13 +101,13 @@ export function ManagerClockCard({ managerName, store, todayClock }: Props) {
     setBusy(true);
     try {
       const payload = { latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy };
-      if (phase === "out") {
-        await managerClockOut(payload);
-        toast.success("Clocked out. Thanks!");
-      } else {
-        await managerClockIn(payload);
-        toast.success("Clocked in. Have a good shift!");
+      const res =
+        phase === "out" ? await managerClockOut(payload) : await managerClockIn(payload);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
       }
+      toast.success(phase === "out" ? "Clocked out. Thanks!" : "Clocked in. Have a good shift!");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");

@@ -238,7 +238,11 @@ export function CrewClockApp({
     }
     setBusy(true);
     try {
-      await clockIn({ latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy });
+      const res = await clockIn({ latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success(`Clocked in at ${targetStore.name}. Have a good shift!`);
       router.refresh();
     } catch (err) {
@@ -267,7 +271,7 @@ export function CrewClockApp({
     }
     setBusy(true);
     try {
-      await clockOut({
+      const res = await clockOut({
         latitude: geo.lat,
         longitude: geo.lng,
         accuracy: geo.accuracy,
@@ -278,6 +282,10 @@ export function CrewClockApp({
         extra_short_reason: isDriver ? extraShortReason.trim() || null : null,
         extra_long_reason: isDriver ? extraLongReason.trim() || null : null,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Clocked out. Thanks!");
       router.refresh();
     } catch (err) {
@@ -299,7 +307,7 @@ export function CrewClockApp({
     }
     setBusy(true);
     try {
-      await updateDeliveryCount({
+      const res = await updateDeliveryCount({
         short_count: Number(shortDeliveries) || 0,
         long_count: Number(longDeliveries) || 0,
         extra_short_deliveries: Number(extraShort) || 0,
@@ -307,6 +315,10 @@ export function CrewClockApp({
         extra_short_reason: extraShortReason.trim() || null,
         extra_long_reason: extraLongReason.trim() || null,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Live delivery count updated.");
       router.refresh();
     } catch (err) {

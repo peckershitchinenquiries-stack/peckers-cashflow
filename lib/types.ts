@@ -1,5 +1,13 @@
 export type StoreCode = "stevenage" | "hitchin";
 
+/**
+ * Standard result for user-triggered server actions. User-facing failures are
+ * RETURNED (not thrown): Next.js masks thrown error messages in production
+ * builds, so a thrown "You're 300m from the store" would reach the user as a
+ * useless generic "Server Components render" error.
+ */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
 /** Per-store rota preset times (HH:MM, 24h). Mirrors lib/settings ShiftTimeSettings. */
 export type StoreShiftTimes = {
   driver_open: string;

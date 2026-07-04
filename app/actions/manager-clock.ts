@@ -4,7 +4,26 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { verifyGeofenceAtStore } from "@/lib/geofence-verify";
 import { todayISO } from "@/lib/utils";
+import type { ActionResult } from "@/lib/types";
 import { writeAudit } from "./audit";
+
+/**
+ * Same boundary as app/actions/clock.ts: return user-facing errors instead of
+ * throwing, because Next.js masks thrown messages in production builds.
+ */
+async function asResult(run: () => Promise<void>): Promise<ActionResult> {
+  try {
+    await run();
+    return { ok: true };
+  } catch (err) {
+    console.error("[manager-clock] action failed:", err);
+    const message =
+      err instanceof Error && err.message
+        ? err.message
+        : "Something went wrong. Please try again.";
+    return { ok: false, error: message };
+  }
+}
 
 // Managers clock in/out for MONITORING only — it never touches their fixed
 // salary. Managers are login accounts (allowed_users), not employees, so their
@@ -25,7 +44,11 @@ type ClockInput = {
   accuracy?: number | null;
 };
 
-export async function managerClockIn(input: ClockInput) {
+export async function managerClockIn(input: ClockInput): Promise<ActionResult> {
+  return asResult(() => performManagerClockIn(input));
+}
+
+async function performManagerClockIn(input: ClockInput) {
   const user = await requireManager();
   const supabase = createServerSupabase();
   const managerId = user.allowed!.id;
@@ -80,10 +103,13 @@ export async function managerClockIn(input: ClockInput) {
 
   revalidatePath("/manager/live");
   revalidatePath("/live");
-  return { ok: true };
 }
 
-export async function managerClockOut(input: ClockInput) {
+export async function managerClockOut(input: ClockInput): Promise<ActionResult> {
+  return asResult(() => performManagerClockOut(input));
+}
+
+async function performManagerClockOut(input: ClockInput) {
   const user = await requireManager();
   const supabase = createServerSupabase();
   const managerId = user.allowed!.id;
@@ -129,5 +155,4 @@ export async function managerClockOut(input: ClockInput) {
 
   revalidatePath("/manager/live");
   revalidatePath("/live");
-  return { ok: true };
 }

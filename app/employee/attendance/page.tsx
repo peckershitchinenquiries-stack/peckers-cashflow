@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { CrewClockApp } from "@/components/crew/CrewClockApp";
 import {
   endOfISOWeek,
@@ -22,12 +23,7 @@ export default async function AttendancePage() {
   const user = await requireRole(["employee"]);
   const supabase = createServerSupabase();
 
-  const { data: employee } = await supabase
-    .from("employees")
-    .select("*")
-    .or(`auth_user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
+  const employee = await findEmployeeForUser(supabase, user.id, user.email);
 
   if (!employee) {
     return (
