@@ -74,8 +74,8 @@ export type ProvisionResult = {
 export async function createManagerAccount(input: {
   name: string;
   store_id: string;
-  /** Fixed monthly salary (£) — monitoring/display only, never drives pay. */
-  fixed_monthly_wage?: number | null;
+  /** Fixed daily wage (£) — monitoring/display only, never drives pay. */
+  fixed_daily_wage?: number | null;
 }): Promise<ProvisionResult> {
   await requireAdmin();
   if (!input.name?.trim()) throw new Error("Name is required");
@@ -102,8 +102,8 @@ export async function createManagerAccount(input: {
   // allowed_users is admin-only under RLS, and this action is already
   // authorised (requireAdmin), so we bypass the policy intentionally.
   const wage =
-    input.fixed_monthly_wage != null && Number(input.fixed_monthly_wage) > 0
-      ? Number(input.fixed_monthly_wage)
+    input.fixed_daily_wage != null && Number(input.fixed_daily_wage) > 0
+      ? Number(input.fixed_daily_wage)
       : null;
   const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
@@ -113,7 +113,7 @@ export async function createManagerAccount(input: {
     username,
     temp_password: password,
     must_change_password: true,
-    fixed_monthly_wage: wage,
+    fixed_daily_wage: wage,
   });
   if (rowErr) {
     // roll back the auth user so we don't orphan it
@@ -133,12 +133,12 @@ export async function createManagerAccount(input: {
 }
 
 /**
- * Admin-only: set/clear a manager's fixed monthly salary (£). Display &
+ * Admin-only: set/clear a manager's fixed daily wage (£). Display &
  * monitoring only — it never feeds any pay calculation.
  */
 export async function updateManagerWage(input: {
   allowed_user_id: string;
-  fixed_monthly_wage: number | null;
+  fixed_daily_wage: number | null;
 }): Promise<{ ok: true }> {
   await requireAdmin();
   const supabase = createServerSupabase();
@@ -152,13 +152,13 @@ export async function updateManagerWage(input: {
   if (acct.role !== "manager") throw new Error("Only managers have a fixed wage");
 
   const wage =
-    input.fixed_monthly_wage != null && Number(input.fixed_monthly_wage) > 0
-      ? Number(input.fixed_monthly_wage)
+    input.fixed_daily_wage != null && Number(input.fixed_daily_wage) > 0
+      ? Number(input.fixed_daily_wage)
       : null;
 
   const { error } = await supabase
     .from("allowed_users")
-    .update({ fixed_monthly_wage: wage })
+    .update({ fixed_daily_wage: wage })
     .eq("id", acct.id);
   if (error) throw new Error(error.message);
 
@@ -166,7 +166,7 @@ export async function updateManagerWage(input: {
     action: "update_manager_wage",
     entity: "allowed_user",
     entity_id: acct.id,
-    changes: { fixed_monthly_wage: wage },
+    changes: { fixed_daily_wage: wage },
   });
 
   revalidatePath("/managers");

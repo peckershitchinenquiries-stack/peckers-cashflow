@@ -309,9 +309,9 @@ export function LiveDashboard({
                               <div className="text-sm font-medium text-text-primary truncate">
                                 {m.name || m.username}
                               </div>
-                              {isSuperAdmin && m.fixed_monthly_wage != null && (
+                              {isSuperAdmin && m.fixed_daily_wage != null && (
                                 <div className="text-[11px] text-text-muted">
-                                  {formatGBP(m.fixed_monthly_wage)} / month
+                                  {formatGBP(m.fixed_daily_wage)} / day
                                 </div>
                               )}
                             </div>

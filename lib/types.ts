@@ -22,9 +22,9 @@ export type AllowedUser = {
   temp_password: string | null;
   must_change_password: boolean;
   employee_id: string | null;
-  /** A manager's FIXED monthly salary (£). Monitoring/display only — never
+  /** A manager's FIXED daily wage (£). Monitoring/display only — never
    *  drives any pay calculation. Null for admins/employees or if unset. */
-  fixed_monthly_wage: number | null;
+  fixed_daily_wage: number | null;
   created_at: string;
 };
 

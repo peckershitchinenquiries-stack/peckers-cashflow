@@ -57,7 +57,7 @@ export function ManagersView({
       const res = await createManagerAccount({
         name: name.trim(),
         store_id: storeId,
-        fixed_monthly_wage: wage.trim() ? Number(wage) : null,
+        fixed_daily_wage: wage.trim() ? Number(wage) : null,
       });
       setCredsTitle(`Manager “${name.trim()}” created`);
       setCreds({ username: res.username, password: res.password, loginUrl: res.loginUrl });
@@ -103,7 +103,7 @@ export function ManagersView({
 
   function openWage(m: AllowedUser) {
     setWageEditing(m);
-    setWageValue(m.fixed_monthly_wage != null ? String(m.fixed_monthly_wage) : "");
+    setWageValue(m.fixed_daily_wage != null ? String(m.fixed_daily_wage) : "");
   }
 
   async function saveWage() {
@@ -112,9 +112,9 @@ export function ManagersView({
     try {
       await updateManagerWage({
         allowed_user_id: wageEditing.id,
-        fixed_monthly_wage: wageValue.trim() ? Number(wageValue) : null,
+        fixed_daily_wage: wageValue.trim() ? Number(wageValue) : null,
       });
-      toast.success("Monthly wage updated");
+      toast.success("Daily wage updated");
       setWageEditing(null);
       router.refresh();
     } catch (err) {
@@ -175,7 +175,7 @@ export function ManagersView({
                   <th className="text-left px-4 py-2.5">Name</th>
                   <th className="text-left px-3 py-2.5">Username</th>
                   <th className="text-left px-3 py-2.5">Store</th>
-                  <th className="text-right px-3 py-2.5">Monthly wage</th>
+                  <th className="text-right px-3 py-2.5">Daily wage</th>
                   <th className="text-right px-4 py-2.5">Actions</th>
                 </tr>
               </thead>
@@ -195,12 +195,12 @@ export function ManagersView({
                       <button
                         onClick={() => openWage(m)}
                         className="tabular-nums text-text-primary hover:text-gold underline-offset-2 hover:underline"
-                        title="Set fixed monthly wage (monitoring only)"
+                        title="Set fixed daily wage (monitoring only)"
                       >
-                        {m.fixed_monthly_wage != null ? (
+                        {m.fixed_daily_wage != null ? (
                           <>
-                            {formatGBP(m.fixed_monthly_wage)}
-                            <span className="text-text-muted"> /mo</span>
+                            {formatGBP(m.fixed_daily_wage)}
+                            <span className="text-text-muted"> /day</span>
                           </>
                         ) : (
                           <span className="text-text-muted">Set wage</span>
@@ -276,7 +276,7 @@ export function ManagersView({
               type="number"
               min="0"
               step="0.01"
-              label="Monthly wage (£, optional)"
+              label="Daily wage (£, optional)"
               prefix="£"
               value={wage}
               onChange={(e) => setWage(e.target.value)}
@@ -290,7 +290,7 @@ export function ManagersView({
         <Modal
           open
           onClose={() => setWageEditing(null)}
-          title={`Monthly wage — ${wageEditing.name || wageEditing.username}`}
+          title={`Daily wage — ${wageEditing.name || wageEditing.username}`}
           description="Fixed salary shown on the live dashboard for monitoring. It never feeds a pay calculation. Leave blank to clear."
           size="sm"
           footer={
@@ -308,7 +308,7 @@ export function ManagersView({
             type="number"
             min="0"
             step="0.01"
-            label="Monthly wage (£)"
+            label="Daily wage (£)"
             prefix="£"
             value={wageValue}
             onChange={(e) => setWageValue(e.target.value)}

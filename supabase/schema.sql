@@ -1082,10 +1082,10 @@ begin
   end if;
 end $$;
 
--- A manager's FIXED monthly salary. Shown on the Live dashboard for monitoring;
+-- A manager's FIXED daily wage. Shown on the Live dashboard for monitoring;
 -- it never drives any pay calculation.
 alter table public.allowed_users
-  add column if not exists fixed_monthly_wage numeric(10,2);
+  add column if not exists fixed_daily_wage numeric(10,2);
 
 -- Managers are login accounts (allowed_users, role='manager') with no employees
 -- row, so the crew clock_events table (keyed on employee_id) can't hold their
