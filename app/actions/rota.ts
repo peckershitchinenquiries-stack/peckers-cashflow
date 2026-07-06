@@ -3,9 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
-import { getAppSettings } from "./settings";
 import { shiftHours, todayISO } from "@/lib/utils";
-import { presetTimes } from "@/lib/settings";
+import { presetTimes, DEFAULT_SETTINGS } from "@/lib/settings";
 import { hasRole, type ShiftPreset } from "@/lib/types";
 
 async function requireAllowed() {
@@ -62,14 +61,16 @@ export async function upsertShift(input: RotaShiftInput) {
     start = null;
     end = null;
   } else if (shiftType) {
-    const [settings, empRes] = await Promise.all([
-      getAppSettings(),
+    // Preset times come from the store the shift is on — each store trades on
+    // its own hours — plus the employee's position (drivers open later).
+    const [storeRes, empRes] = await Promise.all([
+      supabase.from("stores").select("shift_times").eq("id", input.store_id).maybeSingle(),
       supabase.from("employees").select("position").eq("id", input.employee_id).maybeSingle(),
     ]);
     const times = presetTimes(
       shiftType,
       hasRole(empRes.data?.position ?? null, "Driver"),
-      settings.shift_times,
+      storeRes.data?.shift_times ?? DEFAULT_SETTINGS.shift_times,
     );
     start = times.start;
     end = times.end;

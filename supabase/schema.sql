@@ -329,8 +329,16 @@ create table if not exists public.stores (
   latitude            numeric(10,7),
   longitude           numeric(10,7),
   geofence_radius_m   integer not null default 250,
+  -- Per-store rota preset times (each store trades on its own hours).
+  shift_times         jsonb not null default
+    '{"driver_open":"11:30","kitchen_open":"09:00","evening_start":"17:00","close":"23:00"}'::jsonb,
   created_at          timestamptz not null default now()
 );
+
+-- Back-fill for existing deployments created before shift_times existed.
+alter table public.stores
+  add column if not exists shift_times jsonb not null default
+    '{"driver_open":"11:30","kitchen_open":"09:00","evening_start":"17:00","close":"23:00"}'::jsonb;
 
 insert into public.stores (code, name, latitude, longitude, geofence_radius_m)
 values
@@ -1082,10 +1090,10 @@ begin
   end if;
 end $$;
 
--- A manager's FIXED monthly salary. Shown on the Live dashboard for monitoring;
+-- A manager's FIXED daily wage. Shown on the Live dashboard for monitoring;
 -- it never drives any pay calculation.
 alter table public.allowed_users
-  add column if not exists fixed_monthly_wage numeric(10,2);
+  add column if not exists fixed_daily_wage numeric(10,2);
 
 -- Managers are login accounts (allowed_users, role='manager') with no employees
 -- row, so the crew clock_events table (keyed on employee_id) can't hold their

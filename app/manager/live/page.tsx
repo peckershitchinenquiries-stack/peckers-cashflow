@@ -22,11 +22,15 @@ export default async function ManagerLivePage() {
   const supabase = createServerSupabase();
   const today = todayISO();
 
+  // Staff aren't locked to one store, so the board must consider everyone
+  // relevant to THIS store today: the store's own staff, plus anyone who clocked
+  // in or was scheduled here (a visitor covering a shift). We resolve that set
+  // first so we only pull those people's records — not every store's roster.
   const [
     storesRes,
-    employeesRes,
-    shiftsRes,
-    clocksRes,
+    homeEmpIdsRes,
+    clocksHereRes,
+    shiftsHereRes,
     schedulesRes,
     cashRes,
     managerClockRes,
@@ -36,11 +40,11 @@ export default async function ManagerLivePage() {
       : supabase.from("stores").select("*"),
     supabase
       .from("employees")
-      .select("*")
+      .select("id")
       .eq("store_id", storeId ?? "")
       .neq("employment_status", "left"),
-    supabase.from("rota_shifts").select("*").eq("shift_date", today).eq("store_id", storeId ?? ""),
-    supabase.from("clock_events").select("*").eq("event_date", today).eq("store_id", storeId ?? ""),
+    supabase.from("clock_events").select("employee_id").eq("event_date", today).eq("store_id", storeId ?? ""),
+    supabase.from("rota_shifts").select("employee_id").eq("shift_date", today).eq("store_id", storeId ?? ""),
     supabase.from("employee_schedules").select("*"),
     storeId
       ? supabase
@@ -57,6 +61,29 @@ export default async function ManagerLivePage() {
       .eq("event_date", today)
       .maybeSingle(),
   ]);
+
+  const relevantIds = Array.from(
+    new Set<string>([
+      ...(homeEmpIdsRes.data ?? []).map((r) => r.id as string),
+      ...(clocksHereRes.data ?? []).map((r) => r.employee_id as string),
+      ...(shiftsHereRes.data ?? []).map((r) => r.employee_id as string),
+    ]),
+  );
+
+  // Full records for just those people — clocks/shifts across ALL stores (so a
+  // home employee who clocked in elsewhere resolves away from this store rather
+  // than showing as absent here).
+  const [employeesRes, shiftsRes, clocksRes] = relevantIds.length
+    ? await Promise.all([
+        supabase
+          .from("employees")
+          .select("*")
+          .in("id", relevantIds)
+          .neq("employment_status", "left"),
+        supabase.from("rota_shifts").select("*").eq("shift_date", today).in("employee_id", relevantIds),
+        supabase.from("clock_events").select("*").eq("event_date", today).in("employee_id", relevantIds),
+      ])
+    : [{ data: [] }, { data: [] }, { data: [] }];
 
   const todayEntry = (cashRes.data ?? null) as DailyCashEntry | null;
   const stores = (storesRes.data ?? []) as Store[];

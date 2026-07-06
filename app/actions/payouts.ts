@@ -8,9 +8,8 @@ import { scanForAlertsBackground } from "./alerts";
 import { addDays, parseISODate, startOfISOWeek, toISODate } from "@/lib/utils";
 import { mergeSettings } from "@/lib/settings";
 import {
-  aggregateWorked,
   buildPrePaymentSummary,
-  buildWageLines,
+  buildWageLinesForStore,
   payWeekOf,
 } from "@/lib/cash-flow";
 import type {
@@ -117,21 +116,22 @@ async function computeSummary(
       .gte("entry_date", cashStart)
       .lte("entry_date", cashEnd),
     // Leavers stay included — wages are a week in arrears, so someone marked
-    // "left" is still owed for the pay week they worked.
-    supabase
-      .from("employees")
-      .select("*")
-      .eq("store_id", storeId),
+    // "left" is still owed for the pay week they worked. All employees are
+    // candidates (not just this store's): a visiting worker earns cash at the
+    // store they actually worked. buildWageLinesForStore keeps only those with
+    // pay due at this store.
+    supabase.from("employees").select("*"),
+    // Whole pay week across ALL stores — the weekly NI/cash split is per
+    // employee (not per store), so it must see the employee's full week to
+    // attribute cash hours to the store where they were worked.
     supabase
       .from("clock_events")
-      .select("employee_id, clock_in_at, clock_out_at, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries")
-      .eq("store_id", storeId)
+      .select("employee_id, store_id, event_date, clock_in_at, clock_out_at, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries")
       .gte("event_date", payWeek.start)
       .lte("event_date", payWeek.end),
     supabase
       .from("rota_shifts")
-      .select("employee_id, is_day_off, scheduled_hours")
-      .eq("store_id", storeId)
+      .select("employee_id, store_id, shift_date, is_day_off, scheduled_hours")
       .gte("shift_date", payWeek.start)
       .lte("shift_date", payWeek.end),
     supabase.from("app_settings").select("key, value"),
@@ -140,8 +140,12 @@ async function computeSummary(
   const settings = mergeSettings(settingsRes.data ?? []);
   const entries = (entriesRes.data ?? []) as DailyCashEntry[];
   const employees = (employeesRes.data ?? []) as Employee[];
-  const worked = aggregateWorked(clocksRes.data ?? [], shiftsRes.data ?? []);
-  const lines = buildWageLines(employees, worked);
+  const lines = buildWageLinesForStore(
+    storeId,
+    employees,
+    clocksRes.data ?? [],
+    shiftsRes.data ?? [],
+  );
   const opening = await loadOpeningBalance(
     supabase,
     storeId,

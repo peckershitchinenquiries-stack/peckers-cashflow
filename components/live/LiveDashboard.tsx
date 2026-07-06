@@ -169,6 +169,18 @@ export function LiveDashboard({
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
+
+  // Which store an employee belongs to TODAY: where they clocked in (the source
+  // of truth for where they actually are), else where they're scheduled, else
+  // their home store. Staff aren't locked to one store, so a visiting worker
+  // shows under the store they actually worked at — not their home store.
+  const todayStoreOf = (emp: Employee): string | null => {
+    const c = clockByEmp.get(emp.id);
+    if (c?.store_id) return c.store_id;
+    const s = shiftByEmp.get(emp.id);
+    if (s?.store_id) return s.store_id;
+    return emp.store_id ?? null;
+  };
   const scheduleByEmpDay = new Map(
     schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
   );
@@ -213,7 +225,7 @@ export function LiveDashboard({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
-            (e) => e.store_id === store.id && e.employment_status === "active",
+            (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
           );
           // Sort: manager first, then on-shift, then others
           const sorted = [...storeEmployees].sort((a, b) => {
@@ -297,9 +309,9 @@ export function LiveDashboard({
                               <div className="text-sm font-medium text-text-primary truncate">
                                 {m.name || m.username}
                               </div>
-                              {isSuperAdmin && m.fixed_monthly_wage != null && (
+                              {isSuperAdmin && m.fixed_daily_wage != null && (
                                 <div className="text-[11px] text-text-muted">
-                                  {formatGBP(m.fixed_monthly_wage)} / month
+                                  {formatGBP(m.fixed_daily_wage)} / day
                                 </div>
                               )}
                             </div>

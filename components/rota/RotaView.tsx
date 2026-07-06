@@ -669,7 +669,7 @@ export function RotaView({
           storeId={activeStoreId}
           shiftDate={editingShift.date}
           existing={editingShift.existing}
-          shiftTimes={shiftTimes}
+          shiftTimes={activeStore?.shift_times ?? shiftTimes}
           prefill={editingShift.prefill}
           onClose={() => setEditingShift(null)}
           onSaved={() => {

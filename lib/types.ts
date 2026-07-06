@@ -1,5 +1,21 @@
 export type StoreCode = "stevenage" | "hitchin";
 
+/**
+ * Standard result for user-triggered server actions. User-facing failures are
+ * RETURNED (not thrown): Next.js masks thrown error messages in production
+ * builds, so a thrown "You're 300m from the store" would reach the user as a
+ * useless generic "Server Components render" error.
+ */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Per-store rota preset times (HH:MM, 24h). Mirrors lib/settings ShiftTimeSettings. */
+export type StoreShiftTimes = {
+  driver_open: string;
+  kitchen_open: string;
+  evening_start: string;
+  close: string;
+};
+
 export type Store = {
   id: string;
   code: StoreCode;
@@ -7,6 +23,8 @@ export type Store = {
   latitude: number | null;
   longitude: number | null;
   geofence_radius_m: number;
+  /** Open/Evening/Close times used by this store's rota presets. */
+  shift_times: StoreShiftTimes;
   created_at: string;
 };
 
@@ -22,9 +40,9 @@ export type AllowedUser = {
   temp_password: string | null;
   must_change_password: boolean;
   employee_id: string | null;
-  /** A manager's FIXED monthly salary (£). Monitoring/display only — never
+  /** A manager's FIXED daily wage (£). Monitoring/display only — never
    *  drives any pay calculation. Null for admins/employees or if unset. */
-  fixed_monthly_wage: number | null;
+  fixed_daily_wage: number | null;
   created_at: string;
 };
 

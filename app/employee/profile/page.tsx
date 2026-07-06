@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { EmployeeSelfProfile } from "@/components/employee/EmployeeSelfProfile";
 import { formatDDMMYYYY } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
@@ -12,12 +13,7 @@ export default async function ProfilePage() {
   const user = await requireRole(["employee"]);
   const supabase = createServerSupabase();
 
-  const { data: employee } = await supabase
-    .from("employees")
-    .select("*")
-    .or(`auth_user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
+  const employee = await findEmployeeForUser(supabase, user.id, user.email);
 
   if (!employee) {
     return (
