@@ -20,6 +20,16 @@ interface AggItem {
   prevUnits: number;
 }
 
+const normalizeItem = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+
+// Drinks and side add-ons (e.g. Fries) excluded: they attach to orders
+// regardless of menu choice and would skew the by-volume ranking.
+const EXCLUDED_ITEMS = new Set(
+  ["Pepsi Max", "Pepsi", "Fries", "Tango Orange", "Still Water", "Diet Pepsi", "7 Up Lemon and Lime"].map(
+    normalizeItem,
+  ),
+);
+
 // Compute WoW from raw gross_sales across both stores so combined-view WoW is
 // (totalCurRevenue - totalPrevRevenue) / totalPrevRevenue — never an average of
 // two store percentages, which would give a different (and wrong) result.
@@ -48,6 +58,7 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
   }
 
   return Array.from(map.values())
+    .filter((c) => !EXCLUDED_ITEMS.has(normalizeItem(c.item)))
     .map((c) => ({
       item: c.item,
       units: c.units,
