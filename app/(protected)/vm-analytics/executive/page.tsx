@@ -1,4 +1,15 @@
-import { getExec, getExecChannels, getWeeks, getYoy, yoyWeekIso } from "@/lib/vm-analytics/queries";
+import {
+  getExec,
+  getExecChannels,
+  getExecMulti,
+  getExecChannelsMulti,
+  getLatestWeeks,
+  getWeeks,
+  getYoy,
+  getYoyMulti,
+  sumYoyRows,
+  yoyWeekIso,
+} from "@/lib/vm-analytics/queries";
 import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 import {
   shortStore,
@@ -13,7 +24,7 @@ import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import type { ExecRow, ExecChannelRow, YoyRow } from "@/lib/vm-analytics/types";
+import type { ExecRow, ExecChannelRow, YoyRow, ExecMode } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";
 import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown, type ChannelStat, type GroupAgg } from "@/lib/vm-analytics/channels";
 
@@ -22,10 +33,15 @@ export const dynamic = "force-dynamic";
 export default async function ExecutivePage({
   searchParams,
 }: {
-  searchParams: { week?: string; store?: string };
+  searchParams: { week?: string; store?: string; mode?: string };
 }) {
   const activeStore = resolveStore(searchParams.store);
   const activeStores: readonly string[] = activeStore ? [activeStore] : STORES;
+
+  const mode: ExecMode =
+    searchParams.mode === "4w" ? "4w" : searchParams.mode === "12w" ? "12w" : "week";
+  const isMulti = mode !== "week";
+  const periodWeekCount = mode === "12w" ? 12 : 4;
 
   let weekIso: string | null;
   let rows: ExecRow[];
@@ -35,26 +51,66 @@ export default async function ExecutivePage({
   let weekEnd = "";
   let yoyRow: YoyRow | null = null;
   let yoyWeek = "";
+  // Multi-week period metadata (unused in single-week mode).
+  let periodLabel = "";
+  let periodMatched = 0;
+  let periodRequested = 0;
+  let yoyMatched = 0;
+  let yoyRequested = 0;
   try {
     // One getWeeks() call, then fan out all data fetches in parallel. Keeping the
     // render short reduces event-loop contention (and the chance the concurrent
     // auth fetch in middleware trips its dev-mode timeout).
     const weeks = await getWeeks();
-    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
-    if (!weekIso) return <EmptyWeek />;
-    weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
 
-    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
-    const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
-    yoyWeek = yoyWeekIso(weekIso);
+    if (!isMulti) {
+      // ── Single week: unchanged behaviour ────────────────────────────────────
+      weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
+      if (!weekIso) return <EmptyWeek />;
+      weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
 
-    [rows, chanRows, prevRows, prevChanRows, yoyRow] = await Promise.all([
-      getExec(weekIso),
-      getExecChannels(weekIso),
-      prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
-      prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
-      getYoy(weekIso, activeStore),
-    ]);
+      const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+      const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+      yoyWeek = yoyWeekIso(weekIso);
+
+      [rows, chanRows, prevRows, prevChanRows, yoyRow] = await Promise.all([
+        getExec(weekIso),
+        getExecChannels(weekIso),
+        prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
+        prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
+        getYoy(weekIso, activeStore),
+      ]);
+    } else {
+      // ── 4/12-week: aggregate latest N weeks vs same N weeks last year ───────
+      const periodWeeks = await getLatestWeeks(periodWeekCount);
+      periodRequested = periodWeekCount;
+      periodMatched = periodWeeks.length;
+      const isoList = periodWeeks.map((w) => w.week_start_iso);
+
+      if (periodWeeks.length > 0) {
+        const oldest = periodWeeks[periodWeeks.length - 1];
+        const newest = periodWeeks[0];
+        weekIso = newest.week_start_iso; // representative (kept for typing/insights)
+        weekEnd = newest.week_end;
+        periodLabel = weekRange(oldest.week_start, newest.week_end);
+      } else {
+        weekIso = null;
+      }
+      yoyWeek = `same ${periodWeekCount} wks`;
+
+      const [execMulti, chanMulti, yoy] = await Promise.all([
+        getExecMulti(isoList),
+        getExecChannelsMulti(isoList),
+        getYoyMulti(isoList, activeStore),
+      ]);
+      rows = execMulti;
+      chanRows = chanMulti;
+      prevRows = []; // no "previous week" in multi-week mode
+      prevChanRows = [];
+      yoyMatched = yoy.matched;
+      yoyRequested = yoy.requested;
+      yoyRow = yoy.matched > 0 ? sumYoyRows(yoy.rows) : null;
+    }
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
@@ -69,6 +125,20 @@ export default async function ExecutivePage({
   }
 
   const scopeLabel = activeStore ? shortStore(activeStore) : "Both stores combined";
+
+  // Header subtitle: a single week range, or the aggregated period with any
+  // partial-data notes (current-year weeks synced, prior-year weeks matched).
+  let subtitle: string;
+  if (isMulti) {
+    const notes: string[] = [];
+    if (periodMatched < periodRequested) notes.push(`${periodMatched} of ${periodRequested} weeks synced`);
+    if (yoyMatched < yoyRequested) notes.push(`prior-year: ${yoyMatched} of ${yoyRequested} weeks matched`);
+    subtitle =
+      `${scopeLabel} · Latest ${periodWeekCount} weeks (${periodLabel})` +
+      (notes.length ? ` · ${notes.join(" · ")}` : "");
+  } else {
+    subtitle = `${scopeLabel} · ${weekRange(weekIso, weekEnd)}`;
+  }
 
   // Breakdowns: one per active store, plus the combined scope and prev week.
   const byStore = new Map<string, Breakdown>();
@@ -336,33 +406,39 @@ export default async function ExecutivePage({
           },
         ]
       : []),
-    {
-      key: "prev",
-      header: "Previous Week",
-      align: "right" as const,
-      render: (r: KpiRowDef) => {
-        const wowPct =
-          hasPrev && r.wowVal
-            ? (() => {
-                const prev = r.wowVal(prevCombined);
-                return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
-              })()
-            : null;
-        return (
-          <span className="text-tertiary">
-            {hasPrev ? r.cell(prevCombined) : "—"}
-            {wowPct !== null && (
-              <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
-                ({signedPct(wowPct)})
-              </span>
-            )}
-          </span>
-        );
-      },
-    },
+    // "Previous Week" only exists in single-week mode; in 4/12-week mode the
+    // comparison column is prior-year same-N-weeks (the YoY column below).
+    ...(isMulti
+      ? []
+      : [
+          {
+            key: "prev",
+            header: "Previous Week",
+            align: "right" as const,
+            render: (r: KpiRowDef) => {
+              const wowPct =
+                hasPrev && r.wowVal
+                  ? (() => {
+                      const prev = r.wowVal(prevCombined);
+                      return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
+                    })()
+                  : null;
+              return (
+                <span className="text-tertiary">
+                  {hasPrev ? r.cell(prevCombined) : "—"}
+                  {wowPct !== null && (
+                    <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
+                      ({signedPct(wowPct)})
+                    </span>
+                  )}
+                </span>
+              );
+            },
+          },
+        ]),
     {
       key: "yoy",
-      header: `YoY (${yoyWeek})`,
+      header: isMulti ? `Prev Year (${yoyWeek})` : `YoY (${yoyWeek})`,
       align: "right" as const,
       render: (r: KpiRowDef) => {
         const yoyPct = yoyPctMap[r.kpi] ?? null;
@@ -451,7 +527,11 @@ export default async function ExecutivePage({
   }));
 
   // ---- Insight payload (scoped) ------------------------------------------
-  const insightInput: ExecInput = {
+  // Commentary is single-week / WoW-framed, so it is skipped in multi-week mode.
+  const insightInput: ExecInput | null =
+    isMulti || !weekIso
+      ? null
+      : {
     dashboard: "executive",
     week: weekIso,
     store: activeStore,
@@ -493,33 +573,38 @@ export default async function ExecutivePage({
       };
     }),
   };
-  const draft = (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput);
+  const draft = insightInput
+    ? (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput)
+    : null;
+
+  // Suppress the WoW badge on KPI cards in multi-week mode (no "previous week").
+  const wow = (v: number | null) => (isMulti ? undefined : v);
 
   return (
     <div className="space-y-7">
-      <PageTitle
-        title="Executive Dashboard"
-        subtitle={`${scopeLabel} · ${weekRange(weekIso, weekEnd)}`}
-      />
+      <PageTitle title="Executive Dashboard" subtitle={subtitle} />
 
       <KpiGrid>
-        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} yoy={netYoy} />
-        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} yoy={delYoy} />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} yoy={inStYoy} tone="good" />
-        <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} yoy={ordYoy} />
+        {/* WoW is meaningless for an N-week aggregate — omit the delta entirely
+            in multi-week mode (undefined hides the badge; null would grey it). */}
+        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={wow(netWow)} yoy={netYoy} />
+        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={wow(netDelWow)} yoy={delYoy} />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={wow(netInWow)} yoy={inStYoy} tone="good" />
+        <KpiCard label="Total Orders" value={int(combined.orders)} delta={wow(ordWow)} yoy={ordYoy} />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
-          delta={aovBlendWow}
+          delta={wow(aovBlendWow)}
           yoy={aovBlendYoy}
           hint="net sales ÷ orders"
         />
-        <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} yoy={custYoy} />
-        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={deliveryPctWow} yoy={deliveryPctYoy} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(inStorePct)} delta={inStorePctWow} yoy={inStorePctYoy} hint="of net sales" tone="good" />
+        <KpiCard label="Customers" value={int(combined.customers)} delta={wow(custWow)} yoy={custYoy} />
+        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={wow(deliveryPctWow)} yoy={deliveryPctYoy} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(inStorePct)} delta={wow(inStorePctWow)} yoy={inStorePctYoy} hint="of net sales" tone="good" />
       </KpiGrid>
 
-      <Commentary initial={draft} input={insightInput} />
+      {/* Commentary is weekly/WoW-framed; skip it in multi-week mode. */}
+      {draft && insightInput && <Commentary initial={draft} input={insightInput} />}
 
       <Section
         title="Order Mix"
@@ -565,11 +650,12 @@ export default async function ExecutivePage({
 
       <Section
         title="KPI Summary"
-        description={
-          activeStore
-            ? `${shortStore(activeStore)} only, with previous-week values.`
-            : "Both stores side by side, with combined totals and previous-week values."
-        }
+        description={(() => {
+          const compare = isMulti ? "prior-year same-period values" : "previous-week values";
+          return activeStore
+            ? `${shortStore(activeStore)} only, with ${compare}.`
+            : `Both stores side by side, with combined totals and ${compare}.`;
+        })()}
       >
         <DataTable columns={summaryColumns} rows={kpiRows} />
       </Section>

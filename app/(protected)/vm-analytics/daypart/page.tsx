@@ -11,6 +11,7 @@ import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
+import { HourDayHeatmap, type HeatmapData } from "@/components/vm-analytics/HourDayHeatmap";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type DaypartInput } from "@/lib/vm-analytics/insights";
 import type {
@@ -182,6 +183,33 @@ function aggregateHours(rows: HourlyActivityRow[]): HourAgg[] {
     .sort((a, b) => a.hour - b.hour);
 }
 
+// Hour × weekday order-count matrix for the heat map, from the same hourly rows
+// that feed the table below. avg_daily_orders is summed per (hour, weekday)
+// across the scoped store(s) and rounded to whole orders.
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+
+function buildHeatmap(rows: HourlyActivityRow[]): HeatmapData {
+  const dayIndex = (wd: string) => {
+    const p = wd.trim().slice(0, 3).toLowerCase();
+    return WEEKDAYS.findIndex((d) => d.toLowerCase().startsWith(p));
+  };
+  const byHour = new Map<number, number[]>();
+  for (const r of rows) {
+    const di = dayIndex(String(r.weekday));
+    if (di < 0) continue;
+    const hour = Math.trunc(n(r.order_hour));
+    const arr = byHour.get(hour) ?? new Array(7).fill(0);
+    arr[di] += n(r.avg_daily_orders);
+    byHour.set(hour, arr);
+  }
+  const hours = Array.from(byHour.keys()).sort((a, b) => a - b);
+  const cells = hours.map((h) => byHour.get(h)!.map((v) => Math.round(v)));
+  const rowTotals = cells.map((row) => row.reduce((s, v) => s + v, 0));
+  const colTotals = WEEKDAYS.map((_, di) => cells.reduce((s, row) => s + row[di], 0));
+  const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  return { hours, days: [...WEEKDAYS], cells, rowTotals, colTotals, grandTotal };
+}
+
 // "17" -> "5pm", "12" -> "12pm", "0" -> "12am". Used to label an hour bucket as
 // the window it covers, e.g. hour 11 -> "11am-12pm".
 function hour12(h: number): string {
@@ -311,6 +339,7 @@ export default async function DaypartPage({
   }
 
   const hours = aggregateHours(hourlyRows);
+  const heatmap = buildHeatmap(hourlyRows);
 
   const categories = aggregateCategories(categoryRows);
 
@@ -381,6 +410,13 @@ export default async function DaypartPage({
       />
 
       <Commentary initial={draft} input={insightInput} />
+
+      <Section
+        title="Order Heat Map — Hour × Day"
+        description="Orders per trading hour by weekday (average day's activity). Cells are shaded low→high; the Total column and Total row are shaded on their own scales."
+      >
+        <HourDayHeatmap data={heatmap} />
+      </Section>
 
       <Section
         title="Performance by Time Period"

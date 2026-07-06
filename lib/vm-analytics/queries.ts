@@ -73,29 +73,54 @@ export async function previousWeek(weekIso: string): Promise<string | null> {
 }
 
 export async function getExec(weekIso: string): Promise<ExecRow[]> {
+  // Single-week is just the one-element multi-week case (`.in([x])` == `.eq(x)`).
+  return getExecMulti([weekIso]);
+}
+
+// Current-year exec rows for one or more weeks at once. Powers both the
+// single-week path (via getExec) and the 4/12-week Executive modes: buildBreakdown
+// sums net_sales / customers across whatever week-rows it is handed.
+export async function getExecMulti(weekIsos: string[]): Promise<ExecRow[]> {
+  if (weekIsos.length === 0) return [];
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
     .from("vm_v_exec_dashboard_with_wow")
     .select("*")
-    .eq("week_start", weekIso);
-  if (error) throw new Error(`getExec: ${error.message}`);
+    .in("week_start", weekIsos);
+  if (error) throw new Error(`getExecMulti: ${error.message}`);
   return (data ?? []) as ExecRow[];
+}
+
+// The N most recent completed weeks (getWeeks() is already newest-first, and
+// vm_v_available_weeks excludes the in-progress week). Fewer than N is returned
+// as-is so callers can surface "N of M weeks".
+export async function getLatestWeeks(count: number): Promise<WeekOption[]> {
+  const weeks = await getWeeks();
+  return weeks.slice(0, count);
 }
 
 // Channel-level net sales + orders for a week, merged from the two raw tables
 // on (store, channel). The Executive view (vm_v_exec_dashboard) only exposes
 // bucketed totals, so we read the raw tables to get per-channel granularity.
 export async function getExecChannels(weekIso: string): Promise<ExecChannelRow[]> {
+  return getExecChannelsMulti([weekIso]);
+}
+
+// Same as getExecChannels but summed across several weeks — one row per
+// (store, channel) with net_sales and orders totalled over the period. Amounts
+// are TEXT in the source tables, so coerce with numOf().
+export async function getExecChannelsMulti(weekIsos: string[]): Promise<ExecChannelRow[]> {
+  if (weekIsos.length === 0) return [];
   const sb = getVMSupabaseServer();
   const [salesRes, ordersRes] = await Promise.all([
     sb
       .from("vm_net_sales_by_channel")
       .select("store, channel, net_sales")
-      .eq("week_start", weekIso),
+      .in("week_start", weekIsos),
     sb
       .from("vm_orders_by_channel")
       .select("store, channel, number_of_orders")
-      .eq("week_start", weekIso),
+      .in("week_start", weekIsos),
   ]);
   if (salesRes.error) throw new Error(`getExecChannels (sales): ${salesRes.error.message}`);
   if (ordersRes.error) throw new Error(`getExecChannels (orders): ${ordersRes.error.message}`);
@@ -491,4 +516,82 @@ export async function getYoy(
     return null;
   }
   return data as YoyRow | null;
+}
+
+/**
+ * Prior-year rows for several weeks at once (4/12-week Executive modes).
+ * Maps each current Monday through yoyWeekIso() (−364d) and fetches those
+ * week_commencing rows from the store-scoped table. Returns how many of the
+ * requested weeks actually matched so the page can surface "N of M weeks".
+ */
+export async function getYoyMulti(
+  weekIsos: string[],
+  store: string | null,
+): Promise<{ rows: YoyRow[]; matched: number; requested: number }> {
+  const requested = weekIsos.length;
+  if (requested === 0) return { rows: [], matched: 0, requested: 0 };
+
+  const sb = getVMSupabaseServer();
+  const table =
+    store === "Peckers Hitchin"
+      ? "vm_yoy_hitchin"
+      : store === "Peckers Stevenage"
+      ? "vm_yoy_stevenage"
+      : "vm_yoy_both_stores";
+
+  const yoyWeeks = weekIsos.map(yoyWeekIso);
+  const { data, error } = await sb
+    .from(table)
+    .select("*")
+    .in("week_commencing", yoyWeeks);
+
+  if (error) {
+    console.warn(`getYoyMulti (${table}): ${error.message}`);
+    return { rows: [], matched: 0, requested };
+  }
+  const rows = (data ?? []) as YoyRow[];
+  return { rows, matched: rows.length, requested };
+}
+
+/**
+ * Sum several prior-year rows into one period total. Additive fields (sales,
+ * order counts, customers) are summed; every percentage is RECOMPUTED from the
+ * summed sales totals — never averaged — so it reconciles with the current-year
+ * multi-week aggregation. Returns a zeroed row for an empty input.
+ */
+export function sumYoyRows(rows: YoyRow[]): YoyRow {
+  const sum = (f: keyof YoyRow) => rows.reduce((s, r) => s + numOf(r[f]), 0);
+
+  const total_sales = sum("total_sales");
+  const in_store_sales = sum("in_store_sales");
+  const delivery_sales = sum("delivery_sales");
+  const own_delivery_sales = sum("own_delivery_sales");
+  const aggregate_sales = sum("aggregate_sales");
+  const pctOf = (part: number) => (total_sales > 0 ? (100 * part) / total_sales : 0);
+
+  return {
+    // Latest prior-year Monday in the set; not shown in multi-week mode.
+    week_commencing: rows.length ? String(rows[rows.length - 1].week_commencing) : "",
+    click_collect: sum("click_collect"),
+    kiosk: sum("kiosk"),
+    till_eat_in: sum("till_eat_in"),
+    till_takeaway: sum("till_takeaway"),
+    own_delivery: sum("own_delivery"),
+    deliveroo: sum("deliveroo"),
+    just_eat: sum("just_eat"),
+    uber_eats: sum("uber_eats"),
+    total_sales,
+    in_store_sales,
+    delivery_sales,
+    in_store_pct: pctOf(in_store_sales),
+    delivery_pct: pctOf(delivery_sales),
+    own_delivery_sales,
+    aggregate_sales,
+    own_delivery_pct: pctOf(own_delivery_sales),
+    aggregate_pct: pctOf(aggregate_sales),
+    total_orders: sum("total_orders"),
+    new_customers: sum("new_customers"),
+    return_customers: sum("return_customers"),
+    total_customers: sum("total_customers"),
+  };
 }

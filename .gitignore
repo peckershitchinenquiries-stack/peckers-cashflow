@@ -11,3 +11,10 @@ build
 next-env.d.ts
 .idea
 .vscode
+# Excel files
+*.xlsx
+*.xls
+*.xlsm
+*.xltx
+*.csv
+*.md
