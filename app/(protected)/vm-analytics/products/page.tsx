@@ -1,6 +1,6 @@
 import { getProducts, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
-import { resolveStore, shortStore } from "@/lib/vm-analytics/constants";
+import { resolveStore, shortStore, isExcludedProduct } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
@@ -19,16 +19,6 @@ interface AggItem {
   prevRevenue: number;
   prevUnits: number;
 }
-
-const normalizeItem = (s: string) => s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
-
-// Drinks and side add-ons (e.g. Fries) excluded: they attach to orders
-// regardless of menu choice and would skew the by-volume ranking.
-const EXCLUDED_ITEMS = new Set(
-  ["Pepsi Max", "Pepsi", "Fries", "Tango Orange", "Still Water", "Diet Pepsi", "7 Up Lemon and Lime"].map(
-    normalizeItem,
-  ),
-);
 
 // Compute WoW from raw gross_sales across both stores so combined-view WoW is
 // (totalCurRevenue - totalPrevRevenue) / totalPrevRevenue — never an average of
@@ -58,7 +48,7 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
   }
 
   return Array.from(map.values())
-    .filter((c) => !EXCLUDED_ITEMS.has(normalizeItem(c.item)))
+    .filter((c) => !isExcludedProduct(c.item))
     .map((c) => ({
       item: c.item,
       units: c.units,

@@ -75,12 +75,12 @@ export function HourDayHeatmap({ data }: { data: HeatmapData }) {
                 {days.map((d) => (
                   <th
                     key={d}
-                    className="whitespace-nowrap px-3 py-3 text-center font-semibold uppercase text-xs tracking-wide border-b border-line"
+                    className="whitespace-nowrap px-3 py-3 text-center font-semibold uppercase text-xs tracking-wide border-b border-l border-line"
                   >
                     {d.slice(0, 3)}
                   </th>
                 ))}
-                <th className="whitespace-nowrap px-3 py-3 text-center font-semibold uppercase text-xs tracking-wide border-b border-line">
+                <th className="whitespace-nowrap px-3 py-3 text-center font-semibold uppercase text-xs tracking-wide border-b border-l border-line">
                   Total
                 </th>
               </tr>
@@ -94,13 +94,13 @@ export function HourDayHeatmap({ data }: { data: HeatmapData }) {
                   {cells[ri].map((v, ci) => (
                     <td
                       key={ci}
-                      className={heatCell}
+                      className={`${heatCell} border-l border-line`}
                       style={{ backgroundColor: heatColor(v, cellMin, cellMax), color: CELL_TEXT }}
                     >
                       {v}
                     </td>
                   ))}
-                  <td className={`${heatCell} font-bold text-primary`}>
+                  <td className={`${heatCell} font-bold text-primary border-l border-line`}>
                     {rowTotals[ri]}
                   </td>
                 </tr>
@@ -112,12 +112,12 @@ export function HourDayHeatmap({ data }: { data: HeatmapData }) {
                 {colTotals.map((v, ci) => (
                   <td
                     key={ci}
-                    className={`${heatCell} font-bold text-primary border-t border-line`}
+                    className={`${heatCell} font-bold text-primary border-t border-l border-line`}
                   >
                     {v}
                   </td>
                 ))}
-                <td className={`${heatCell} font-bold text-primary border-t border-line`}>
+                <td className={`${heatCell} font-bold text-primary border-t border-l border-line`}>
                   {grandTotal}
                 </td>
               </tr>
