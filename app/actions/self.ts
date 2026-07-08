@@ -3,18 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { writeAudit } from "./audit";
 
 async function currentEmployee() {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
   const supabase = createServerSupabase();
-  const { data: employee } = await supabase
-    .from("employees")
-    .select("id")
-    .or(`auth_user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
+  const employee = await findEmployeeForUser(supabase, user.id, user.email);
   if (!employee) throw new Error("No crew profile linked to your account");
   return { user, employeeId: employee.id, supabase };
 }

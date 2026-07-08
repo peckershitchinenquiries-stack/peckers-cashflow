@@ -34,7 +34,7 @@ export function PageTitle({
 }) {
   return (
     <div className="mb-6">
-      <h1 className="text-3xl font-bold text-primary">{title}</h1>
+      <h1 className="text-2xl font-bold text-primary sm:text-3xl">{title}</h1>
       {subtitle && <p className="mt-1 text-sm text-secondary">{subtitle}</p>}
     </div>
   );

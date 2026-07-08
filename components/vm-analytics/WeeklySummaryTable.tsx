@@ -35,7 +35,8 @@ export function WeeklySummaryTable({ data, store }: WeeklySummaryTableProps) {
     entity === "COGS Hitchin" && store?.includes("Hitchin") ? "COGS Stevenage" : entity;
   return (
     <div className="vm-card overflow-hidden">
-      <table className="w-full text-sm">
+      <div className="table-scroll overflow-x-auto">
+      <table className="w-full min-w-[480px] text-sm">
         <thead>
           <tr className="border-b border-border bg-surface-hover">
             <th className="px-4 py-3 text-left font-semibold text-text-primary">Entity</th>
@@ -99,12 +100,13 @@ export function WeeklySummaryTable({ data, store }: WeeklySummaryTableProps) {
           ))}
         </tbody>
       </table>
+      </div>
 
       {/* Summary section */}
       {(data.totals.store_contribution !== undefined ||
         data.totals.net_margin !== undefined) && (
         <div className="border-t border-border bg-surface-hover px-4 py-4">
-          <div className="grid grid-cols-2 gap-8">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-8">
             {data.totals.store_contribution !== undefined && (
               <div>
                 <div className="text-xs uppercase font-semibold text-text-muted mb-1">

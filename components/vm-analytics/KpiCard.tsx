@@ -1,4 +1,4 @@
-import { signedPct, deltaClass } from "@/lib/vm-analytics/format";
+import { signedPct, n } from "@/lib/vm-analytics/format";
 
 export function KpiCard({
   label,
@@ -29,10 +29,20 @@ export function KpiCard({
       <div className="text-xs font-medium uppercase tracking-wide text-secondary">
         {label}
       </div>
-      <div className={`mt-2 text-3xl font-bold ${valueClass}`}>{value}</div>
+      <div className={`mt-2 text-2xl font-bold break-words sm:text-3xl ${valueClass}`}>{value}</div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
         {showDelta && (
-          <span className={`font-semibold ${deltaClass(delta)}`}>
+          <span
+            className={[
+              "font-medium px-1.5 py-0.5 rounded",
+              delta === null || delta === undefined || delta === ""
+                ? "bg-ink-faint/10 text-ink-faint"
+                : n(delta) >= 0
+                ? "bg-success/10 text-success"
+                : "bg-danger/10 text-danger",
+            ].join(" ")}
+            title="Week-on-Week vs previous week"
+          >
             {signedPct(delta)} WoW
           </span>
         )}

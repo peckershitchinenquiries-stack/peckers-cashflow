@@ -18,7 +18,9 @@ import {
   createManagerAccount,
   resetAccountPassword,
   deleteAccount,
+  updateManagerWage,
 } from "@/app/actions/accounts";
+import { formatGBP } from "@/lib/utils";
 import type { AllowedUser, Store } from "@/lib/types";
 
 export function ManagersView({
@@ -35,10 +37,14 @@ export function ManagersView({
   const [showAdd, setShowAdd] = React.useState(false);
   const [name, setName] = React.useState("");
   const [storeId, setStoreId] = React.useState(stores[0]?.id ?? "");
+  const [wage, setWage] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [creds, setCreds] = React.useState<Credentials | null>(null);
   const [credsTitle, setCredsTitle] = React.useState("Manager created");
   const [actingId, setActingId] = React.useState<string | null>(null);
+  const [wageEditing, setWageEditing] = React.useState<AllowedUser | null>(null);
+  const [wageValue, setWageValue] = React.useState("");
+  const [wageSaving, setWageSaving] = React.useState(false);
 
   const storeName = (id: string | null) =>
     stores.find((s) => s.id === id)?.name ?? "—";
@@ -48,11 +54,16 @@ export function ManagersView({
     if (!storeId) return toast.error("Pick a store");
     setBusy(true);
     try {
-      const res = await createManagerAccount({ name: name.trim(), store_id: storeId });
+      const res = await createManagerAccount({
+        name: name.trim(),
+        store_id: storeId,
+        fixed_daily_wage: wage.trim() ? Number(wage) : null,
+      });
       setCredsTitle(`Manager “${name.trim()}” created`);
       setCreds({ username: res.username, password: res.password, loginUrl: res.loginUrl });
       setShowAdd(false);
       setName("");
+      setWage("");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -87,6 +98,29 @@ export function ManagersView({
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
       setActingId(null);
+    }
+  }
+
+  function openWage(m: AllowedUser) {
+    setWageEditing(m);
+    setWageValue(m.fixed_daily_wage != null ? String(m.fixed_daily_wage) : "");
+  }
+
+  async function saveWage() {
+    if (!wageEditing) return;
+    setWageSaving(true);
+    try {
+      await updateManagerWage({
+        allowed_user_id: wageEditing.id,
+        fixed_daily_wage: wageValue.trim() ? Number(wageValue) : null,
+      });
+      toast.success("Daily wage updated");
+      setWageEditing(null);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setWageSaving(false);
     }
   }
 
@@ -141,6 +175,7 @@ export function ManagersView({
                   <th className="text-left px-4 py-2.5">Name</th>
                   <th className="text-left px-3 py-2.5">Username</th>
                   <th className="text-left px-3 py-2.5">Store</th>
+                  <th className="text-right px-3 py-2.5">Daily wage</th>
                   <th className="text-right px-4 py-2.5">Actions</th>
                 </tr>
               </thead>
@@ -155,6 +190,22 @@ export function ManagersView({
                     </td>
                     <td className="px-3 py-3">
                       <Badge variant="neutral">{storeName(m.store_id)}</Badge>
+                    </td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        onClick={() => openWage(m)}
+                        className="tabular-nums text-text-primary hover:text-gold underline-offset-2 hover:underline"
+                        title="Set fixed daily wage (monitoring only)"
+                      >
+                        {m.fixed_daily_wage != null ? (
+                          <>
+                            {formatGBP(m.fixed_daily_wage)}
+                            <span className="text-text-muted"> /day</span>
+                          </>
+                        ) : (
+                          <span className="text-text-muted">Set wage</span>
+                        )}
+                      </button>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2">
@@ -221,7 +272,49 @@ export function ManagersView({
                 </option>
               ))}
             </Select>
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              label="Daily wage (£, optional)"
+              prefix="£"
+              value={wage}
+              onChange={(e) => setWage(e.target.value)}
+              hint="Fixed salary shown on the live dashboard. Monitoring only — it never affects any pay calculation."
+            />
           </div>
+        </Modal>
+      )}
+
+      {wageEditing && (
+        <Modal
+          open
+          onClose={() => setWageEditing(null)}
+          title={`Daily wage — ${wageEditing.name || wageEditing.username}`}
+          description="Fixed salary shown on the live dashboard for monitoring. It never feeds a pay calculation. Leave blank to clear."
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setWageEditing(null)}>
+                Cancel
+              </Button>
+              <Button onClick={saveWage} loading={wageSaving}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            label="Daily wage (£)"
+            prefix="£"
+            value={wageValue}
+            onChange={(e) => setWageValue(e.target.value)}
+            placeholder="e.g. 2400"
+            autoFocus
+          />
         </Modal>
       )}
 

@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
 import { shiftHours, todayISO } from "@/lib/utils";
+import { presetTimes, DEFAULT_SETTINGS } from "@/lib/settings";
+import { hasRole, type ShiftPreset } from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -19,6 +21,10 @@ export type RotaShiftInput = {
   start_time?: string | null;
   end_time?: string | null;
   is_day_off?: boolean;
+  /** Rota preset. When set, start/end are recomputed server-side from the
+   *  configured shift_times + the employee's position (Settings is the source
+   *  of truth). Null = custom times or day off. */
+  shift_type?: ShiftPreset | null;
   manager_notes?: string | null;
   same_day_edit_reason?: string | null;
 };
@@ -32,6 +38,14 @@ export async function upsertShift(input: RotaShiftInput) {
   if (!input.store_id) throw new Error("Missing store");
   if (!input.shift_date) throw new Error("Missing date");
 
+  // A manager may schedule ANY employee (including staff visiting from the other
+  // store) but only ON their own store's rota — never edit another store's rota.
+  if (user.allowed!.role === "manager") {
+    if (!user.allowed!.store_id || input.store_id !== user.allowed!.store_id) {
+      throw new Error("Managers can only edit shifts at their own store.");
+    }
+  }
+
   // Past days are read-only — only today and future shifts can be edited.
   if (input.shift_date < todayISO()) {
     throw new Error(
@@ -40,8 +54,39 @@ export async function upsertShift(input: RotaShiftInput) {
   }
 
   const isDayOff = !!input.is_day_off;
-  const start = isDayOff ? null : input.start_time?.slice(0, 5) || null;
-  const end = isDayOff ? null : input.end_time?.slice(0, 5) || null;
+  const shiftType: ShiftPreset | null =
+    !isDayOff && (input.shift_type === "open_close" || input.shift_type === "evening_close")
+      ? input.shift_type
+      : null;
+
+  // Resolve the shift's start/end. A preset is authoritative: recompute the
+  // times from the configured shift_times + the employee's position so Settings
+  // is the single source of truth and the client can't submit mismatched times.
+  // Otherwise use the entered (custom) times.
+  let start: string | null;
+  let end: string | null;
+  if (isDayOff) {
+    start = null;
+    end = null;
+  } else if (shiftType) {
+    // Preset times come from the store the shift is on — each store trades on
+    // its own hours — plus the employee's position (drivers open later).
+    const [storeRes, empRes] = await Promise.all([
+      supabase.from("stores").select("shift_times").eq("id", input.store_id).maybeSingle(),
+      supabase.from("employees").select("position").eq("id", input.employee_id).maybeSingle(),
+    ]);
+    const times = presetTimes(
+      shiftType,
+      hasRole(empRes.data?.position ?? null, "Driver"),
+      storeRes.data?.shift_times ?? DEFAULT_SETTINGS.shift_times,
+    );
+    start = times.start;
+    end = times.end;
+  } else {
+    start = input.start_time?.slice(0, 5) || null;
+    end = input.end_time?.slice(0, 5) || null;
+  }
+
   if (!isDayOff && (!start || !end)) {
     throw new Error(
       "Enter both a start and end time, or mark the day as a Day Off.",
@@ -80,6 +125,7 @@ export async function upsertShift(input: RotaShiftInput) {
     end_time: end,
     is_day_off: isDayOff,
     scheduled_hours: hours,
+    shift_type: shiftType,
     manager_notes: input.manager_notes?.trim() || null,
     same_day_edit_reason:
       isSameDay && changed ? input.same_day_edit_reason?.trim() || null : existing?.same_day_edit_reason ?? null,
@@ -118,19 +164,23 @@ export async function upsertShift(input: RotaShiftInput) {
 }
 
 export async function deleteShift(id: string) {
-  await requireAllowed();
+  const user = await requireAllowed();
   const supabase = createServerSupabase();
 
   // Block clearing shifts on past days — they are read-only.
   const { data: existing } = await supabase
     .from("rota_shifts")
-    .select("shift_date")
+    .select("shift_date, store_id")
     .eq("id", id)
     .maybeSingle();
   if (existing && existing.shift_date < todayISO()) {
     throw new Error(
       "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
     );
+  }
+  // Managers can only clear shifts on their own store's rota.
+  if (existing && user.allowed!.role === "manager" && existing.store_id !== user.allowed!.store_id) {
+    throw new Error("Managers can only clear shifts at their own store.");
   }
 
   const { error } = await supabase.from("rota_shifts").delete().eq("id", id);

@@ -6,18 +6,20 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Ca
 import { Badge } from "@/components/ui/Badge";
 import {
   WEEKDAY_LONG,
+  clockedHours,
   formatDDMMYYYY,
   formatGBP,
   formatShiftRange,
   formatTimeOnly,
   shiftHours,
-  todayISO,
 } from "@/lib/utils";
 import type {
+  AllowedUser,
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
   LiveDashboardStatus,
+  ManagerClockEvent,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -31,6 +33,10 @@ type Props = {
   /** Recurring weekly templates — used as the fallback "expected" shift when no
    *  rota row is published for today (so missed shifts still show). */
   schedules?: EmployeeScheduleDay[];
+  /** Manager login accounts (allowed_users, role=manager) for attendance. */
+  managers?: AllowedUser[];
+  /** Today's manager clock rows, keyed on the login account. */
+  managerClocks?: ManagerClockEvent[];
   userRole: string;
   userStoreId: string | null;
 };
@@ -89,14 +95,18 @@ function rateOf(emp: Employee): number {
   return Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0) || 0;
 }
 
-/** Hours actually worked so far today, from the clock event (open shifts count up to now). */
-function actualHoursOf(clock: ClockEvent | null | undefined, now: Date): number {
-  if (!clock?.clock_in_at) return 0;
-  const start = new Date(clock.clock_in_at).getTime();
-  const end = clock.clock_out_at ? new Date(clock.clock_out_at).getTime() : now.getTime();
-  const ms = end - start;
-  return ms > 0 ? ms / 3_600_000 : 0;
+/** Attendance status for a manager from their clock row. */
+type ManagerStatus = "on_shift" | "clocked_out" | "not_in";
+function managerStatusOf(mc: ManagerClockEvent | null | undefined): ManagerStatus {
+  if (mc?.clock_out_at) return "clocked_out";
+  if (mc?.clock_in_at) return "on_shift";
+  return "not_in";
 }
+const MANAGER_STATUS: Record<ManagerStatus, { label: string; cls: string }> = {
+  on_shift: { label: "On Shift", cls: "bg-success/15 text-success border-success/40" },
+  clocked_out: { label: "Clocked Out", cls: "bg-surface-hover text-text-subtle border-border" },
+  not_in: { label: "Not clocked in", cls: "bg-warning/15 text-warning border-warning/40" },
+};
 
 export function LiveDashboard({
   stores,
@@ -104,6 +114,8 @@ export function LiveDashboard({
   shifts,
   clocks,
   schedules = [],
+  managers = [],
+  managerClocks = [],
   userRole,
   userStoreId,
 }: Props) {
@@ -156,6 +168,21 @@ export function LiveDashboard({
 
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
+  const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
+
+  const storeById = new Map(stores.map((s) => [s.id, s]));
+
+  // Which store an employee belongs to TODAY: where they clocked in (the source
+  // of truth for where they actually are), else where they're scheduled, else
+  // their home store. Staff aren't locked to one store, so a visiting worker
+  // shows under the store they actually worked at — not their home store.
+  const todayStoreOf = (emp: Employee): string | null => {
+    const c = clockByEmp.get(emp.id);
+    if (c?.store_id) return c.store_id;
+    const s = shiftByEmp.get(emp.id);
+    if (s?.store_id) return s.store_id;
+    return emp.store_id ?? null;
+  };
   const scheduleByEmpDay = new Map(
     schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
   );
@@ -200,8 +227,19 @@ export function LiveDashboard({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
-            (e) => e.store_id === store.id && e.employment_status === "active",
+            (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
           );
+          // This store's own staff who are working at ANOTHER store today, so the
+          // store's manager can see where they've gone.
+          const awayStaff = employees
+            .filter(
+              (e) =>
+                e.store_id === store.id &&
+                e.employment_status === "active" &&
+                todayStoreOf(e) !== store.id,
+            )
+            .map((e) => ({ emp: e, at: storeById.get(todayStoreOf(e) ?? "") ?? null }))
+            .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
           // Sort: manager first, then on-shift, then others
           const sorted = [...storeEmployees].sort((a, b) => {
             const pa = a.position === "Manager" ? 0 : 1;
@@ -209,8 +247,9 @@ export function LiveDashboard({
             return pa - pb || a.name.localeCompare(b.name);
           });
 
-          const manager = sorted.find((e) => e.position === "Manager");
-          const managerShift = manager ? effectiveShiftFor(manager.id).shift : null;
+          // Managers are login accounts (allowed_users), not employees — pulled
+          // from their own table with their own clock rows.
+          const storeManagers = managers.filter((m) => m.store_id === store.id);
 
           const onShiftCount = sorted.filter((e) => {
             const c = clockByEmp.get(e.id);
@@ -232,7 +271,7 @@ export function LiveDashboard({
                   ? Number(realShift.scheduled_hours)
                   : shiftHours(shift.start_time, shift.end_time)
                 : 0;
-            const actHours = actualHoursOf(clock, now);
+            const actHours = clockedHours(clock?.clock_in_at, clock?.clock_out_at, now);
             return {
               emp,
               shift,
@@ -246,6 +285,21 @@ export function LiveDashboard({
           const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
           const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
 
+          // Managers are on a fixed daily wage (not hourly), so their expected
+          // wage is always the full day-rate. Their actual wage only lands
+          // once clocked in — but unlike staff it doesn't prorate by hours,
+          // it's the full fixed amount for the day.
+          const managerExpectedTotal = storeManagers.reduce(
+            (s, m) => s + (Number(m.fixed_daily_wage) || 0),
+            0,
+          );
+          const managerActualTotal = storeManagers.reduce((s, m) => {
+            const mc = managerClockByMgr.get(m.id);
+            return s + (mc?.clock_in_at ? Number(m.fixed_daily_wage) || 0 : 0);
+          }, 0);
+          const expectedGrandTotal = expectedTotal + managerExpectedTotal;
+          const actualGrandTotal = actualTotal + managerActualTotal;
+
           return (
             <Card key={store.id} className="p-0 overflow-hidden">
               <div className="px-5 pt-5 pb-3 border-b border-border">
@@ -258,24 +312,62 @@ export function LiveDashboard({
                       {sorted.length} scheduled · {onShiftCount} on shift now
                     </p>
                   </div>
-                  {manager && (
-                    <div className="text-right">
-                      <div className="text-[10px] uppercase tracking-wider text-text-muted">
-                        Manager on Shift
-                      </div>
-                      <div className="text-sm font-medium text-text-primary">
-                        {manager.name}
-                      </div>
-                      <div className="text-xs text-text-subtle">
-                        {formatShiftRange(
-                          managerShift?.is_day_off ?? false,
-                          managerShift?.start_time ?? null,
-                          managerShift?.end_time ?? null,
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
+
+                {/* Manager attendance — clock in/out for monitoring (fixed salary) */}
+                {storeManagers.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-border bg-surface-hover/50 p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-text-muted mb-2">
+                      Manager attendance
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      {storeManagers.map((m) => {
+                        const mc = managerClockByMgr.get(m.id);
+                        const status = managerStatusOf(mc);
+                        const style = MANAGER_STATUS[status];
+                        const worked = mc?.clock_in_at
+                          ? clockedHours(mc.clock_in_at, mc.clock_out_at, now)
+                          : 0;
+                        return (
+                          <div
+                            key={m.id}
+                            className="flex items-start justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium text-text-primary truncate">
+                                {m.name || m.username}
+                              </div>
+                              {isSuperAdmin && m.fixed_daily_wage != null && (
+                                <div className="text-[11px] text-text-muted">
+                                  {formatGBP(m.fixed_daily_wage)} / day
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span
+                                className={
+                                  "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border " +
+                                  style.cls
+                                }
+                              >
+                                {style.label}
+                              </span>
+                              {mc?.clock_in_at && (
+                                <div className="text-[11px] text-text-muted mt-0.5 tabular-nums">
+                                  In {formatTimeOnly(mc.clock_in_at)}
+                                  {mc.clock_out_at
+                                    ? ` · Out ${formatTimeOnly(mc.clock_out_at)}`
+                                    : ""}{" "}
+                                  · {worked.toFixed(1)}h
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Daily wage summary — expected (from the schedule) vs actual (clocked so far) */}
                 <div className="mt-3 grid grid-cols-2 gap-2">
@@ -284,18 +376,50 @@ export function LiveDashboard({
                       Expected wage today
                     </div>
                     <div className="text-base font-semibold tabular-nums text-text-primary">
-                      {formatGBP(expectedTotal)}
+                      {formatGBP(expectedGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(expectedTotal)} staff + {formatGBP(managerExpectedTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted">
                       Actual wage so far
                     </div>
                     <div className="text-base font-semibold tabular-nums text-gold">
-                      {formatGBP(actualTotal)}
+                      {formatGBP(actualGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(actualTotal)} staff + {formatGBP(managerActualTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Home staff working at the other store today */}
+                {awayStaff.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-gold/90 mb-1.5">
+                      Working at another store today
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {awayStaff.map(({ emp, at }) => (
+                        <div
+                          key={emp.id}
+                          className="flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="text-text-primary truncate">{emp.name}</span>
+                          <span className="text-gold text-xs shrink-0">
+                            @ {at?.name ?? "another store"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">

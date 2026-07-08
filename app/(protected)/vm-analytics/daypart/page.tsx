@@ -1,21 +1,21 @@
 import {
   getDaypartChannels,
   getDaypartChannelDetail,
-  getMenuCategoryChannels,
+  getHourlyActivity,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange } from "@/lib/vm-analytics/format";
 import { shortStore, resolveStore } from "@/lib/vm-analytics/constants";
-import { Section, ChartCard } from "@/components/vm-analytics/Section";
+import { Section } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
-import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
+import { HourDayHeatmap, type HeatmapData } from "@/components/vm-analytics/HourDayHeatmap";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type DaypartInput } from "@/lib/vm-analytics/insights";
 import type {
   DaypartChannelRow,
   DaypartChannelDetailRow,
-  MenuCategoryChannelRow,
+  HourlyActivityRow,
 } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
@@ -156,87 +156,65 @@ function finalise(list: DaypartAgg[], detailed: boolean): DaypartAgg[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
-// Menu categories surfaced as their own per-channel AOV table, in display
-// order. These match btrim(category_name) in the line-item source.
-const MENU_CATEGORIES = ["Meal Boxes & Platters", "Platters"] as const;
-
-interface CategoryAgg {
-  category: string;
+// One row per trading hour, rolled up across the scoped store(s). avg_daily_*
+// per (weekday, hour) are summed the same way vm_v_daypart_summary rolls hours
+// into dayparts, so the hourly rows reconcile with the daypart totals exactly.
+interface HourAgg {
+  hour: number;
   orders: number;
   revenue: number;
   aov: number;
-  inStoreOrders: number;
-  inStoreRevenue: number;
-  inStoreAov: number;
-  deliveryOrders: number;
-  deliveryRevenue: number;
-  deliveryAov: number;
-  ownOrders: number;
-  ownRevenue: number;
-  ownAov: number;
-  aggOrders: number;
-  aggRevenue: number;
-  aggAov: number;
 }
 
-// Roll the per-channel rows up into one CategoryAgg per target category, using
-// the same channel-group / Own-vs-Aggregate split as the daypart table above.
-function aggregateCategories(rows: MenuCategoryChannelRow[]): CategoryAgg[] {
-  const m = new Map<string, CategoryAgg>();
+function aggregateHours(rows: HourlyActivityRow[]): HourAgg[] {
+  const m = new Map<number, HourAgg>();
   for (const r of rows) {
-    if (!(MENU_CATEGORIES as readonly string[]).includes(r.menu_category)) continue;
-    const cur =
-      m.get(r.menu_category) ??
-      ({
-        category: r.menu_category,
-        orders: 0,
-        revenue: 0,
-        aov: 0,
-        inStoreOrders: 0,
-        inStoreRevenue: 0,
-        inStoreAov: 0,
-        deliveryOrders: 0,
-        deliveryRevenue: 0,
-        deliveryAov: 0,
-        ownOrders: 0,
-        ownRevenue: 0,
-        ownAov: 0,
-        aggOrders: 0,
-        aggRevenue: 0,
-        aggAov: 0,
-      } as CategoryAgg);
-    const orders = n(r.orders);
-    const revenue = n(r.net_sales);
-    cur.orders += orders;
-    cur.revenue += revenue;
-    if (r.channel_group === "delivery") {
-      cur.deliveryOrders += orders;
-      cur.deliveryRevenue += revenue;
-    } else {
-      cur.inStoreOrders += orders;
-      cur.inStoreRevenue += revenue;
-    }
-    if (isOwn(r.channel_name)) {
-      cur.ownOrders += orders;
-      cur.ownRevenue += revenue;
-    } else if (isAggregate(r.channel_name)) {
-      cur.aggOrders += orders;
-      cur.aggRevenue += revenue;
-    }
-    m.set(r.menu_category, cur);
+    const hour = Math.trunc(n(r.order_hour));
+    const cur = m.get(hour) ?? { hour, orders: 0, revenue: 0, aov: 0 };
+    cur.orders += n(r.avg_daily_orders);
+    cur.revenue += n(r.avg_daily_sales);
+    m.set(hour, cur);
   }
-  // Keep MENU_CATEGORIES order; drop categories with no sales this week.
-  return MENU_CATEGORIES.map((c) => m.get(c))
-    .filter((p): p is CategoryAgg => p !== undefined)
-    .map((p) => ({
-      ...p,
-      aov: aov(p.revenue, p.orders),
-      inStoreAov: aov(p.inStoreRevenue, p.inStoreOrders),
-      deliveryAov: aov(p.deliveryRevenue, p.deliveryOrders),
-      ownAov: aov(p.ownRevenue, p.ownOrders),
-      aggAov: aov(p.aggRevenue, p.aggOrders),
-    }));
+  return Array.from(m.values())
+    .map((h) => ({ ...h, aov: aov(h.revenue, h.orders) }))
+    .sort((a, b) => a.hour - b.hour);
 }
+
+// Hour × weekday order-count matrix for the heat map, from the same hourly rows
+// that feed the table below. avg_daily_orders is summed per (hour, weekday)
+// across the scoped store(s) and rounded to whole orders.
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+
+function buildHeatmap(rows: HourlyActivityRow[]): HeatmapData {
+  const dayIndex = (wd: string) => {
+    const p = wd.trim().slice(0, 3).toLowerCase();
+    return WEEKDAYS.findIndex((d) => d.toLowerCase().startsWith(p));
+  };
+  const byHour = new Map<number, number[]>();
+  for (const r of rows) {
+    const di = dayIndex(String(r.weekday));
+    if (di < 0) continue;
+    const hour = Math.trunc(n(r.order_hour));
+    const arr = byHour.get(hour) ?? new Array(7).fill(0);
+    arr[di] += n(r.avg_daily_orders);
+    byHour.set(hour, arr);
+  }
+  const hours = Array.from(byHour.keys()).sort((a, b) => a - b);
+  const cells = hours.map((h) => byHour.get(h)!.map((v) => Math.round(v)));
+  const rowTotals = cells.map((row) => row.reduce((s, v) => s + v, 0));
+  const colTotals = WEEKDAYS.map((_, di) => cells.reduce((s, row) => s + row[di], 0));
+  const grandTotal = rowTotals.reduce((s, v) => s + v, 0);
+  return { hours, days: [...WEEKDAYS], cells, rowTotals, colTotals, grandTotal };
+}
+
+// "17" -> "5pm", "12" -> "12pm", "0" -> "12am". Used to label an hour bucket as
+// the window it covers, e.g. hour 11 -> "11am-12pm".
+function hour12(h: number): string {
+  const period = h >= 12 && h < 24 ? "pm" : "am";
+  const hr = h % 12 === 0 ? 12 : h % 12;
+  return `${hr}${period}`;
+}
+const hourLabel = (h: number) => `${hour12(h)}-${hour12((h + 1) % 24)}`;
 
 export default async function DaypartPage({
   searchParams,
@@ -249,17 +227,17 @@ export default async function DaypartPage({
   let weekIso: string | null;
   let detailRows: DaypartChannelDetailRow[];
   let basicRows: DaypartChannelRow[];
-  let categoryRows: MenuCategoryChannelRow[];
+  let hourlyRows: HourlyActivityRow[];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [detailRows, basicRows, categoryRows] = await Promise.all([
+    [detailRows, basicRows, hourlyRows] = await Promise.all([
       getDaypartChannelDetail(weekIso),
       getDaypartChannels(weekIso),
-      getMenuCategoryChannels(weekIso),
+      getHourlyActivity(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -269,10 +247,11 @@ export default async function DaypartPage({
   if (activeStore) {
     detailRows = detailRows.filter((c) => c.store === activeStore);
     basicRows = basicRows.filter((c) => c.store === activeStore);
-    categoryRows = categoryRows.filter((c) => c.store === activeStore);
+    hourlyRows = hourlyRows.filter((c) => c.store === activeStore);
   }
 
-  const categories = aggregateCategories(categoryRows);
+  const hours = aggregateHours(hourlyRows);
+  const heatmap = buildHeatmap(hourlyRows);
 
   const hasDetail = detailRows.length > 0;
   const periods = hasDetail ? fromDetail(detailRows) : fromBasic(basicRows);
@@ -286,59 +265,47 @@ export default async function DaypartPage({
     );
   }
 
-  // Exact values throughout — money to the penny, AOV = revenue ÷ orders.
-  const money = (v: number | null) => (v === null ? "—" : gbp(v));
-  const count = (v: number | null) => (v === null ? "—" : int(v));
-
-  const dpColumns: Column<DaypartAgg>[] = [
-    { key: "dp", header: "Time Period", render: (r) => <span className="font-medium">{r.daypart}</span> },
+  // Hourly "Performance by Time Period" table. The raw hourly report has no
+  // channel dimension, so this view is Orders / Revenue / AOV only (the
+  // Own Delivery / Aggregate / In-store cuts are only defined per daypart).
+  const hourColumns: Column<HourAgg>[] = [
+    { key: "hour", header: "Time Period", render: (r) => <span className="font-medium">{hourLabel(r.hour)}</span> },
     { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
     { key: "revenue", header: "Revenue", align: "right", render: (r) => gbp(r.revenue) },
     { key: "aov", header: "AOV", align: "right", render: (r) => gbp(r.aov) },
-    { key: "deliveryAov", header: "AOV — Delivery", align: "right", render: (r) => gbp(r.deliveryAov) },
-    { key: "inStoreAov", header: "AOV — In-store", align: "right", render: (r) => gbp(r.inStoreAov) },
-    { key: "ownOrders", header: "Own Del — Orders", align: "right", render: (r) => count(r.ownOrders) },
-    { key: "ownRevenue", header: "Own Del — Revenue", align: "right", render: (r) => money(r.ownRevenue) },
-    { key: "ownAov", header: "Own Del — AOV", align: "right", render: (r) => money(r.ownAov) },
-    { key: "aggOrders", header: "Aggregate — Orders", align: "right", render: (r) => count(r.aggOrders) },
-    { key: "aggRevenue", header: "Aggregate — Revenue", align: "right", render: (r) => money(r.aggRevenue) },
-    { key: "aggAov", header: "Aggregate — AOV", align: "right", render: (r) => money(r.aggAov) },
-    { key: "inStoreOrders", header: "In-store — Orders", align: "right", render: (r) => int(r.inStoreOrders) },
-    { key: "inStoreRevenue", header: "In-store — Revenue", align: "right", render: (r) => gbp(r.inStoreRevenue) },
-    { key: "inStoreAov", header: "In-store — AOV", align: "right", render: (r) => gbp(r.inStoreAov) },
   ];
 
-  // AOV cell: show "—" rather than a misleading £0.00 when a channel had no
-  // orders for the category this week.
-  const catAov = (rev: number, ord: number) => (ord > 0 ? gbp(rev / ord) : "—");
+  // Trading-pattern facts for the commentary, drawn from the same hourly source
+  // as the heat map and the table above so the figures reconcile.
+  const dayTotals = heatmap.days.map((day, di) => ({ day, orders: heatmap.colTotals[di] }));
+  const busiestDay = dayTotals.reduce((a, b) => (b.orders > a.orders ? b : a), dayTotals[0]);
+  const quietestDay = dayTotals.reduce((a, b) => (b.orders < a.orders ? b : a), dayTotals[0]);
 
-  const catColumns: Column<CategoryAgg>[] = [
-    { key: "cat", header: "Category", render: (r) => <span className="font-medium">{r.category}</span> },
-    { key: "orders", header: "Orders", align: "right", render: (r) => int(r.orders) },
-    { key: "revenue", header: "Revenue", align: "right", render: (r) => gbp(r.revenue) },
-    { key: "aov", header: "AOV", align: "right", render: (r) => catAov(r.revenue, r.orders) },
-    { key: "inStoreAov", header: "AOV — In-store", align: "right", render: (r) => catAov(r.inStoreRevenue, r.inStoreOrders) },
-    { key: "deliveryAov", header: "AOV — Delivery", align: "right", render: (r) => catAov(r.deliveryRevenue, r.deliveryOrders) },
-    { key: "ownAov", header: "AOV — Own Delivery", align: "right", render: (r) => catAov(r.ownRevenue, r.ownOrders) },
-    { key: "aggAov", header: "AOV — Aggregator", align: "right", render: (r) => catAov(r.aggRevenue, r.aggOrders) },
-  ];
-
-  const dpChart = periods.map((p) => ({
-    period: p.daypart.replace(/\s*\(.*\)/, ""),
-    Revenue: Math.round(p.revenue),
-    Orders: Math.round(p.orders),
-  }));
+  let peakCell: { day: string; hourLabel: string; orders: number } | null = null;
+  heatmap.cells.forEach((row, ri) => {
+    row.forEach((v, ci) => {
+      if (!peakCell || v > peakCell.orders) {
+        peakCell = { day: heatmap.days[ci], hourLabel: hourLabel(heatmap.hours[ri]), orders: v };
+      }
+    });
+  });
 
   const insightInput: DaypartInput = {
     dashboard: "daypart",
     week: weekIso,
     store: activeStore,
-    periods: periods.map((p) => ({
-      daypart: p.daypart,
-      orders: p.orders,
-      revenue: p.revenue,
-      aov: p.aov,
+    hours: hours.map((h) => ({
+      label: hourLabel(h.hour),
+      orders: h.orders,
+      revenue: h.revenue,
+      aov: h.aov,
     })),
+    heatmap: {
+      busiestDay: heatmap.grandTotal > 0 ? busiestDay : null,
+      quietestDay: heatmap.grandTotal > 0 ? quietestDay : null,
+      peakCell: heatmap.grandTotal > 0 ? peakCell : null,
+      totalOrders: heatmap.grandTotal,
+    },
   };
   const draft = buildInsights(insightInput);
 
@@ -352,42 +319,23 @@ export default async function DaypartPage({
       <Commentary initial={draft} input={insightInput} />
 
       <Section
-        title="Performance by Time Period"
-        description={
-          hasDetail
-            ? "Orders, revenue and AOV per daypart, with Own Delivery, Aggregate (Deliveroo + Uber Eats + Just Eat) and In-store cuts so each AOV (= revenue ÷ orders) can be verified. Pre-opening orders (before 12:00 Hitchin / 11:30 Stevenage) are excluded."
-            : "Orders, revenue and AOV per daypart. Run daypart_channel_views.sql in Supabase to unlock the Own Delivery / Aggregate / Eat-in columns."
-        }
+        title="Order Heat Map — Hour × Day"
+        description="Orders per trading hour by weekday (average day's activity). Cells are shaded low→high; the Total column and Total row are shaded on their own scales."
       >
-        <DataTable columns={dpColumns} rows={periods} />
+        <HourDayHeatmap data={heatmap} />
       </Section>
 
       <Section
-        title="Meal Boxes & Platters / Platters"
-        description={
-          categories.length > 0
-            ? "Orders, revenue and per-channel AOV (= revenue ÷ orders) for these menu categories, with Own Delivery and Aggregate (Deliveroo + Uber Eats + Just Eat) cuts. Derived from line items so totals reconcile with the menu-category report."
-            : "No sales in these categories this week, or vm_v_menu_category_channel is not yet present — run menu_category_channel_views.sql in Supabase to unlock this table."
-        }
+        title="Performance by Time Period"
+        description="Orders, revenue and AOV per trading hour (AOV = revenue ÷ orders). Figures are the average day's activity for that hour, summed across the week — the same basis as the daypart totals, so the hours in a daypart add up to it exactly."
       >
         <DataTable
-          columns={catColumns}
-          rows={categories}
-          emptyMessage="No Meal Boxes & Platters / Platters sales for this week."
+          columns={hourColumns}
+          rows={hours}
+          emptyMessage="No hourly activity for this week."
         />
       </Section>
 
-      <Section title="Trading Patterns">
-        <ChartCard title="Revenue by Daypart">
-          <BarChartCard
-            data={dpChart}
-            xKey="period"
-            bars={[{ key: "Revenue", name: "Revenue" }]}
-            currency
-            height={320}
-          />
-        </ChartCard>
-      </Section>
     </div>
   );
 }

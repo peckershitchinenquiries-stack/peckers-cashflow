@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { CrewClockApp } from "@/components/crew/CrewClockApp";
 import {
   endOfISOWeek,
@@ -22,12 +23,7 @@ export default async function AttendancePage() {
   const user = await requireRole(["employee"]);
   const supabase = createServerSupabase();
 
-  const { data: employee } = await supabase
-    .from("employees")
-    .select("*")
-    .or(`auth_user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
+  const employee = await findEmployeeForUser(supabase, user.id, user.email);
 
   if (!employee) {
     return (
@@ -47,10 +43,10 @@ export default async function AttendancePage() {
   const weekStart = startOfISOWeek(new Date());
   const weekEnd = endOfISOWeek(new Date());
 
-  const [storeRes, shiftsRes, clockRes, schedulesRes] = await Promise.all([
-    employee.store_id
-      ? supabase.from("stores").select("*").eq("id", employee.store_id).maybeSingle()
-      : Promise.resolve({ data: null, error: null }),
+  const [storesRes, shiftsRes, weekClocksRes, schedulesRes] = await Promise.all([
+    // All stores — staff can clock in at whichever one they're physically at,
+    // not only their home store.
+    supabase.from("stores").select("*").order("name"),
     supabase
       .from("rota_shifts")
       .select("*")
@@ -58,17 +54,22 @@ export default async function AttendancePage() {
       .gte("shift_date", toISODate(weekStart))
       .lte("shift_date", toISODate(weekEnd))
       .order("shift_date"),
+    // Whole week of clock events so the crew screen can show worked hours per
+    // day + a weekly total. Today's row is derived from this set.
     supabase
       .from("clock_events")
       .select("*")
       .eq("employee_id", employee.id)
-      .eq("event_date", today)
-      .maybeSingle(),
+      .gte("event_date", toISODate(weekStart))
+      .lte("event_date", toISODate(weekEnd)),
     supabase
       .from("employee_schedules")
       .select("*")
       .eq("employee_id", employee.id),
   ]);
+
+  const weekClocks = (weekClocksRes.data ?? []) as ClockEvent[];
+  const todayClock = weekClocks.find((c) => c.event_date === today) ?? null;
 
   return (
     <>
@@ -78,10 +79,11 @@ export default async function AttendancePage() {
       />
       <CrewClockApp
         employee={employee as Employee}
-        store={(storeRes.data ?? null) as Store | null}
+        stores={(storesRes.data ?? []) as Store[]}
         weekShifts={(shiftsRes.data ?? []) as RotaShift[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
-        todayClock={(clockRes.data ?? null) as ClockEvent | null}
+        todayClock={todayClock}
+        weekClocks={weekClocks}
       />
     </>
   );

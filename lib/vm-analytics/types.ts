@@ -100,6 +100,20 @@ export interface DaypartChannelDetailRow {
   aov: Num;
 }
 
+// Per (store, weekday, hour) trading activity from the raw
+// vm_hourly_order_activity report. avg_daily_* are the average across the days
+// that hour traded, so summing them per hour across weekdays reproduces the
+// vm_v_daypart_summary orders/revenue exactly.
+export interface HourlyActivityRow {
+  store: string;
+  week_start: string;
+  weekday: string;
+  weekday_id: Num;
+  order_hour: Num;
+  avg_daily_sales: Num;
+  avg_daily_orders: Num;
+}
+
 export interface WeekdayRow {
   store: string;
   week_start: string;
@@ -230,6 +244,11 @@ export interface WeekOption {
   week_end: string;
   week_start_iso: string;
 }
+
+// Executive dashboard view mode. "week" = a single completed week (default);
+// "4w"/"12w" = the latest N completed weeks aggregated, compared to the same N
+// weeks one year earlier.
+export type ExecMode = "week" | "4w" | "12w";
 
 // Row from the `weekly_summary_inputs` Supabase table.
 // Numeric columns arrive as strings via PostgREST.

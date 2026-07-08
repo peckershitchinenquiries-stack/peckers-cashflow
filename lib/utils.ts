@@ -239,6 +239,25 @@ export function formatDateTimeShort(iso: string | null | undefined): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * Hours actually worked between a clock-in and clock-out (timestamptz strings).
+ * An open shift (no clock-out yet) counts up to `now`. Returns 0 if not clocked
+ * in or on bad input. Shared by the crew screen and the live dashboard.
+ */
+export function clockedHours(
+  clockInAt: string | null | undefined,
+  clockOutAt: string | null | undefined,
+  now: Date = new Date(),
+): number {
+  if (!clockInAt) return 0;
+  const start = new Date(clockInAt).getTime();
+  if (isNaN(start)) return 0;
+  const endMs = clockOutAt ? new Date(clockOutAt).getTime() : now.getTime();
+  if (isNaN(endMs)) return 0;
+  const ms = endMs - start;
+  return ms > 0 ? ms / 3_600_000 : 0;
+}
+
 // ---------------- geofencing ----------------
 /** Haversine distance in metres between two lat/lng points. */
 export function haversineMeters(

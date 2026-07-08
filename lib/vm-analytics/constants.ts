@@ -55,6 +55,20 @@ export function canonicalStore(store: string): string {
   return store;
 }
 
+export const normalizeItem = (s: string) =>
+  s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+
+// Drinks and side add-ons excluded from menu-performance views: they attach to
+// orders regardless of menu choice and would skew rankings / exception rules.
+export const EXCLUDED_PRODUCTS = new Set(
+  ["Pepsi Max", "Pepsi", "Fries", "Tango Orange", "Still Water", "Diet Pepsi", "7 Up Lemon and Lime"].map(
+    normalizeItem,
+  ),
+);
+
+export const isExcludedProduct = (itemName: string) =>
+  EXCLUDED_PRODUCTS.has(normalizeItem(itemName));
+
 // Thresholds for the Weekly Exception Report (rule-based exceptions).
 export const EXCEPTION_THRESHOLDS = {
   labourTargetPct: 30, // labour % of NET sales above this = risk

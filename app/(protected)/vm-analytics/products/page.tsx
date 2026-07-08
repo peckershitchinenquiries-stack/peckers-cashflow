@@ -1,6 +1,6 @@
 import { getProducts, getWeeks } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
-import { resolveStore, shortStore } from "@/lib/vm-analytics/constants";
+import { resolveStore, shortStore, isExcludedProduct } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
@@ -48,6 +48,7 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
   }
 
   return Array.from(map.values())
+    .filter((c) => !isExcludedProduct(c.item))
     .map((c) => ({
       item: c.item,
       units: c.units,
@@ -123,13 +124,13 @@ export default async function ProductsPage({
     },
   ];
 
-  const topChart = top.slice(0, 8).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
+  const topChart = top.slice(0, 5).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
 
   const insightInput: ProductInput = {
     dashboard: "products",
     week: weekIso,
     store: activeStore,
-    top: top.slice(0, 8).map((t) => ({
+    top: top.slice(0, 5).map((t) => ({
       item: t.item,
       units: t.units,
       revenue: t.revenue,
@@ -170,7 +171,7 @@ export default async function ProductsPage({
       </Section>
 
       <Section title="Volume Leaders">
-        <ChartCard title="Top 8 products by units sold">
+        <ChartCard title="Top 5 products by units sold">
           <BarChartCard
             data={topChart}
             xKey="item"

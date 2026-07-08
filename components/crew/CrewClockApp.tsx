@@ -11,6 +11,7 @@ import { clockIn, clockOut, updateDeliveryCount } from "@/app/actions/clock";
 import {
   WEEKDAY_LONG,
   addDays,
+  clockedHours,
   formatDDMMYYYY,
   formatShiftRange,
   formatTimeOnly,
@@ -33,24 +34,28 @@ import { hasRole } from "@/lib/types";
 
 type Props = {
   employee: Employee;
-  store: Store | null;
+  /** All stores — staff can clock in at whichever one they're physically at. */
+  stores: Store[];
   weekShifts: RotaShift[];
   schedules?: EmployeeScheduleDay[];
   todayClock: ClockEvent | null;
+  /** This week's clock events (Mon–Sun) — drives the worked-hours history. */
+  weekClocks?: ClockEvent[];
 };
 
 type GeoState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ok"; lat: number; lng: number; accuracy: number; distance: number | null }
+  | { status: "ok"; lat: number; lng: number; accuracy: number }
   | { status: "denied" | "error"; message: string };
 
 export function CrewClockApp({
   employee,
-  store,
+  stores,
   weekShifts,
   schedules = [],
   todayClock,
+  weekClocks = [],
 }: Props) {
   const router = useRouter();
   const toast = useToast();
@@ -79,11 +84,38 @@ export function CrewClockApp({
   const isDriver = hasRole(employee.position, "Driver");
   const weekStart = startOfISOWeek(new Date());
 
+  // Stores that can actually be clocked at (coordinates configured).
+  const locatedStores = React.useMemo(
+    () => stores.filter((s) => s.latitude != null && s.longitude != null),
+    [stores],
+  );
+
   const scheduleByWeekday = React.useMemo(() => {
     const m = new Map<number, EmployeeScheduleDay>();
     for (const s of schedules) m.set(s.weekday, s);
     return m;
   }, [schedules]);
+
+  // Clock events keyed by date, plus the week's worked-hours total (completed
+  // shifts only — an in-progress shift is shown per-day but not yet summed).
+  const clockByDate = React.useMemo(() => {
+    const m = new Map<string, ClockEvent>();
+    for (const c of weekClocks) m.set(c.event_date, c);
+    return m;
+  }, [weekClocks]);
+
+  const weekWorkedHours = React.useMemo(
+    () =>
+      weekClocks.reduce(
+        (sum, c) => sum + (c.clock_out_at ? clockedHours(c.clock_in_at, c.clock_out_at) : 0),
+        0,
+      ),
+    [weekClocks],
+  );
+
+  const todayWorkedHours = todayClock?.clock_out_at
+    ? clockedHours(todayClock.clock_in_at, todayClock.clock_out_at)
+    : 0;
 
   // Effective shift for a date: published rota row first, else the employee's
   // recurring schedule template for that weekday.
@@ -111,7 +143,11 @@ export function CrewClockApp({
 
   const todayEff = effFor(today, weekdayIndex(new Date()));
 
-  const storeConfigured = store?.latitude != null && store?.longitude != null;
+  const clockedIn = !!todayClock?.clock_in_at && !todayClock?.clock_out_at;
+  const clockedOut = !!todayClock?.clock_out_at;
+
+  // What the big action button should do right now: clock in, clock out, or done.
+  const currentPhase: "in" | "out" | "done" = clockedOut ? "done" : clockedIn ? "out" : "in";
 
   const requestLocation = React.useCallback(() => {
     setGeo({ status: "loading" });
@@ -121,21 +157,11 @@ export function CrewClockApp({
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const distance =
-          store?.latitude != null && store?.longitude != null
-            ? haversineMeters(
-                Number(store.latitude),
-                Number(store.longitude),
-                pos.coords.latitude,
-                pos.coords.longitude,
-              )
-            : null;
         setGeo({
           status: "ok",
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
-          distance,
         });
       },
       (err) => {
@@ -150,24 +176,74 @@ export function CrewClockApp({
       },
       { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 },
     );
-  }, [store?.latitude, store?.longitude]);
+  }, []);
 
   // Capture location automatically when the page opens so the clock button is
   // ready immediately (it triggers the browser's permission prompt once).
   React.useEffect(() => {
-    if (storeConfigured) requestLocation();
+    if (locatedStores.length > 0) requestLocation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Distance to every clockable store from the current position, nearest first.
+  const storeDistances = React.useMemo(() => {
+    if (geo.status !== "ok") return [] as { store: Store; distance: number; inRange: boolean }[];
+    return locatedStores
+      .map((s) => {
+        const distance = haversineMeters(
+          Number(s.latitude),
+          Number(s.longitude),
+          geo.lat,
+          geo.lng,
+        );
+        return {
+          store: s,
+          distance,
+          inRange: isWithinGeofence(distance, s.geofence_radius_m, geo.accuracy),
+        };
+      })
+      .sort((a, b) => a.distance - b.distance);
+  }, [geo, locatedStores]);
+
+  // The store this clock action applies to:
+  //  - clocking out / done: the store they clocked IN at (fixed for the day).
+  //  - clocking in: auto-detected — the nearest store they're within range of.
+  const clockedStore =
+    todayClock?.store_id ? stores.find((s) => s.id === todayClock.store_id) ?? null : null;
+
+  let targetStore: Store | null;
+  let targetDistance: number | null;
+  let inRange: boolean;
+  if (currentPhase === "out" || currentPhase === "done") {
+    targetStore = clockedStore;
+    const d = storeDistances.find((sd) => sd.store.id === clockedStore?.id) ?? null;
+    targetDistance = d?.distance ?? null;
+    inRange = !!d?.inRange;
+  } else {
+    const detected = storeDistances.find((sd) => sd.inRange) ?? null;
+    // Fall back to the nearest store purely for the "you're Xm away" message.
+    targetStore = detected?.store ?? storeDistances[0]?.store ?? null;
+    targetDistance = detected?.distance ?? storeDistances[0]?.distance ?? null;
+    inRange = !!detected;
+  }
 
   async function doClockIn() {
     if (geo.status !== "ok") {
       toast.error("Capture your location first.");
       return;
     }
+    if (!inRange || !targetStore) {
+      toast.error("You're not within range of a store yet.");
+      return;
+    }
     setBusy(true);
     try {
-      await clockIn({ latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy });
-      toast.success("Clocked in. Have a good shift!");
+      const res = await clockIn({ latitude: geo.lat, longitude: geo.lng, accuracy: geo.accuracy });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Clocked in at ${targetStore.name}. Have a good shift!`);
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
@@ -195,7 +271,7 @@ export function CrewClockApp({
     }
     setBusy(true);
     try {
-      await clockOut({
+      const res = await clockOut({
         latitude: geo.lat,
         longitude: geo.lng,
         accuracy: geo.accuracy,
@@ -206,6 +282,10 @@ export function CrewClockApp({
         extra_short_reason: isDriver ? extraShortReason.trim() || null : null,
         extra_long_reason: isDriver ? extraLongReason.trim() || null : null,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Clocked out. Thanks!");
       router.refresh();
     } catch (err) {
@@ -227,7 +307,7 @@ export function CrewClockApp({
     }
     setBusy(true);
     try {
-      await updateDeliveryCount({
+      const res = await updateDeliveryCount({
         short_count: Number(shortDeliveries) || 0,
         long_count: Number(longDeliveries) || 0,
         extra_short_deliveries: Number(extraShort) || 0,
@@ -235,6 +315,10 @@ export function CrewClockApp({
         extra_short_reason: extraShortReason.trim() || null,
         extra_long_reason: extraLongReason.trim() || null,
       });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
       toast.success("Live delivery count updated.");
       router.refresh();
     } catch (err) {
@@ -244,18 +328,7 @@ export function CrewClockApp({
     }
   }
 
-  const inRange =
-    geo.status === "ok" &&
-    store?.geofence_radius_m != null &&
-    geo.distance != null &&
-    isWithinGeofence(geo.distance, store.geofence_radius_m, geo.accuracy);
-
-  const clockedIn = !!todayClock?.clock_in_at && !todayClock?.clock_out_at;
-  const clockedOut = !!todayClock?.clock_out_at;
-  const notStarted = !todayClock?.clock_in_at;
-
-  // What the big action button should do right now.
-  const phase: "in" | "out" | "done" = clockedOut ? "done" : clockedIn ? "out" : "in";
+  const noStoresConfigured = locatedStores.length === 0;
 
   return (
     <div className="flex flex-col gap-5">
@@ -267,21 +340,17 @@ export function CrewClockApp({
             <CardDescription>
               {todayEff
                 ? todayEff.is_day_off
-                  ? `Marked as Day Off${store?.name ? ` at ${store.name}` : ""} — clock in only if you're covering.`
-                  : `Scheduled ${formatShiftRange(false, todayEff.start, todayEff.end)} at ${store?.name ?? "your store"}${todayEff.fromTemplate ? " (your default schedule)" : ""}`
-                : `No shift scheduled today${store?.name ? ` at ${store.name}` : ""}. You can still clock in if you're working.`}
+                  ? "Marked as Day Off — clock in only if you're covering."
+                  : `Scheduled ${formatShiftRange(false, todayEff.start, todayEff.end)}${todayEff.fromTemplate ? " (your default schedule)" : ""}`
+                : "No shift scheduled today. You can still clock in if you're working."}
             </CardDescription>
           </div>
         </CardHeader>
 
-        {!employee.store_id ? (
+        {noStoresConfigured ? (
           <p className="text-sm text-danger">
-            You&apos;re not assigned to a store yet. Ask your manager to set your store.
-          </p>
-        ) : !storeConfigured ? (
-          <p className="text-sm text-danger">
-            Your store&apos;s location hasn&apos;t been set up yet. Ask your admin to add the
-            store coordinates before you can clock in.
+            No store locations have been set up yet. Ask your admin to add the store
+            coordinates before you can clock in.
           </p>
         ) : (
           <div className="flex flex-col gap-4">
@@ -301,12 +370,18 @@ export function CrewClockApp({
                     {geo.status === "loading"
                       ? "Getting your location…"
                       : geo.status === "ok"
-                        ? geo.distance != null
-                          ? `${Math.round(geo.distance)}m from ${store?.name ?? "store"} · ±${Math.round(geo.accuracy)}m GPS accuracy`
-                          : "No store location configured."
+                        ? currentPhase === "out" || currentPhase === "done"
+                          ? targetStore
+                            ? `${targetDistance != null ? `${Math.round(targetDistance)}m from ` : "At "}${targetStore.name} · ±${Math.round(geo.accuracy)}m GPS accuracy`
+                            : "Clocked-in store unavailable."
+                          : inRange && targetStore
+                            ? `You're at ${targetStore.name} · ${targetDistance != null ? `${Math.round(targetDistance)}m away · ` : ""}±${Math.round(geo.accuracy)}m GPS`
+                            : targetStore
+                              ? `${Math.round(targetDistance ?? 0)}m from ${targetStore.name} — move closer to clock in.`
+                              : "No store nearby."
                         : geo.status === "denied" || geo.status === "error"
                           ? geo.message
-                          : `You must be within ${store?.geofence_radius_m ?? 250}m of ${store?.name ?? "your store"}.`}
+                          : "Getting your location…"}
                   </p>
                 </div>
                 <Button
@@ -321,20 +396,26 @@ export function CrewClockApp({
             </div>
 
             {/* Big primary action */}
-            {phase === "done" ? (
+            {currentPhase === "done" ? (
               <div className="rounded-xl border border-success/30 bg-success/10 p-4 text-sm text-success">
-                <div className="flex items-center gap-2 font-medium">
-                  <ClockIcon size={16} /> Shift complete for today
+                <div className="flex items-center justify-between gap-2 font-medium">
+                  <span className="flex items-center gap-2">
+                    <ClockIcon size={16} /> Shift complete for today
+                  </span>
+                  <span className="text-base font-semibold tabular-nums">
+                    {todayWorkedHours.toFixed(2)}h
+                  </span>
                 </div>
                 <p className="text-xs mt-1 text-success/80">
-                  Clocked in {formatTimeOnly(todayClock?.clock_in_at)} · Clocked out{" "}
+                  You worked {todayWorkedHours.toFixed(2)}h{clockedStore ? ` at ${clockedStore.name}` : ""} — clocked in{" "}
+                  {formatTimeOnly(todayClock?.clock_in_at)} · clocked out{" "}
                   {formatTimeOnly(todayClock?.clock_out_at)}
                 </p>
               </div>
             ) : (
               <div className="flex flex-col gap-3">
                 {/* Drivers enter short + long deliveries before clocking out */}
-                {phase === "out" && isDriver && (
+                {currentPhase === "out" && isDriver && (
                   <>
                     <div className="grid grid-cols-2 gap-2">
                       <Input
@@ -396,24 +477,28 @@ export function CrewClockApp({
                 <Button
                   size="lg"
                   className="w-full text-base h-14"
-                  variant={phase === "out" ? "secondary" : "primary"}
-                  onClick={phase === "out" ? doClockOut : doClockIn}
+                  variant={currentPhase === "out" ? "secondary" : "primary"}
+                  onClick={currentPhase === "out" ? doClockOut : doClockIn}
                   loading={busy}
                   disabled={!inRange || busy}
                   iconLeft={<ClockIcon size={18} />}
                 >
-                  {phase === "out" ? "Clock Out Now" : "Clock In Now"}
+                  {currentPhase === "out"
+                    ? `Clock Out${targetStore ? ` — ${targetStore.name}` : " Now"}`
+                    : `Clock In${inRange && targetStore ? ` at ${targetStore.name}` : " Now"}`}
                 </Button>
 
                 {!inRange && geo.status === "ok" && (
                   <p className="text-xs text-danger text-center">
-                    You&apos;re too far from {store?.name ?? "your store"} to clock {phase === "out" ? "out" : "in"}.
+                    {currentPhase === "out"
+                      ? `You're too far from ${targetStore?.name ?? "your store"} to clock out.`
+                      : "You're not within range of any store. Move closer to the store you're working at."}
                   </p>
                 )}
                 {geo.status === "ok" && (
                   <p className="text-[11px] text-text-muted text-center">
-                    {phase === "out"
-                      ? `Clocked in at ${formatTimeOnly(todayClock?.clock_in_at)}.`
+                    {currentPhase === "out"
+                      ? `Clocked in at ${formatTimeOnly(todayClock?.clock_in_at)}${clockedStore ? ` · ${clockedStore.name}` : ""}.`
                       : "Tip: tap Refresh if you've just arrived and you're showing out of range."}
                   </p>
                 )}
@@ -489,19 +574,33 @@ export function CrewClockApp({
 
       {/* ---------- Week shifts ---------- */}
       <Card className="p-0 overflow-hidden">
-        <CardHeader className="px-5 pt-5">
-          <div>
-            <CardTitle>Your week</CardTitle>
-            <CardDescription>
-              {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Updates in real time when the manager edits the rota.
-            </CardDescription>
-          </div>
+        <CardHeader
+          className="px-5 pt-5 mb-0"
+          action={
+            <div className="text-right shrink-0">
+              <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                Worked this week
+              </div>
+              <div className="text-lg font-semibold text-gold tabular-nums">
+                {weekWorkedHours.toFixed(2)}h
+              </div>
+            </div>
+          }
+        >
+          <CardTitle>Your week</CardTitle>
+          <CardDescription>
+            {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Your scheduled shift and the hours you actually worked.
+          </CardDescription>
         </CardHeader>
         <div className="border-t border-border">
           {Array.from({ length: 7 }, (_, i) => {
             const date = addDays(weekStart, i);
             const dateIso = toISODate(date);
             const eff = effFor(dateIso, i);
+            const clk = clockByDate.get(dateIso);
+            const worked = clk?.clock_out_at
+              ? clockedHours(clk.clock_in_at, clk.clock_out_at)
+              : 0;
             const isToday = dateIso === today;
             return (
               <div
@@ -537,6 +636,19 @@ export function CrewClockApp({
                           )}
                         </>
                     : <span className="text-text-muted">No shift</span>}
+                  {clk?.clock_in_at &&
+                    (clk.clock_out_at ? (
+                      <span className="block text-[11px] mt-0.5">
+                        <span className="text-text-muted">
+                          Worked {formatTimeOnly(clk.clock_in_at)}–{formatTimeOnly(clk.clock_out_at)}
+                        </span>{" "}
+                        <span className="text-success font-medium">{worked.toFixed(2)}h</span>
+                      </span>
+                    ) : (
+                      <span className="block text-[11px] text-success mt-0.5">
+                        On shift since {formatTimeOnly(clk.clock_in_at)}
+                      </span>
+                    ))}
                 </div>
               </div>
             );

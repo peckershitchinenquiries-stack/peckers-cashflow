@@ -24,12 +24,12 @@ export function StoreSelector() {
   }
 
   return (
-    <label className="flex items-center gap-2 text-sm">
+    <label className="flex min-w-0 flex-1 items-center gap-2 text-sm sm:flex-none">
       <span className="text-secondary">Store</span>
       <select
         value={selected}
         onChange={onChange}
-        className="rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-gold focus:outline-none"
+        className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-gold focus:outline-none sm:flex-none"
       >
         <option value="" className="bg-surface text-primary">
           All Stores

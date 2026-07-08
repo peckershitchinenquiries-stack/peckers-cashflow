@@ -96,7 +96,13 @@ export interface DaypartInput {
   dashboard: "daypart";
   week: string;
   store?: string | null;
-  periods: { daypart: string; orders: number; revenue: number; aov: number }[];
+  hours: { label: string; orders: number; revenue: number; aov: number }[];
+  heatmap: {
+    busiestDay: { day: string; orders: number } | null;
+    quietestDay: { day: string; orders: number } | null;
+    peakCell: { day: string; hourLabel: string; orders: number } | null;
+    totalOrders: number;
+  };
 }
 
 export interface DeliveryInput {
@@ -229,30 +235,39 @@ function productInsight(i: ProductInput): { summary: string; bullets: string[] }
 function daypartInsight(i: DaypartInput): { summary: string; bullets: string[] } {
   const bullets: string[] = [];
   const scope = scopePhrase(i.store);
-  const ranked = [...i.periods].sort((a, b) => b.revenue - a.revenue);
-  const peak = ranked[0];
-  const quiet = ranked[ranked.length - 1];
+  const ranked = [...i.hours].sort((a, b) => b.orders - a.orders);
+  const peakHour = ranked[0];
 
-  let summary = peak
-    ? `${cap(scope)}, ${peak.daypart.toLowerCase()} was the busiest trading period this week, taking ${gbp(
-        peak.revenue
-      )} across ${num(peak.orders)} orders.`
-    : `No daypart activity was recorded ${scope} this week.`;
-  if (quiet && quiet !== peak) {
-    summary += ` ${cap(quiet.daypart)} was the quietest, making it the natural target for a promotion.`;
+  if (!peakHour) {
+    return {
+      summary: `No trading activity was recorded ${scope} this week.`,
+      bullets: [],
+    };
   }
 
-  const highestAov = [...i.periods].sort((a, b) => b.aov - a.aov)[0];
-  if (highestAov) {
-    summary += ` Customers spent the most per order during ${highestAov.daypart.toLowerCase()}, at ${gbp(
-      highestAov.aov
-    )} on average.`;
+  const hm = i.heatmap;
+  let summary = `${cap(scope)}, the busiest trading hour this week was ${peakHour.label} (${num(
+    peakHour.orders
+  )} orders, ${gbp(peakHour.revenue)})`;
+  if (hm.busiestDay) {
+    summary += `, and ${hm.busiestDay.day} was the busiest day of the week at ${num(
+      hm.busiestDay.orders
+    )} orders`;
+  }
+  summary += ".";
+  if (hm.peakCell) {
+    summary += ` The single peak window was ${hm.peakCell.day} ${hm.peakCell.hourLabel}, with ${num(
+      hm.peakCell.orders
+    )} orders.`;
+  }
+  if (hm.quietestDay) {
+    summary += ` ${hm.quietestDay.day} was the quietest day, making it the natural target for a promotion.`;
   }
 
-  for (const p of ranked.slice(0, 4)) {
+  for (const h of ranked.slice(0, 5)) {
     bullets.push(
-      `${p.daypart}: ${num(p.orders)} orders · ${gbp(p.revenue)} · ${gbp(
-        p.aov
+      `${h.label}: ${num(h.orders)} orders · ${gbp(h.revenue)} · ${gbp(
+        h.aov
       )} average order value.`
     );
   }

@@ -1,5 +1,21 @@
 export type StoreCode = "stevenage" | "hitchin";
 
+/**
+ * Standard result for user-triggered server actions. User-facing failures are
+ * RETURNED (not thrown): Next.js masks thrown error messages in production
+ * builds, so a thrown "You're 300m from the store" would reach the user as a
+ * useless generic "Server Components render" error.
+ */
+export type ActionResult = { ok: true } | { ok: false; error: string };
+
+/** Per-store rota preset times (HH:MM, 24h). Mirrors lib/settings ShiftTimeSettings. */
+export type StoreShiftTimes = {
+  driver_open: string;
+  kitchen_open: string;
+  evening_start: string;
+  close: string;
+};
+
 export type Store = {
   id: string;
   code: StoreCode;
@@ -7,6 +23,8 @@ export type Store = {
   latitude: number | null;
   longitude: number | null;
   geofence_radius_m: number;
+  /** Open/Evening/Close times used by this store's rota presets. */
+  shift_times: StoreShiftTimes;
   created_at: string;
 };
 
@@ -22,6 +40,9 @@ export type AllowedUser = {
   temp_password: string | null;
   must_change_password: boolean;
   employee_id: string | null;
+  /** A manager's FIXED daily wage (£). Monitoring/display only — never
+   *  drives any pay calculation. Null for admins/employees or if unset. */
+  fixed_daily_wage: number | null;
   created_at: string;
 };
 
@@ -169,6 +190,15 @@ export type CoverDriverRecord = {
   created_at: string;
 };
 
+/**
+ * Which rota preset produced a shift's times. Null = custom times entered by
+ * hand, a day off, or a legacy/auto-created shift.
+ *  - open_close:    open (11:30 driver / 09:00 kitchen) → close (23:00)
+ *  - evening_close: evening (17:00) → close (23:00)
+ * The exact times are configurable in Settings (`shift_times`).
+ */
+export type ShiftPreset = "open_close" | "evening_close";
+
 export type RotaShift = {
   id: string;
   employee_id: string;
@@ -178,6 +208,7 @@ export type RotaShift = {
   end_time: string | null;
   is_day_off: boolean;
   scheduled_hours: number;
+  shift_type: ShiftPreset | null;
   manager_notes: string | null;
   same_day_edit_reason: string | null;
   created_at: string;
@@ -221,6 +252,25 @@ export type ClockEvent = {
   extra_long_deliveries: number;
   extra_short_reason: string | null;
   extra_long_reason: string | null;
+  created_at: string;
+};
+
+/**
+ * A manager's clock in/out for a day. Managers are login accounts
+ * (allowed_users), not employees, so their attendance lives in its own table
+ * keyed on the login account. Monitoring only — never affects the fixed salary.
+ */
+export type ManagerClockEvent = {
+  id: string;
+  manager_id: string;
+  store_id: string | null;
+  event_date: string;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
+  clock_in_lat: number | null;
+  clock_in_lng: number | null;
+  clock_out_lat: number | null;
+  clock_out_lng: number | null;
   created_at: string;
 };
 

@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
+  LabelList,
   Legend,
   Line,
   LineChart,
@@ -16,6 +18,19 @@ import {
   YAxis,
 } from "recharts";
 import { truncTo } from "@/lib/vm-analytics/format";
+
+// Tracks whether the viewport is below the given breakpoint so charts can
+// switch between horizontal (desktop) and angled (mobile) axis labels.
+function useIsMobile(breakpoint = 640) {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 const PALETTE = [
   "#e11d2a",
@@ -34,6 +49,70 @@ const axisProps = {
   tickLine: false,
 };
 
+// Custom X-axis label that wraps long text into multiple lines
+const WrappedXAxisTick = (props: any) => {
+  const { x, y, payload } = props;
+  if (!payload?.value) return null;
+
+  const words = String(payload.value).split(" ");
+  const lines: string[] = [];
+  let currentLine = "";
+
+  // Wrap text at ~15 chars per line or by word boundaries
+  for (const word of words) {
+    if ((currentLine + " " + word).length > 15) {
+      if (currentLine) lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = currentLine ? currentLine + " " + word : word;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      fill="#64748b"
+      fontSize={12}
+    >
+      {lines.map((line, idx) => (
+        <tspan key={idx} x={x} dy={idx === 0 ? 12 : 14}>
+          {line}
+        </tspan>
+      ))}
+    </text>
+  );
+};
+
+// Angled X-axis label for narrow (mobile) widths. Anchoring at the end and
+// rotating around the tick origin makes the labels fan down to the left, so
+// they never overlap each other or the content below them.
+const AngledXAxisTick = (props: any) => {
+  const { x, y, payload } = props;
+  if (!payload?.value) return null;
+
+  const value = String(payload.value);
+  const label = value.length > 20 ? `${value.slice(0, 19)}…` : value;
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={14}
+        textAnchor="end"
+        transform="rotate(-35)"
+        fill="#64748b"
+        fontSize={11}
+      >
+        {label}
+      </text>
+    </g>
+  );
+};
+
 function gbpTick(v: number) {
   return `£${Math.round(v).toLocaleString()}`;
 }
@@ -44,18 +123,32 @@ export function BarChartCard({
   bars,
   height = 280,
   currency = false,
+  labelKey,
 }: {
   data: Record<string, unknown>[];
   xKey: string;
   bars: { key: string; name: string; color?: string }[];
   height?: number;
   currency?: boolean;
+  // When set, the value at data[labelKey] is drawn on top of each bar (e.g. the
+  // trading window "(11-2pm)" above each daypart). Only applied to the first bar.
+  labelKey?: string;
 }) {
+  const isMobile = useIsMobile();
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+      <BarChart
+        data={data}
+        margin={{ top: 8, right: 8, left: 4, bottom: isMobile ? 0 : 0 }}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-        <XAxis dataKey={xKey} {...axisProps} interval={0} angle={0} />
+        <XAxis
+          dataKey={xKey}
+          {...axisProps}
+          interval={0}
+          height={isMobile ? 90 : 70}
+          tick={isMobile ? <AngledXAxisTick /> : <WrappedXAxisTick />}
+        />
         <YAxis {...axisProps} tickFormatter={currency ? gbpTick : undefined} />
         <Tooltip
           formatter={(v: number) =>
@@ -72,7 +165,15 @@ export function BarChartCard({
             fill={b.color ?? PALETTE[i % PALETTE.length]}
             radius={[4, 4, 0, 0]}
             maxBarSize={48}
-          />
+          >
+            {labelKey && i === 0 && (
+              <LabelList
+                dataKey={labelKey}
+                position="top"
+                style={{ fontSize: 11, fill: "#64748b", fontWeight: 500 }}
+              />
+            )}
+          </Bar>
         ))}
       </BarChart>
     </ResponsiveContainer>

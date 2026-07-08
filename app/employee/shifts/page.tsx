@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { findEmployeeForUser } from "@/lib/employee-lookup";
 import {
   WEEKDAY_LONG,
   addDays,
@@ -132,12 +133,7 @@ export default async function ShiftsPage() {
   const user = await requireRole(["employee"]);
   const supabase = createServerSupabase();
 
-  const { data: employee } = await supabase
-    .from("employees")
-    .select("id")
-    .or(`auth_user_id.eq.${user.id},email.eq.${user.email.toLowerCase()}`)
-    .limit(1)
-    .maybeSingle();
+  const employee = await findEmployeeForUser(supabase, user.id, user.email);
 
   const thisWeek = startOfISOWeek(new Date());
   const nextWeek = addDays(thisWeek, 7);

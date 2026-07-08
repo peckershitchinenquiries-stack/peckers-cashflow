@@ -25,16 +25,24 @@ import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/ico
 import { applyScheduleToWeek } from "@/app/actions/schedule";
 import { worksForCash } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
-import { DEFAULT_SETTINGS, type MinWageBands } from "@/lib/settings";
+import { DEFAULT_SETTINGS, type MinWageBands, type ShiftTimeSettings } from "@/lib/settings";
 import type {
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
   RotaShift,
+  ShiftPreset,
   Store,
   WeeklyDelivery,
 } from "@/lib/types";
 import { hasRole } from "@/lib/types";
+
+/** Short label for a rota preset, shown under the time in a filled cell. */
+function presetShort(t: ShiftPreset | null): string | null {
+  if (t === "open_close") return "Open–Close";
+  if (t === "evening_close") return "Eve–Close";
+  return null;
+}
 
 type Props = {
   stores: Store[];
@@ -44,6 +52,7 @@ type Props = {
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
   minWageBands?: MinWageBands;
+  shiftTimes?: ShiftTimeSettings;
   rangeStartIso: string;
   rangeEndIso: string;
   userRole: string;
@@ -58,6 +67,7 @@ export function RotaView({
   weeklyDeliveries,
   schedules = [],
   minWageBands = DEFAULT_SETTINGS.min_wage_bands,
+  shiftTimes = DEFAULT_SETTINGS.shift_times,
   rangeStartIso,
   rangeEndIso,
   userRole,
@@ -77,6 +87,10 @@ export function RotaView({
       ? userStoreId
       : stores[0]?.id ?? "",
   );
+  // Employees the user has pulled onto this store's rota from another store
+  // (before their first shift is saved). Cleared when the active store changes.
+  const [addedVisitorIds, setAddedVisitorIds] = React.useState<string[]>([]);
+  React.useEffect(() => setAddedVisitorIds([]), [activeStoreId]);
   const [editingShift, setEditingShift] = React.useState<{
     employee: Employee;
     date: string;
@@ -100,9 +114,57 @@ export function RotaView({
   );
   const rangeDayCount = weekDays.length;
 
-  // Employees for current store
-  const storeEmployees = employees.filter(
-    (e) => e.store_id === activeStoreId && e.employment_status === "active",
+  const storeById = React.useMemo(() => new Map(stores.map((s) => [s.id, s])), [stores]);
+
+  const visibleDates = React.useMemo(
+    () => new Set(weekDays.map((d) => toISODate(d))),
+    [weekDays],
+  );
+
+  // Employees who have a shift AT the active store within the visible range —
+  // i.e. staff visiting from the other store to cover here.
+  const visitorIds = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const s of shifts) {
+      if (s.store_id === activeStoreId && visibleDates.has(s.shift_date)) {
+        set.add(s.employee_id);
+      }
+    }
+    return set;
+  }, [shifts, activeStoreId, visibleDates]);
+
+  // Rows shown on this store's rota: the store's own active staff, anyone with a
+  // shift here in range (a visitor), and anyone just picked from another store.
+  // Home staff sort first, then visitors, each alphabetical.
+  const rotaEmployees = React.useMemo(() => {
+    return employees
+      .filter(
+        (e) =>
+          e.employment_status === "active" &&
+          (e.store_id === activeStoreId ||
+            visitorIds.has(e.id) ||
+            addedVisitorIds.includes(e.id)),
+      )
+      .sort((a, b) => {
+        const av = a.store_id === activeStoreId ? 0 : 1;
+        const bv = b.store_id === activeStoreId ? 0 : 1;
+        return av - bv || a.name.localeCompare(b.name);
+      });
+  }, [employees, activeStoreId, visitorIds, addedVisitorIds]);
+
+  // Other-store staff not already on the grid — the pool for "add visiting staff".
+  const eligibleVisitors = React.useMemo(
+    () =>
+      employees
+        .filter(
+          (e) =>
+            e.employment_status === "active" &&
+            e.store_id !== activeStoreId &&
+            !visitorIds.has(e.id) &&
+            !addedVisitorIds.includes(e.id),
+        )
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [employees, activeStoreId, visitorIds, addedVisitorIds],
   );
 
   // Index shifts: key = `${employee_id}:${shift_date}`
@@ -230,48 +292,61 @@ export function RotaView({
     }
   }
 
+  // Hours scheduled AT THE ACTIVE STORE only (a shift can now sit at another
+  // store on any given day — those belong to that store's rota, not this one).
   function weekTotalHours(empId: string): number {
     return weekDays.reduce((sum, d) => {
       const s = shiftByKey.get(`${empId}:${toISODate(d)}`);
-      if (!s || s.is_day_off) return sum;
+      if (!s || s.is_day_off || s.store_id !== activeStoreId) return sum;
       return sum + Number(s.scheduled_hours ?? 0);
     }, 0);
   }
 
-  // Scheduled hours within the range, grouped by ISO week. The NI/cash split
-  // (first 20h NI, remainder cash) is a weekly rule, so for multi-week ranges
-  // we apply the 20h threshold per week rather than across the whole range.
+  // Active-store hours grouped by ISO week. The NI/cash split is a weekly rule,
+  // so for multi-week ranges we apply the threshold per week.
   function hoursByWeek(empId: string): number[] {
     const byWeek = new Map<string, number>();
     for (const d of weekDays) {
       const s = shiftByKey.get(`${empId}:${toISODate(d)}`);
-      if (!s || s.is_day_off) continue;
+      if (!s || s.is_day_off || s.store_id !== activeStoreId) continue;
       const wk = toISODate(startOfISOWeek(d));
       byWeek.set(wk, (byWeek.get(wk) ?? 0) + Number(s.scheduled_hours ?? 0));
     }
     return Array.from(byWeek.values());
   }
 
-  // Cash hours = sum of hours above 20 in each week of the range. Employees
-  // with no cash rate never accrue cash hours — every hour is NI.
+  // Cash hours for THIS store. NI/bank is a home-store concept: at the
+  // employee's home store only hours above the weekly limit are cash; at a store
+  // they're visiting, every hour is cash (no NI record there). No cash rate ⇒ no
+  // cash hours.
   function weekCashHours(emp: Employee): number {
     if (!worksForCash(emp)) return 0;
-    return hoursByWeek(emp.id).reduce((sum, h) => sum + Math.max(h - 20, 0), 0);
+    const isHome = emp.store_id === activeStoreId;
+    const limit = Number(emp.bank_weekly_hours_limit ?? 20) || 20;
+    return hoursByWeek(emp.id).reduce(
+      (sum, h) => sum + (isHome ? Math.max(h - limit, 0) : h),
+      0,
+    );
   }
 
   function weekWages(emp: Employee): { ni: number; cash: number; total: number } {
     const niRate = Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0);
     const cashRate = Number(emp.hourly_cash_rate ?? 0);
     const cashEligible = worksForCash(emp);
+    const isHome = emp.store_id === activeStoreId;
+    const limit = Number(emp.bank_weekly_hours_limit ?? 20) || 20;
     let niHours = 0;
     let cashHours = 0;
     for (const h of hoursByWeek(emp.id)) {
-      if (cashEligible) {
-        niHours += Math.min(h, 20);
-        cashHours += Math.max(h - 20, 0);
-      } else {
-        // No cash rate: all hours are NI, even above the weekly limit.
+      if (!cashEligible) {
+        // No cash rate: all hours are NI (only meaningful at the home store).
         niHours += h;
+      } else if (isHome) {
+        niHours += Math.min(h, limit);
+        cashHours += Math.max(h - limit, 0);
+      } else {
+        // Visiting another store — no NI record there, so all hours are cash.
+        cashHours += h;
       }
     }
     const ni = niHours * niRate;
@@ -279,10 +354,11 @@ export function RotaView({
     return { ni, cash, total: ni + cash };
   }
 
-  const expectedWageBill = storeEmployees.reduce(
+  const expectedWageBill = rotaEmployees.reduce(
     (sum, e) => sum + weekWages(e).total,
     0,
   );
+  const visitingCount = rotaEmployees.filter((e) => e.store_id !== activeStoreId).length;
 
   return (
     <div className="flex flex-col gap-6">
@@ -348,16 +424,34 @@ export function RotaView({
 
       {/* Rota grid */}
       <Card className="overflow-hidden p-0">
-        <CardHeader className="px-5 pt-5">
+        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3">
           <div>
             <CardTitle>{activeStore?.name ?? "—"} Rota</CardTitle>
             <CardDescription>
-              {storeEmployees.length} active staff · Expected wage bill{" "}
+              {rotaEmployees.length} staff
+              {visitingCount > 0 ? ` (${visitingCount} visiting)` : ""} · Expected wage bill{" "}
               <span className="text-text-primary font-medium">
                 {formatGBP(expectedWageBill)}
               </span>
             </CardDescription>
           </div>
+          {eligibleVisitors.length > 0 && (
+            <select
+              className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-w-[260px]"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) setAddedVisitorIds((p) => [...p, e.target.value]);
+              }}
+              title="Add a member of staff from the other store to cover a shift here"
+            >
+              <option value="">+ Add staff from another store…</option>
+              {eligibleVisitors.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} — {storeById.get(e.store_id ?? "")?.name ?? "Other store"}
+                </option>
+              ))}
+            </select>
+          )}
         </CardHeader>
 
         <div className="overflow-x-auto">
@@ -394,18 +488,18 @@ export function RotaView({
               </tr>
             </thead>
             <tbody>
-              {storeEmployees.length === 0 && (
+              {rotaEmployees.length === 0 && (
                 <tr>
                   <td
                     colSpan={16}
                     className="px-4 py-8 text-center text-text-muted"
                   >
-                    No active employees assigned to this store. Add staff in
-                    Employees and assign them to this location.
+                    No staff on this store&apos;s rota yet. Assign staff to this store
+                    in Employees, or add someone from the other store above.
                   </td>
                 </tr>
               )}
-              {storeEmployees.map((emp) => {
+              {rotaEmployees.map((emp) => {
                 const total = weekTotalHours(emp.id);
                 const cashHrs = weekCashHours(emp);
                 const avg = fourWkAvg.get(emp.id) ?? 0;
@@ -427,6 +521,14 @@ export function RotaView({
                   >
                     <td className="px-3 py-2 sticky left-0 bg-surface z-10 font-medium text-text-primary">
                       {emp.name}
+                      {emp.store_id !== activeStoreId && (
+                        <span
+                          className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
+                          title={`Visiting from ${storeById.get(emp.store_id ?? "")?.name ?? "another store"}`}
+                        >
+                          visiting
+                        </span>
+                      )}
                     </td>
                     <td className="px-2 py-2 text-text-subtle">
                       {emp.position ?? "—"}
@@ -451,9 +553,38 @@ export function RotaView({
                     </td>
                     {weekDays.map((d) => {
                       const dateIso = toISODate(d);
-                      const cell = shiftByKey.get(`${emp.id}:${dateIso}`);
-                      const clk = clockByKey.get(`${emp.id}:${dateIso}`);
+                      const rawCell = shiftByKey.get(`${emp.id}:${dateIso}`);
                       const isToday = dateIso === todayISO();
+                      // Scheduled at ANOTHER store this day — read-only here, so a
+                      // home manager can see where their staff are covering.
+                      if (rawCell && rawCell.store_id !== activeStoreId) {
+                        const awayStore = storeById.get(rawCell.store_id);
+                        return (
+                          <td
+                            key={dateIso}
+                            className={
+                              "px-1 py-1 text-center align-middle " +
+                              (isToday ? "bg-gold/5" : "")
+                            }
+                          >
+                            <div
+                              className="w-full h-12 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
+                              title={`Working at ${awayStore?.name ?? "another store"} this day`}
+                            >
+                              <span className="font-medium truncate max-w-full">
+                                @ {awayStore?.name?.split(" ")[0] ?? "Away"}
+                              </span>
+                              {!rawCell.is_day_off && rawCell.start_time && (
+                                <span className="opacity-80 truncate max-w-full">
+                                  {formatShiftRange(false, rawCell.start_time, rawCell.end_time)}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      }
+                      const cell = rawCell;
+                      const clk = clockByKey.get(`${emp.id}:${dateIso}`);
                       // Past days are read-only — managers & admins can view but
                       // not edit yesterday or earlier; only today onwards.
                       const isPast = dateIso < todayISO();
@@ -482,11 +613,18 @@ export function RotaView({
                       const cellInner = (
                         <>
                           {cell ? (
-                            formatShiftRange(
-                              cell.is_day_off,
-                              cell.start_time,
-                              cell.end_time,
-                            )
+                            <>
+                              {formatShiftRange(
+                                cell.is_day_off,
+                                cell.start_time,
+                                cell.end_time,
+                              )}
+                              {!cell.is_day_off && cell.shift_type && (
+                                <span className="block text-[9px] uppercase tracking-wide opacity-70">
+                                  {presetShort(cell.shift_type)}
+                                </span>
+                              )}
+                            </>
                           ) : showGhost ? (
                             <span className="opacity-60">
                               {ghost}
@@ -652,6 +790,7 @@ export function RotaView({
           storeId={activeStoreId}
           shiftDate={editingShift.date}
           existing={editingShift.existing}
+          shiftTimes={activeStore?.shift_times ?? shiftTimes}
           prefill={editingShift.prefill}
           onClose={() => setEditingShift(null)}
           onSaved={() => {

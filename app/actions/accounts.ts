@@ -74,6 +74,8 @@ export type ProvisionResult = {
 export async function createManagerAccount(input: {
   name: string;
   store_id: string;
+  /** Fixed daily wage (£) — monitoring/display only, never drives pay. */
+  fixed_daily_wage?: number | null;
 }): Promise<ProvisionResult> {
   await requireAdmin();
   if (!input.name?.trim()) throw new Error("Name is required");
@@ -99,6 +101,10 @@ export async function createManagerAccount(input: {
   // 2) whitelist + record credentials. Use the service-role client: writing
   // allowed_users is admin-only under RLS, and this action is already
   // authorised (requireAdmin), so we bypass the policy intentionally.
+  const wage =
+    input.fixed_daily_wage != null && Number(input.fixed_daily_wage) > 0
+      ? Number(input.fixed_daily_wage)
+      : null;
   const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
     name: input.name.trim(),
@@ -107,6 +113,7 @@ export async function createManagerAccount(input: {
     username,
     temp_password: password,
     must_change_password: true,
+    fixed_daily_wage: wage,
   });
   if (rowErr) {
     // roll back the auth user so we don't orphan it
@@ -123,6 +130,48 @@ export async function createManagerAccount(input: {
 
   revalidatePath("/managers");
   return { ok: true, username, password, loginUrl: "/manager/login" };
+}
+
+/**
+ * Admin-only: set/clear a manager's fixed daily wage (£). Display &
+ * monitoring only — it never feeds any pay calculation.
+ */
+export async function updateManagerWage(input: {
+  allowed_user_id: string;
+  fixed_daily_wage: number | null;
+}): Promise<{ ok: true }> {
+  await requireAdmin();
+  const supabase = createServerSupabase();
+
+  const { data: acct } = await supabase
+    .from("allowed_users")
+    .select("id, role")
+    .eq("id", input.allowed_user_id)
+    .maybeSingle();
+  if (!acct) throw new Error("Account not found");
+  if (acct.role !== "manager") throw new Error("Only managers have a fixed wage");
+
+  const wage =
+    input.fixed_daily_wage != null && Number(input.fixed_daily_wage) > 0
+      ? Number(input.fixed_daily_wage)
+      : null;
+
+  const { error } = await supabase
+    .from("allowed_users")
+    .update({ fixed_daily_wage: wage })
+    .eq("id", acct.id);
+  if (error) throw new Error(error.message);
+
+  await writeAudit({
+    action: "update_manager_wage",
+    entity: "allowed_user",
+    entity_id: acct.id,
+    changes: { fixed_daily_wage: wage },
+  });
+
+  revalidatePath("/managers");
+  revalidatePath("/live");
+  return { ok: true };
 }
 
 /**

@@ -5,6 +5,12 @@ import type { Insight } from "@/lib/vm-analytics/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Per-dashboard cache version. Present only for dashboards whose commentary
+// data definition has changed; absent dashboards keep the unversioned key.
+const CACHE_VERSIONS: Partial<Record<InsightInput["dashboard"], string>> = {
+  products: "v2",
+};
+
 export async function POST(req: Request): Promise<Response> {
   let input: InsightInput;
   try {
@@ -20,7 +26,13 @@ export async function POST(req: Request): Promise<Response> {
   // week is served for every store). All-Stores views send no store and keep
   // the plain dashboard key. Stored in the `dashboard` column, e.g.
   // "delivery" (all) vs "delivery@Peckers Hitchin".
-  const cacheKey = input.store ? `${input.dashboard}@${input.store}` : input.dashboard;
+  //
+  // Bump the version when the commentary's underlying data changes so stale
+  // pre-change rows stop matching and regenerate from the corrected input.
+  // products=v2: drinks and side add-ons (Fries, Pepsi, …) now excluded.
+  const version = CACHE_VERSIONS[input.dashboard];
+  const base = input.store ? `${input.dashboard}@${input.store}` : input.dashboard;
+  const cacheKey = version ? `${base}#${version}` : base;
 
   // ── Step 1: Cache check ────────────────────────────────────────────────────
   // If a summary for this (week, cacheKey) pair already exists, return it

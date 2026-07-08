@@ -128,7 +128,7 @@ export function DeliveryEditModal({
       // Persist every edited day's clocked deliveries in the same save.
       for (const d of changedDays) {
         const edit = dayEdits[d];
-        await setClockDeliveries({
+        const res = await setClockDeliveries({
           employee_id: driver.id,
           event_date: d,
           short_deliveries_count: Number(edit.short) || 0,
@@ -138,6 +138,7 @@ export function DeliveryEditModal({
           extra_short_reason: edit.reasonShort.trim() || null,
           extra_long_reason: edit.reasonLong.trim() || null,
         });
+        if (!res.ok) throw new Error(res.error);
       }
       router.refresh();
       onSaved();

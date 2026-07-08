@@ -26,16 +26,16 @@ export default async function VmAnalyticsLayout({
   return (
     <div className="flex flex-col gap-6">
       {/* VM Analytics sub-nav: dashboard picker + store/week selectors */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-border">
-        <div className="w-64">
+      <div className="flex flex-col gap-3 pb-4 border-b border-border md:flex-row md:flex-wrap md:items-center md:justify-between">
+        <div className="w-full md:w-64">
           <Suspense fallback={<div className="text-sm text-text-muted">Loading…</div>}>
             <DashboardSelector />
           </Suspense>
         </div>
         <Suspense fallback={null}>
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {weeks[0] && (
-              <span className="text-xs text-text-muted hidden sm:block">
+              <span className="text-xs text-text-muted hidden md:block">
                 Last synced: week ending {weeks[0].week_end}
               </span>
             )}
