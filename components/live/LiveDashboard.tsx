@@ -170,6 +170,8 @@ export function LiveDashboard({
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
 
+  const storeById = new Map(stores.map((s) => [s.id, s]));
+
   // Which store an employee belongs to TODAY: where they clocked in (the source
   // of truth for where they actually are), else where they're scheduled, else
   // their home store. Staff aren't locked to one store, so a visiting worker
@@ -227,6 +229,17 @@ export function LiveDashboard({
           const storeEmployees = employees.filter(
             (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
           );
+          // This store's own staff who are working at ANOTHER store today, so the
+          // store's manager can see where they've gone.
+          const awayStaff = employees
+            .filter(
+              (e) =>
+                e.store_id === store.id &&
+                e.employment_status === "active" &&
+                todayStoreOf(e) !== store.id,
+            )
+            .map((e) => ({ emp: e, at: storeById.get(todayStoreOf(e) ?? "") ?? null }))
+            .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
           // Sort: manager first, then on-shift, then others
           const sorted = [...storeEmployees].sort((a, b) => {
             const pa = a.position === "Manager" ? 0 : 1;
@@ -271,6 +284,21 @@ export function LiveDashboard({
           });
           const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
           const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
+
+          // Managers are on a fixed daily wage (not hourly), so their expected
+          // wage is always the full day-rate. Their actual wage only lands
+          // once clocked in — but unlike staff it doesn't prorate by hours,
+          // it's the full fixed amount for the day.
+          const managerExpectedTotal = storeManagers.reduce(
+            (s, m) => s + (Number(m.fixed_daily_wage) || 0),
+            0,
+          );
+          const managerActualTotal = storeManagers.reduce((s, m) => {
+            const mc = managerClockByMgr.get(m.id);
+            return s + (mc?.clock_in_at ? Number(m.fixed_daily_wage) || 0 : 0);
+          }, 0);
+          const expectedGrandTotal = expectedTotal + managerExpectedTotal;
+          const actualGrandTotal = actualTotal + managerActualTotal;
 
           return (
             <Card key={store.id} className="p-0 overflow-hidden">
@@ -348,18 +376,50 @@ export function LiveDashboard({
                       Expected wage today
                     </div>
                     <div className="text-base font-semibold tabular-nums text-text-primary">
-                      {formatGBP(expectedTotal)}
+                      {formatGBP(expectedGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(expectedTotal)} staff + {formatGBP(managerExpectedTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted">
                       Actual wage so far
                     </div>
                     <div className="text-base font-semibold tabular-nums text-gold">
-                      {formatGBP(actualTotal)}
+                      {formatGBP(actualGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(actualTotal)} staff + {formatGBP(managerActualTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                 </div>
+
+                {/* Home staff working at the other store today */}
+                {awayStaff.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-gold/90 mb-1.5">
+                      Working at another store today
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {awayStaff.map(({ emp, at }) => (
+                        <div
+                          key={emp.id}
+                          className="flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="text-text-primary truncate">{emp.name}</span>
+                          <span className="text-gold text-xs shrink-0">
+                            @ {at?.name ?? "another store"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">

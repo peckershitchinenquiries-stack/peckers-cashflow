@@ -38,6 +38,14 @@ export async function upsertShift(input: RotaShiftInput) {
   if (!input.store_id) throw new Error("Missing store");
   if (!input.shift_date) throw new Error("Missing date");
 
+  // A manager may schedule ANY employee (including staff visiting from the other
+  // store) but only ON their own store's rota — never edit another store's rota.
+  if (user.allowed!.role === "manager") {
+    if (!user.allowed!.store_id || input.store_id !== user.allowed!.store_id) {
+      throw new Error("Managers can only edit shifts at their own store.");
+    }
+  }
+
   // Past days are read-only — only today and future shifts can be edited.
   if (input.shift_date < todayISO()) {
     throw new Error(
@@ -156,19 +164,23 @@ export async function upsertShift(input: RotaShiftInput) {
 }
 
 export async function deleteShift(id: string) {
-  await requireAllowed();
+  const user = await requireAllowed();
   const supabase = createServerSupabase();
 
   // Block clearing shifts on past days — they are read-only.
   const { data: existing } = await supabase
     .from("rota_shifts")
-    .select("shift_date")
+    .select("shift_date, store_id")
     .eq("id", id)
     .maybeSingle();
   if (existing && existing.shift_date < todayISO()) {
     throw new Error(
       "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
     );
+  }
+  // Managers can only clear shifts on their own store's rota.
+  if (existing && user.allowed!.role === "manager" && existing.store_id !== user.allowed!.store_id) {
+    throw new Error("Managers can only clear shifts at their own store.");
   }
 
   const { error } = await supabase.from("rota_shifts").delete().eq("id", id);
