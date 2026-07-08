@@ -9,6 +9,7 @@ import { AllowedUsersAdmin } from "@/components/settings/AllowedUsersAdmin";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { StoresAdmin } from "@/components/settings/StoresAdmin";
 import { AuditLogList } from "@/components/settings/AuditLogList";
+import { GeofenceFailuresList } from "@/components/settings/GeofenceFailuresList";
 import { CashFlowSettingsCard } from "@/components/settings/CashFlowSettingsCard";
 import { ShiftTimesSettingsCard } from "@/components/settings/ShiftTimesSettingsCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
@@ -21,7 +22,7 @@ export default async function SettingsPage() {
   const supabase = createServerSupabase();
   const settings = await getAppSettings();
 
-  const [storesRes, adminsRes, auditRes] = await Promise.all([
+  const [storesRes, adminsRes, auditRes, geofenceFailuresRes] = await Promise.all([
     supabase.from("stores").select("*").order("name"),
     supabase
       .from("allowed_users")
@@ -32,6 +33,11 @@ export default async function SettingsPage() {
       .from("audit_log")
       .select("*")
       .order("created_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("geofence_failures")
+      .select("*")
+      .order("occurred_at", { ascending: false })
       .limit(50),
   ]);
 
@@ -82,6 +88,7 @@ export default async function SettingsPage() {
         <CashFlowSettingsCard initial={settings} />
         <ShiftTimesSettingsCard stores={storesRes.data ?? []} />
         <StoresAdmin stores={storesRes.data ?? []} />
+        <GeofenceFailuresList entries={geofenceFailuresRes.data ?? []} />
         <AllowedUsersAdmin
           initialUsers={adminsRes.data ?? []}
           currentUserEmail={user.email}

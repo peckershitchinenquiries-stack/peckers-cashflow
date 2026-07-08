@@ -6,7 +6,11 @@ import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admi
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { shiftHours, todayISO } from "@/lib/utils";
-import { detectStoreForLocation, verifyGeofenceAtStore } from "@/lib/geofence-verify";
+import {
+  detectStoreForLocation,
+  verifyGeofenceAtStore,
+  type GeofenceLogContext,
+} from "@/lib/geofence-verify";
 import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { hasRole, type ActionResult } from "@/lib/types";
 
@@ -63,8 +67,9 @@ async function verifyGeofence(
   lat: number,
   lng: number,
   accuracy?: number | null,
+  logCtx?: GeofenceLogContext,
 ) {
-  return verifyGeofenceAtStore(createServerSupabase(), storeId, lat, lng, accuracy);
+  return verifyGeofenceAtStore(createServerSupabase(), storeId, lat, lng, accuracy, logCtx);
 }
 
 export async function clockIn(input: {
@@ -97,6 +102,7 @@ async function performClockIn(input: {
     input.latitude,
     input.longitude,
     input.accuracy,
+    { actorEmail: user.email, employeeId: employee.id, action: "clock_in" },
   );
   const workedStoreId = detected.id;
 
@@ -270,6 +276,7 @@ async function performClockOut(input: ClockOutInput) {
     input.latitude,
     input.longitude,
     input.accuracy,
+    { actorEmail: user.email, employeeId: employee.id, action: "clock_out" },
   );
 
   const isDriver = hasRole(employee.position, "Driver");

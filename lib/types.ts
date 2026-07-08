@@ -338,6 +338,24 @@ export type AuditLogEntry = {
   created_at: string;
 };
 
+/** A failed clock-in/out geofence check — see migrations/014_geofence_failures.sql. */
+export type GeofenceFailure = {
+  id: string;
+  occurred_at: string;
+  actor_email: string;
+  employee_id: string | null;
+  manager_id: string | null;
+  action: "clock_in" | "clock_out";
+  attempted_lat: number;
+  attempted_lng: number;
+  accuracy_m: number | null;
+  nearest_store_id: string | null;
+  nearest_store_name: string | null;
+  distance_m: number;
+  radius_m: number;
+  message: string;
+};
+
 export type EmployeeWeeklySummary = {
   employee_id: string;
   employee_name: string;

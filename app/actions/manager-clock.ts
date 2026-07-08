@@ -61,6 +61,7 @@ async function performManagerClockIn(input: ClockInput) {
     input.latitude,
     input.longitude,
     input.accuracy,
+    { actorEmail: user.email, managerId, action: "clock_in" },
   );
 
   const today = todayISO();
@@ -122,6 +123,7 @@ async function performManagerClockOut(input: ClockInput) {
     input.latitude,
     input.longitude,
     input.accuracy,
+    { actorEmail: user.email, managerId, action: "clock_out" },
   );
 
   const today = todayISO();

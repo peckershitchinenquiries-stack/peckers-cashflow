@@ -10,12 +10,63 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { haversineMeters, isWithinGeofence } from "./utils";
 
+/** Who/what to attribute a logged geofence failure to. Optional everywhere —
+ *  omitting it just skips logging (e.g. call sites that don't have an actor
+ *  yet), it never affects the geofence check itself. */
+export type GeofenceLogContext = {
+  actorEmail: string;
+  employeeId?: string | null;
+  managerId?: string | null;
+  action: "clock_in" | "clock_out";
+};
+
+/**
+ * Best-effort record of a failed geofence check, so "why couldn't I clock in"
+ * can be answered from data later instead of guessed at. Never throws — a
+ * logging failure must not mask (or replace) the real geofence error.
+ */
+async function logGeofenceFailure(
+  supabase: SupabaseClient,
+  ctx: GeofenceLogContext | undefined,
+  info: {
+    lat: number;
+    lng: number;
+    accuracy?: number | null;
+    nearestStoreId: string | null;
+    nearestStoreName: string | null;
+    distance: number;
+    radius: number;
+    message: string;
+  },
+) {
+  if (!ctx) return;
+  try {
+    await supabase.from("geofence_failures").insert({
+      actor_email: ctx.actorEmail,
+      employee_id: ctx.employeeId ?? null,
+      manager_id: ctx.managerId ?? null,
+      action: ctx.action,
+      attempted_lat: info.lat,
+      attempted_lng: info.lng,
+      accuracy_m: info.accuracy ?? null,
+      nearest_store_id: info.nearestStoreId,
+      nearest_store_name: info.nearestStoreName,
+      distance_m: info.distance,
+      radius_m: info.radius,
+      message: info.message,
+    });
+  } catch (err) {
+    console.error("[geofence] failed to log failed attempt (non-blocking):", err);
+  }
+}
+
 export async function verifyGeofenceAtStore(
   supabase: SupabaseClient,
   storeId: string,
   lat: number,
   lng: number,
   accuracy?: number | null,
+  logCtx?: GeofenceLogContext,
 ): Promise<{ distance: number }> {
   const { data: store } = await supabase
     .from("stores")
@@ -35,9 +86,18 @@ export async function verifyGeofenceAtStore(
   );
   const radius = Number(store.geofence_radius_m ?? 250);
   if (!isWithinGeofence(distance, radius, accuracy)) {
-    throw new Error(
-      `You're ${Math.round(distance)}m from ${store.name}. You must be within ${radius}m to clock in or out.`,
-    );
+    const message = `You're ${Math.round(distance)}m from ${store.name}. You must be within ${radius}m to clock in or out.`;
+    await logGeofenceFailure(supabase, logCtx, {
+      lat,
+      lng,
+      accuracy,
+      nearestStoreId: storeId,
+      nearestStoreName: store.name,
+      distance,
+      radius,
+      message,
+    });
+    throw new Error(message);
   }
   return { distance };
 }
@@ -62,6 +122,7 @@ export async function detectStoreForLocation(
   lat: number,
   lng: number,
   accuracy?: number | null,
+  logCtx?: GeofenceLogContext,
 ): Promise<DetectedStore> {
   const { data: stores } = await supabase
     .from("stores")
@@ -90,9 +151,18 @@ export async function detectStoreForLocation(
   const inRange = ranked.find((s) => isWithinGeofence(s.distance, s.radius, accuracy));
   if (!inRange) {
     const nearest = ranked[0];
-    throw new Error(
-      `You're ${Math.round(nearest.distance)}m from ${nearest.name} — too far to clock in or out. You must be within ${nearest.radius}m of a store.`,
-    );
+    const message = `You're ${Math.round(nearest.distance)}m from ${nearest.name} — too far to clock in or out. You must be within ${nearest.radius}m of a store.`;
+    await logGeofenceFailure(supabase, logCtx, {
+      lat,
+      lng,
+      accuracy,
+      nearestStoreId: nearest.id,
+      nearestStoreName: nearest.name,
+      distance: nearest.distance,
+      radius: nearest.radius,
+      message,
+    });
+    throw new Error(message);
   }
   return { id: inRange.id, name: inRange.name, distance: inRange.distance };
 }
