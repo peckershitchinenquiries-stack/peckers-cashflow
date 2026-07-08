@@ -11,3 +11,5 @@ build
 next-env.d.ts
 .idea
 .vscode
+*.md
+*.xlsx
