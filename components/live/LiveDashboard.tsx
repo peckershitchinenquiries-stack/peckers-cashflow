@@ -285,6 +285,21 @@ export function LiveDashboard({
           const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
           const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
 
+          // Managers are on a fixed daily wage (not hourly), so their expected
+          // wage is always the full day-rate. Their actual wage only lands
+          // once clocked in — but unlike staff it doesn't prorate by hours,
+          // it's the full fixed amount for the day.
+          const managerExpectedTotal = storeManagers.reduce(
+            (s, m) => s + (Number(m.fixed_daily_wage) || 0),
+            0,
+          );
+          const managerActualTotal = storeManagers.reduce((s, m) => {
+            const mc = managerClockByMgr.get(m.id);
+            return s + (mc?.clock_in_at ? Number(m.fixed_daily_wage) || 0 : 0);
+          }, 0);
+          const expectedGrandTotal = expectedTotal + managerExpectedTotal;
+          const actualGrandTotal = actualTotal + managerActualTotal;
+
           return (
             <Card key={store.id} className="p-0 overflow-hidden">
               <div className="px-5 pt-5 pb-3 border-b border-border">
@@ -361,16 +376,26 @@ export function LiveDashboard({
                       Expected wage today
                     </div>
                     <div className="text-base font-semibold tabular-nums text-text-primary">
-                      {formatGBP(expectedTotal)}
+                      {formatGBP(expectedGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(expectedTotal)} staff + {formatGBP(managerExpectedTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                   <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted">
                       Actual wage so far
                     </div>
                     <div className="text-base font-semibold tabular-nums text-gold">
-                      {formatGBP(actualTotal)}
+                      {formatGBP(actualGrandTotal)}
                     </div>
+                    {isSuperAdmin && storeManagers.length > 0 && (
+                      <div className="text-[10px] text-text-muted mt-0.5">
+                        {formatGBP(actualTotal)} staff + {formatGBP(managerActualTotal)} mgrs
+                      </div>
+                    )}
                   </div>
                 </div>
 
