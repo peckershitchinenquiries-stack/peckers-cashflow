@@ -1,31 +1,91 @@
-import { getExec, getExecChannels, getWeeks, getYoy, yoyWeekIso } from "@/lib/vm-analytics/queries";
-import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 import {
-  shortStore,
-  STORES,
-  resolveStore,
-  DELIVERY_CHANNELS,
-  IN_STORE_CHANNELS,
-} from "@/lib/vm-analytics/constants";
+  getExec,
+  getExecChannels,
+  getExecMulti,
+  getExecChannelsMulti,
+  getLatestWeeks,
+  getWeeks,
+  getYoy,
+  getYoyMulti,
+  sumYoyRows,
+  yoyWeekIso,
+} from "@/lib/vm-analytics/queries";
+import { n, gbp, int, pct, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
+import { shortStore, STORES, resolveStore } from "@/lib/vm-analytics/constants";
 import { KpiCard, KpiGrid } from "@/components/vm-analytics/KpiCard";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import type { ExecRow, ExecChannelRow, YoyRow } from "@/lib/vm-analytics/types";
+import type { ExecRow, ExecChannelRow, YoyRow, ExecMode } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";
-import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown, type ChannelStat, type GroupAgg } from "@/lib/vm-analytics/channels";
+import { share, buildBreakdown, ownDelivery, aggregator, type Breakdown, type GroupAgg } from "@/lib/vm-analytics/channels";
 
 export const dynamic = "force-dynamic";
+
+// Per-week averaging for the 4/12-week views. Only EXTENSIVE quantities (money
+// totals and counts that accumulate week over week) are divided by the week
+// count; ratios (AOV, %s) are left untouched — a ratio of two averaged
+// quantities equals the ratio of the totals, so they are already correct.
+function averageGroup(g: GroupAgg, count: number): GroupAgg {
+  return {
+    ...g,
+    netSales: g.netSales / count,
+    orders: g.orders / count,
+    channels: g.channels.map((c) => ({ ...c, netSales: c.netSales / count, orders: c.orders / count })),
+  };
+}
+
+function averageBreakdown(b: Breakdown, count: number): Breakdown {
+  if (count <= 1) return b; // single-week: return the raw breakdown untouched
+  return {
+    ...b,
+    netSales: b.netSales / count,
+    customers: b.customers / count,
+    orders: b.orders / count,
+    delivery: averageGroup(b.delivery, count),
+    inStore: averageGroup(b.inStore, count),
+  };
+}
+
+function averageYoyRow(y: YoyRow, count: number): YoyRow {
+  if (count <= 1) return y;
+  const div = (v: unknown) => n(v) / count;
+  return {
+    ...y,
+    total_sales: div(y.total_sales),
+    delivery_sales: div(y.delivery_sales),
+    in_store_sales: div(y.in_store_sales),
+    own_delivery_sales: div(y.own_delivery_sales),
+    aggregate_sales: div(y.aggregate_sales),
+    total_orders: div(y.total_orders),
+    total_customers: div(y.total_customers),
+    new_customers: div(y.new_customers),
+    return_customers: div(y.return_customers),
+    own_delivery: div(y.own_delivery),
+    deliveroo: div(y.deliveroo),
+    just_eat: div(y.just_eat),
+    uber_eats: div(y.uber_eats),
+    click_collect: div(y.click_collect),
+    kiosk: div(y.kiosk),
+    till_eat_in: div(y.till_eat_in),
+    till_takeaway: div(y.till_takeaway),
+  };
+}
 
 export default async function ExecutivePage({
   searchParams,
 }: {
-  searchParams: { week?: string; store?: string };
+  searchParams: { week?: string; store?: string; mode?: string };
 }) {
   const activeStore = resolveStore(searchParams.store);
   const activeStores: readonly string[] = activeStore ? [activeStore] : STORES;
+
+  const mode: ExecMode =
+    searchParams.mode === "4w" ? "4w" : searchParams.mode === "12w" ? "12w" : "week";
+  const isMulti = mode !== "week";
+  const periodWeekCount = mode === "12w" ? 12 : 4;
 
   let weekIso: string | null;
   let rows: ExecRow[];
@@ -35,26 +95,66 @@ export default async function ExecutivePage({
   let weekEnd = "";
   let yoyRow: YoyRow | null = null;
   let yoyWeek = "";
+  // Multi-week period metadata (unused in single-week mode).
+  let periodLabel = "";
+  let periodMatched = 0;
+  let periodRequested = 0;
+  let yoyMatched = 0;
+  let yoyRequested = 0;
   try {
     // One getWeeks() call, then fan out all data fetches in parallel. Keeping the
     // render short reduces event-loop contention (and the chance the concurrent
     // auth fetch in middleware trips its dev-mode timeout).
     const weeks = await getWeeks();
-    weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
-    if (!weekIso) return <EmptyWeek />;
-    weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
 
-    const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
-    const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
-    yoyWeek = yoyWeekIso(weekIso);
+    if (!isMulti) {
+      // ── Single week: unchanged behaviour ────────────────────────────────────
+      weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
+      if (!weekIso) return <EmptyWeek />;
+      weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
 
-    [rows, chanRows, prevRows, prevChanRows, yoyRow] = await Promise.all([
-      getExec(weekIso),
-      getExecChannels(weekIso),
-      prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
-      prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
-      getYoy(weekIso, activeStore),
-    ]);
+      const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
+      const prevIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
+      yoyWeek = yoyWeekIso(weekIso);
+
+      [rows, chanRows, prevRows, prevChanRows, yoyRow] = await Promise.all([
+        getExec(weekIso),
+        getExecChannels(weekIso),
+        prevIso ? getExec(prevIso) : Promise.resolve<ExecRow[]>([]),
+        prevIso ? getExecChannels(prevIso) : Promise.resolve<ExecChannelRow[]>([]),
+        getYoy(weekIso, activeStore),
+      ]);
+    } else {
+      // ── 4/12-week: aggregate latest N weeks vs same N weeks last year ───────
+      const periodWeeks = await getLatestWeeks(periodWeekCount);
+      periodRequested = periodWeekCount;
+      periodMatched = periodWeeks.length;
+      const isoList = periodWeeks.map((w) => w.week_start_iso);
+
+      if (periodWeeks.length > 0) {
+        const oldest = periodWeeks[periodWeeks.length - 1];
+        const newest = periodWeeks[0];
+        weekIso = newest.week_start_iso; // representative (kept for typing/insights)
+        weekEnd = newest.week_end;
+        periodLabel = weekRange(oldest.week_start, newest.week_end);
+      } else {
+        weekIso = null;
+      }
+      yoyWeek = `same ${periodWeekCount} wks`;
+
+      const [execMulti, chanMulti, yoy] = await Promise.all([
+        getExecMulti(isoList),
+        getExecChannelsMulti(isoList),
+        getYoyMulti(isoList, activeStore),
+      ]);
+      rows = execMulti;
+      chanRows = chanMulti;
+      prevRows = []; // no "previous week" in multi-week mode
+      prevChanRows = [];
+      yoyMatched = yoy.matched;
+      yoyRequested = yoy.requested;
+      yoyRow = yoy.matched > 0 ? sumYoyRows(yoy.rows) : null;
+    }
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
@@ -70,10 +170,28 @@ export default async function ExecutivePage({
 
   const scopeLabel = activeStore ? shortStore(activeStore) : "Both stores combined";
 
+  // Header subtitle: a single week range, or the aggregated period with any
+  // partial-data notes (current-year weeks synced, prior-year weeks matched).
+  let subtitle: string;
+  if (isMulti) {
+    const notes: string[] = [];
+    if (periodMatched < periodRequested) notes.push(`${periodMatched} of ${periodRequested} weeks synced`);
+    if (yoyMatched < yoyRequested) notes.push(`prior-year: ${yoyMatched} of ${yoyRequested} weeks matched`);
+    subtitle =
+      `${scopeLabel} · Latest ${periodWeekCount} weeks (${periodLabel})` +
+      (notes.length ? ` · ${notes.join(" · ")}` : "");
+  } else {
+    subtitle = `${scopeLabel} · ${weekRange(weekIso, weekEnd)}`;
+  }
+
   // Breakdowns: one per active store, plus the combined scope and prev week.
+  // In 4/12-week mode every extensive figure is shown as a per-week average
+  // (period total ÷ N); single-week (avgN = 1) is left byte-for-byte unchanged.
+  const avgN = isMulti ? periodWeekCount : 1;
   const byStore = new Map<string, Breakdown>();
-  for (const s of activeStores) byStore.set(s, buildBreakdown([s], rows, chanRows));
-  const combined = buildBreakdown(activeStores, rows, chanRows);
+  for (const s of activeStores) byStore.set(s, averageBreakdown(buildBreakdown([s], rows, chanRows), avgN));
+  const combined = averageBreakdown(buildBreakdown(activeStores, rows, chanRows), avgN);
+  if (isMulti && yoyRow) yoyRow = averageYoyRow(yoyRow, periodWeekCount);
   const hasPrev = prevRows.length > 0;
   const prevCombined = buildBreakdown(activeStores, prevRows, prevChanRows);
   const prevByStore = new Map<string, Breakdown>();
@@ -152,14 +270,6 @@ export default async function ExecutivePage({
     "Net Sales — In-store": inStYoy,
   };
 
-  // Channels actually present (drops e.g. "Order & Pay at Table" when absent).
-  const present = (group: "delivery" | "inStore", canonical: readonly string[]) =>
-    canonical.filter((ch) =>
-      Array.from(byStore.values()).some((b) => b[group].channels.some((c) => c.channel === ch))
-    );
-  const presentDelivery = present("delivery", DELIVERY_CHANNELS);
-  const presentInStore = present("inStore", IN_STORE_CHANNELS);
-
   // ---- KPI Summary table (per store) -------------------------------------
   type KpiRowDef = {
     kpi: string;
@@ -171,16 +281,6 @@ export default async function ExecutivePage({
     // Primary numeric behind the cell, used to compute the WoW % shown next to
     // the previous-week value (combined vs previous-week combined).
     wowVal?: (b: Breakdown) => number;
-  };
-
-  // Every channel % is now share of the STORE's net sales (channel net ÷ store
-  // net), NOT share of its group — so Own Delivery % here matches the Delivery
-  // and other dashboards exactly. (pct truncates, so it never rounds up.)
-  const channelCell = (group: "delivery" | "inStore", ch: string) => (b: Breakdown) => {
-    const c = b[group].channels.find((x) => x.channel === ch);
-    if (!c) return "—";
-    const storeShare = b.netSales > 0 ? (100 * c.netSales) / b.netSales : 0;
-    return `${int(c.orders)} · ${pct(storeShare)}`;
   };
 
   const kpiRows: KpiRowDef[] = [
@@ -196,27 +296,6 @@ export default async function ExecutivePage({
     { kpi: "AOV — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).aov) },
     { kpi: "AOV — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).aov) },
     { kpi: "AOV — In-store", tone: "good", cell: (b) => gbp(b.inStore.aov) },
-    {
-      kpi: "Delivery Orders",
-      cell: (b) => `${int(b.delivery.orders)} · ${pct(b.deliveryPct)}`,
-    },
-    ...presentDelivery.map((ch): KpiRowDef => ({
-      kpi: ch,
-      indent: true,
-      tone: /own|direct/i.test(ch) ? "good" : /deliveroo|uber|just\s*eat/i.test(ch) ? "bad" : undefined,
-      cell: channelCell("delivery", ch),
-    })),
-    {
-      kpi: "In-store Orders",
-      tone: "good",
-      cell: (b) => `${int(b.inStore.orders)} · ${pct(b.inStorePct)}`,
-    },
-    ...presentInStore.map((ch): KpiRowDef => ({
-      kpi: ch,
-      indent: true,
-      tone: "good",
-      cell: channelCell("inStore", ch),
-    })),
   ];
 
   // Green for margin-friendly rows (in-store / own delivery), red for aggregator.
@@ -271,39 +350,6 @@ export default async function ExecutivePage({
           ? gbp(n(yoy.in_store_sales) / yoyIns)
           : "—";
 
-      // ── Delivery channel order counts ──────────────────────────────────────
-      case "Delivery Orders":
-        return yoyDelAll > 0
-          ? `${int(yoyDelAll)} · ${pct(n(yoy.delivery_pct))}`
-          : "—";
-      case "Own Delivery":
-        return yoyOwnDel > 0
-          ? `${int(yoyOwnDel)} · ${pct(n(yoy.own_delivery_pct))}`
-          : "—";
-      // Per-channel YoY has order counts only (no historical per-channel net
-      // sales), so the % here is each channel's share of total orders — not the
-      // net-sales share shown in the current/previous-week columns.
-      case "Deliveroo":
-        return n(yoy.deliveroo) > 0 ? `${int(n(yoy.deliveroo))} · ${pct(share(n(yoy.deliveroo), yoyTotOrd))}` : "—";
-      case "Uber Eats":
-        return n(yoy.uber_eats) > 0 ? `${int(n(yoy.uber_eats))} · ${pct(share(n(yoy.uber_eats), yoyTotOrd))}` : "—";
-      case "Just Eat":
-        return n(yoy.just_eat) > 0 ? `${int(n(yoy.just_eat))} · ${pct(share(n(yoy.just_eat), yoyTotOrd))}` : "—";
-
-      // ── In-store channel order counts ──────────────────────────────────────
-      case "In-store Orders":
-        return yoyIns > 0
-          ? `${int(yoyIns)} · ${pct(n(yoy.in_store_pct))}`
-          : "—";
-      case "Click & Collect":
-        return n(yoy.click_collect) > 0 ? `${int(n(yoy.click_collect))} · ${pct(share(n(yoy.click_collect), yoyTotOrd))}` : "—";
-      case "Kiosk":
-        return n(yoy.kiosk) > 0 ? `${int(n(yoy.kiosk))} · ${pct(share(n(yoy.kiosk), yoyTotOrd))}` : "—";
-      case "Till (takeaway)":
-        return n(yoy.till_takeaway) > 0 ? `${int(n(yoy.till_takeaway))} · ${pct(share(n(yoy.till_takeaway), yoyTotOrd))}` : "—";
-      case "Till (eat-in)":
-        return n(yoy.till_eat_in) > 0 ? `${int(n(yoy.till_eat_in))} · ${pct(share(n(yoy.till_eat_in), yoyTotOrd))}` : "—";
-
       default:
         return "—";
     }
@@ -336,33 +382,39 @@ export default async function ExecutivePage({
           },
         ]
       : []),
-    {
-      key: "prev",
-      header: "Previous Week",
-      align: "right" as const,
-      render: (r: KpiRowDef) => {
-        const wowPct =
-          hasPrev && r.wowVal
-            ? (() => {
-                const prev = r.wowVal(prevCombined);
-                return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
-              })()
-            : null;
-        return (
-          <span className="text-tertiary">
-            {hasPrev ? r.cell(prevCombined) : "—"}
-            {wowPct !== null && (
-              <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
-                ({signedPct(wowPct)})
-              </span>
-            )}
-          </span>
-        );
-      },
-    },
+    // "Previous Week" only exists in single-week mode; in 4/12-week mode the
+    // comparison column is prior-year same-N-weeks (the YoY column below).
+    ...(isMulti
+      ? []
+      : [
+          {
+            key: "prev",
+            header: "Previous Week",
+            align: "right" as const,
+            render: (r: KpiRowDef) => {
+              const wowPct =
+                hasPrev && r.wowVal
+                  ? (() => {
+                      const prev = r.wowVal(prevCombined);
+                      return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
+                    })()
+                  : null;
+              return (
+                <span className="text-tertiary">
+                  {hasPrev ? r.cell(prevCombined) : "—"}
+                  {wowPct !== null && (
+                    <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
+                      ({signedPct(wowPct)})
+                    </span>
+                  )}
+                </span>
+              );
+            },
+          },
+        ]),
     {
       key: "yoy",
-      header: `YoY (${yoyWeek})`,
+      header: isMulti ? `Prev Year (${yoyWeek})` : `YoY (${yoyWeek})`,
       align: "right" as const,
       render: (r: KpiRowDef) => {
         const yoyPct = yoyPctMap[r.kpi] ?? null;
@@ -381,25 +433,88 @@ export default async function ExecutivePage({
   ];
 
   // ---- Order-mix tables (per channel, within each group) -----------------
-  // Revenue-based share (not order-based) for consistency with other dashboards,
-  // plus a Net Sales column and a TOTAL row so the % is easy to verify.
-  interface ChannelRow extends ChannelStat {
+  // The single home for the per-channel breakdown: orders, net sales, each
+  // channel's share of the scope's TOTAL net sales (so the TOTAL row reconciles
+  // with the Delivery % / In-store % cards), plus WoW and YoY.
+  interface ChannelRow {
+    channel: string;
+    orders: number;
+    netSales: number;
+    aov: number;
+    pctRevenue: number; // channel net sales ÷ scope total net sales (truncated by pct)
+    wow: number | null; // vs previous week's channel net sales (null in multi-week)
+    yoy: number | null; // vs prior year (see channelYoy for the basis)
     isTotal?: boolean;
   }
-  const buildChannelTable = (group: GroupAgg): ChannelRow[] => [
-    ...group.channels,
-    {
-      channel: "TOTAL",
-      netSales: group.netSales,
-      orders: group.orders,
-      aov: group.aov,
-      orderPct: 100,
-      salesPct: 100,
-      isTotal: true,
-    },
-  ];
 
-  const mixColumns: Column<ChannelRow>[] = [
+  // Per-channel YoY is order-count based — historical net sales exist only at the
+  // group (Delivery/In-store TOTAL) and Own Delivery level, not per aggregator or
+  // in-store channel. Mirrors getYoyCellValue's best-available basis.
+  const channelYoy = (
+    channel: string,
+    groupName: "delivery" | "inStore",
+    netSales: number,
+    orders: number,
+    isTotal: boolean,
+    yoy: YoyRow | null
+  ): number | null => {
+    if (!yoy) return null;
+    if (isTotal) {
+      const base = groupName === "delivery" ? n(yoy.delivery_sales) : n(yoy.in_store_sales);
+      return base > 0 ? share(netSales - base, base) : null;
+    }
+    if (/own|direct/i.test(channel)) {
+      const base = n(yoy.own_delivery_sales);
+      return base > 0 ? share(netSales - base, base) : null;
+    }
+    const yoyOrders: Record<string, number> = {
+      Deliveroo: n(yoy.deliveroo),
+      "Uber Eats": n(yoy.uber_eats),
+      "Just Eat": n(yoy.just_eat),
+      "Click & Collect": n(yoy.click_collect),
+      Kiosk: n(yoy.kiosk),
+      "Till (takeaway)": n(yoy.till_takeaway),
+      "Till (eat-in)": n(yoy.till_eat_in),
+    };
+    const base = yoyOrders[channel];
+    return base && base > 0 ? share(orders - base, base) : null;
+  };
+
+  const buildChannelTable = (
+    group: GroupAgg,
+    prevGroup: GroupAgg,
+    groupName: "delivery" | "inStore",
+    yoy: YoyRow | null
+  ): ChannelRow[] => {
+    const scopeTotal = combined.netSales;
+    const row = (
+      channel: string,
+      netSales: number,
+      orders: number,
+      aov: number,
+      isTotal: boolean
+    ): ChannelRow => {
+      const prevNet = isTotal
+        ? prevGroup.netSales
+        : prevGroup.channels.find((c) => c.channel === channel)?.netSales ?? 0;
+      return {
+        channel,
+        orders,
+        netSales,
+        aov,
+        pctRevenue: scopeTotal > 0 ? (100 * netSales) / scopeTotal : 0,
+        wow: hasPrev && prevNet > 0 ? share(netSales - prevNet, prevNet) : null,
+        yoy: channelYoy(channel, groupName, netSales, orders, isTotal, yoy),
+        isTotal,
+      };
+    };
+    return [
+      ...group.channels.map((c) => row(c.channel, c.netSales, c.orders, c.aov, false)),
+      row("TOTAL", group.netSales, group.orders, group.aov, true),
+    ];
+  };
+
+  const mixColumnsAll: Column<ChannelRow>[] = [
     {
       key: "ch",
       header: "Channel",
@@ -421,10 +536,26 @@ export default async function ExecutivePage({
     },
     {
       key: "pct",
-      header: "% of group (revenue)",
+      header: "% revenue",
       align: "right",
       render: (r) => (
-        <span className={r.isTotal ? "font-semibold" : ""}>{pct(r.salesPct)}</span>
+        <span className={r.isTotal ? "font-semibold" : ""}>{pct(r.pctRevenue)}</span>
+      ),
+    },
+    {
+      key: "wow",
+      header: "WoW%",
+      align: "right",
+      render: (r) => (
+        <span className={`font-medium ${deltaClass(r.wow)}`}>{signedPct(r.wow)}</span>
+      ),
+    },
+    {
+      key: "yoy",
+      header: "YoY%",
+      align: "right",
+      render: (r) => (
+        <span className={`font-medium ${deltaClass(r.yoy)}`}>{signedPct(r.yoy)}</span>
       ),
     },
     {
@@ -434,6 +565,10 @@ export default async function ExecutivePage({
       render: (r) => <span className={r.isTotal ? "font-semibold" : ""}>{gbp(r.aov)}</span>,
     },
   ];
+  // WoW is meaningless for an N-week aggregate — drop the column in multi-week.
+  const mixColumns = isMulti
+    ? mixColumnsAll.filter((c) => c.key !== "wow")
+    : mixColumnsAll;
 
   const deliveryOrdersChart = combined.delivery.channels.map((c) => ({
     channel: c.channel,
@@ -451,7 +586,11 @@ export default async function ExecutivePage({
   }));
 
   // ---- Insight payload (scoped) ------------------------------------------
-  const insightInput: ExecInput = {
+  // Commentary is single-week / WoW-framed, so it is skipped in multi-week mode.
+  const insightInput: ExecInput | null =
+    isMulti || !weekIso
+      ? null
+      : {
     dashboard: "executive",
     week: weekIso,
     store: activeStore,
@@ -493,37 +632,51 @@ export default async function ExecutivePage({
       };
     }),
   };
-  const draft = (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput);
+  const draft = insightInput
+    ? (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput)
+    : null;
+
+  // Suppress the WoW badge on KPI cards in multi-week mode (no "previous week").
+  const wow = (v: number | null) => (isMulti ? undefined : v);
 
   return (
     <div className="space-y-7">
-      <PageTitle
-        title="Executive Dashboard"
-        subtitle={`${scopeLabel} · ${weekRange(weekIso, weekEnd)}`}
-      />
+      <div>
+        <PageTitle title="Executive Dashboard" subtitle={subtitle} />
+        {isMulti && (
+          <p className="-mt-4 text-xs text-tertiary">
+            All figures are weekly averages — each value is the period total ÷ {periodWeekCount} (÷ 4 on
+            the 4-week view, ÷ 12 on the 12-week view). AOV and percentage metrics are already
+            averages/ratios and are shown as-is.
+          </p>
+        )}
+      </div>
 
       <KpiGrid>
-        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={netWow} yoy={netYoy} />
-        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={netDelWow} yoy={delYoy} />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={netInWow} yoy={inStYoy} tone="good" />
-        <KpiCard label="Total Orders" value={int(combined.orders)} delta={ordWow} yoy={ordYoy} />
+        {/* WoW is meaningless for an N-week aggregate — omit the delta entirely
+            in multi-week mode (undefined hides the badge; null would grey it). */}
+        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={wow(netWow)} yoy={netYoy} />
+        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={wow(netDelWow)} yoy={delYoy} />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={wow(netInWow)} yoy={inStYoy} tone="good" />
+        <KpiCard label="Total Orders" value={int(combined.orders)} delta={wow(ordWow)} yoy={ordYoy} />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
-          delta={aovBlendWow}
+          delta={wow(aovBlendWow)}
           yoy={aovBlendYoy}
           hint="net sales ÷ orders"
         />
-        <KpiCard label="Customers" value={int(combined.customers)} delta={custWow} yoy={custYoy} />
-        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={deliveryPctWow} yoy={deliveryPctYoy} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(inStorePct)} delta={inStorePctWow} yoy={inStorePctYoy} hint="of net sales" tone="good" />
+        <KpiCard label="Customers" value={int(combined.customers)} delta={wow(custWow)} yoy={custYoy} />
+        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={wow(deliveryPctWow)} yoy={deliveryPctYoy} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(inStorePct)} delta={wow(inStorePctWow)} yoy={inStorePctYoy} hint="of net sales" tone="good" />
       </KpiGrid>
 
-      <Commentary initial={draft} input={insightInput} />
+      {/* Commentary is weekly/WoW-framed; skip it in multi-week mode. */}
+      {draft && insightInput && <Commentary initial={draft} input={insightInput} />}
 
       <Section
         title="Order Mix"
-        description="Total orders split into delivery and in-store, with each channel's share of its group."
+        description="Delivery and in-store channels, each showing its share of total net sales with week-on-week and year-on-year change."
       >
         <div className="grid gap-4 lg:grid-cols-2">
           <ChartCard
@@ -531,7 +684,10 @@ export default async function ExecutivePage({
               share(combined.delivery.orders, combined.orders)
             )} of orders)`}
           >
-            <DataTable columns={mixColumns} rows={buildChannelTable(combined.delivery)} />
+            <DataTable
+              columns={mixColumns}
+              rows={buildChannelTable(combined.delivery, prevCombined.delivery, "delivery", yoyRow)}
+            />
             {deliveryOrdersChart.length > 0 && (
               <div className="mt-6">
                 <BarChartCard
@@ -548,7 +704,10 @@ export default async function ExecutivePage({
               share(combined.inStore.orders, combined.orders)
             )} of orders)`}
           >
-            <DataTable columns={mixColumns} rows={buildChannelTable(combined.inStore)} />
+            <DataTable
+              columns={mixColumns}
+              rows={buildChannelTable(combined.inStore, prevCombined.inStore, "inStore", yoyRow)}
+            />
             {inStoreOrdersChart.length > 0 && (
               <div className="mt-4">
                 <BarChartCard
@@ -565,11 +724,16 @@ export default async function ExecutivePage({
 
       <Section
         title="KPI Summary"
-        description={
-          activeStore
-            ? `${shortStore(activeStore)} only, with previous-week values.`
-            : "Both stores side by side, with combined totals and previous-week values."
-        }
+        description={(() => {
+          const compare = isMulti ? "prior-year same-period values" : "previous-week values";
+          const base = activeStore
+            ? `${shortStore(activeStore)} only, with ${compare}.`
+            : `Both stores side by side, with combined totals and ${compare}.`;
+          const yoyNote = isMulti
+            ? " YoY% compares this period's weekly average against the same period last year's weekly average (both = total ÷ N); as a ratio the % is unaffected by the averaging — e.g. £16,000 vs £12,000 over 4 weeks is (£4,000 − £3,000) ÷ £3,000 = +33.33%."
+            : "";
+          return base + yoyNote;
+        })()}
       >
         <DataTable columns={summaryColumns} rows={kpiRows} />
       </Section>

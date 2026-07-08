@@ -245,6 +245,11 @@ export interface WeekOption {
   week_start_iso: string;
 }
 
+// Executive dashboard view mode. "week" = a single completed week (default);
+// "4w"/"12w" = the latest N completed weeks aggregated, compared to the same N
+// weeks one year earlier.
+export type ExecMode = "week" | "4w" | "12w";
+
 // Row from the `weekly_summary_inputs` Supabase table.
 // Numeric columns arrive as strings via PostgREST.
 export interface WeeklySummaryInputRow {

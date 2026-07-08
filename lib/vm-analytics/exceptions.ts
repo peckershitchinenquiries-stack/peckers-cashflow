@@ -15,6 +15,7 @@ import {
   canonicalStore,
   shortStore,
   isThirdPartyPlatform,
+  isExcludedProduct,
   EXCEPTION_THRESHOLDS as T,
 } from "@/lib/vm-analytics/constants";
 import { buildBreakdown } from "@/lib/vm-analytics/channels";
@@ -92,7 +93,10 @@ export interface ExceptionInputs {
 }
 
 export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
-  const { exec, channels, products, dayparts, delivery, labour, mealDeals, activeStore } = input;
+  const { exec, channels, dayparts, delivery, labour, mealDeals, activeStore } = input;
+  // Drop drinks/side add-ons so they don't drive top-3, best-seller, or risks —
+  // matches the Product Performance dashboard's exclusion (shared list).
+  const products = input.products.filter((p) => !isExcludedProduct(p.item_name));
   const singleStore = activeStore != null;
   const storeScope = activeStore ? shortStore(activeStore) : "both stores";
 
