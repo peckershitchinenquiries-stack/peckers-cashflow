@@ -281,6 +281,21 @@ export const UserCircleIcon = ({ size, ...p }: IconProps) => (
   </svg>
 );
 
+export const MoreIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+export const CloseIcon = ({ size, ...p }: IconProps) => (
+  <svg {...base(size, p)}>
+    <path d="M18 6L6 18" />
+    <path d="M6 6l12 12" />
+  </svg>
+);
+
 export const CopyIcon = ({ size, ...p }: IconProps) => (
   <svg {...base(size, p)}>
     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />

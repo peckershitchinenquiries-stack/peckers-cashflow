@@ -68,21 +68,22 @@ export const NAV_FOR_PORTAL: Record<Portal, NavItem[]> = {
   employee: employeeNav,
 };
 
-// Bottom-nav (mobile) shows at most 5 items. Pick the most-used per portal.
+// Bottom-nav (mobile): the most-used pages get a dedicated tab. When a portal
+// has more pages than fit, the last tab becomes a "More" button that opens a
+// sheet listing the full menu — so every page stays reachable on mobile. Keep
+// these to 4 so the 5th slot is free for that "More" tab (see BottomNav).
 export const BOTTOM_NAV_FOR_PORTAL: Record<Portal, NavItem[]> = {
   admin: [
     adminNav[0], // Dashboard
-    adminNav[1], // Live
-    adminNav[2], // Rota
-    adminNav[4], // Employees
-    adminNav[3], // Alerts
+    adminNav[1], // VM Analytics
+    adminNav[2], // Live
+    adminNav[4], // Alerts
   ],
   manager: [
     managerNav[0], // Live
     managerNav[1], // Rota
     managerNav[2], // Employees
     managerNav[3], // Alerts
-    managerNav[4], // Entries
   ],
-  employee: employeeNav,
+  employee: employeeNav, // only 4 pages — all fit, no "More" needed
 };
