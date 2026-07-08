@@ -170,6 +170,8 @@ export function LiveDashboard({
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
 
+  const storeById = new Map(stores.map((s) => [s.id, s]));
+
   // Which store an employee belongs to TODAY: where they clocked in (the source
   // of truth for where they actually are), else where they're scheduled, else
   // their home store. Staff aren't locked to one store, so a visiting worker
@@ -227,6 +229,17 @@ export function LiveDashboard({
           const storeEmployees = employees.filter(
             (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
           );
+          // This store's own staff who are working at ANOTHER store today, so the
+          // store's manager can see where they've gone.
+          const awayStaff = employees
+            .filter(
+              (e) =>
+                e.store_id === store.id &&
+                e.employment_status === "active" &&
+                todayStoreOf(e) !== store.id,
+            )
+            .map((e) => ({ emp: e, at: storeById.get(todayStoreOf(e) ?? "") ?? null }))
+            .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
           // Sort: manager first, then on-shift, then others
           const sorted = [...storeEmployees].sort((a, b) => {
             const pa = a.position === "Manager" ? 0 : 1;
@@ -360,6 +373,28 @@ export function LiveDashboard({
                     </div>
                   </div>
                 </div>
+
+                {/* Home staff working at the other store today */}
+                {awayStaff.length > 0 && (
+                  <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 p-3">
+                    <div className="text-[10px] uppercase tracking-wider text-gold/90 mb-1.5">
+                      Working at another store today
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {awayStaff.map(({ emp, at }) => (
+                        <div
+                          key={emp.id}
+                          className="flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="text-text-primary truncate">{emp.name}</span>
+                          <span className="text-gold text-xs shrink-0">
+                            @ {at?.name ?? "another store"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">

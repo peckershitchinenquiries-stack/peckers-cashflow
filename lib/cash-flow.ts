@@ -354,12 +354,17 @@ export function aggregateWorked(
 // Employees are not locked to one store: someone can work Mon–Wed at Hitchin and
 // Thu–Fri at Stevenage. Each DAY's work (and pay) is attributed to the store it
 // was worked at (one clock/shift row per day, so a day maps to exactly one
-// store). The NI/bank vs cash split, however, is a per-employee-per-week rule:
-// the first `bank_weekly_hours_limit` hours of the WHOLE week are NI/bank, and
-// only hours beyond that are cash — attributed to whichever store those later
-// hours were worked at (chronological by day). So each store's payout pays only
-// the cash hours + deliveries that happened there, but no one loses cash hours
-// just because their week was split across two stores.
+// store).
+//
+// NI/cash split (confirmed with the client): NI/bank is a HOME-store concept —
+// the employee's payroll record lives at their home store, so only the home
+// store runs their NI. A SECONDARY store (one they don't belong to, just cover
+// at) has no NI record for them, so it pays every hour worked there in CASH.
+//   - Home store  → first `bank_weekly_hours_limit` (default 20) hours worked at
+//     home are NI/bank; home hours beyond that are cash.
+//   - Secondary store → all hours worked there are cash.
+// Example: Pavan (home = Stevenage) works 40h Stevenage + 30h Hitchin in a week.
+// Stevenage: 20h NI + 20h cash. Hitchin: 30h cash. Total 20 NI + 50 cash.
 
 /** A clock row carrying which store + day it belongs to. */
 export type StoreClockRow = {
@@ -414,36 +419,44 @@ function resolveWorkingDays(clocks: StoreClockRow[], shifts: StoreShiftRow[]): D
   return scheduledDays;
 }
 
-/**
- * Split an employee's week into cash hours per store. The first
- * `bank_weekly_hours_limit` hours of the week (default 20, across ALL stores)
- * are NI/bank; hours beyond that are cash, credited to the store where those
- * later hours were worked (chronological by day). No cash rate ⇒ no cash hours.
- */
-function cashHoursByStore(
-  days: DayWork[],
-  emp: { hourly_cash_rate?: number | null; bank_weekly_hours_limit?: number | null },
-): Map<string, number> {
+/** Total resolved working hours per store for an employee's week. */
+function hoursByStore(days: DayWork[]): Map<string, number> {
   const byStore = new Map<string, number>();
-  if (!worksForCash(emp)) return byStore;
-  const limit = Math.max(0, Number(emp.bank_weekly_hours_limit ?? 20) || 0);
-  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  let cumulative = 0;
-  for (const d of sorted) {
-    const before = cumulative;
-    cumulative += d.hours;
-    // The portion of this day's hours that fall above the weekly bank limit.
-    const cashThisDay = Math.max(0, cumulative - Math.max(before, limit));
-    if (cashThisDay > 0) byStore.set(d.store_id, (byStore.get(d.store_id) ?? 0) + cashThisDay);
-  }
+  for (const d of days) byStore.set(d.store_id, (byStore.get(d.store_id) ?? 0) + d.hours);
   return byStore;
+}
+
+/**
+ * Cash hours an employee earns at ONE store for the week, applying the
+ * home-store NI rule:
+ *   - at their HOME store: only hours above the weekly bank limit are cash;
+ *   - at any SECONDARY store: every hour is cash (no NI record there).
+ * No cash rate ⇒ no cash hours anywhere (they're paid entirely on the books).
+ */
+function cashHoursAtStore(
+  days: DayWork[],
+  storeId: string,
+  emp: {
+    store_id?: string | null;
+    hourly_cash_rate?: number | null;
+    bank_weekly_hours_limit?: number | null;
+  },
+): number {
+  if (!worksForCash(emp)) return 0;
+  const hoursHere = hoursByStore(days).get(storeId) ?? 0;
+  if (emp.store_id === storeId) {
+    const limit = Math.max(0, Number(emp.bank_weekly_hours_limit ?? 20) || 0);
+    return Math.max(0, hoursHere - limit);
+  }
+  return hoursHere;
 }
 
 /**
  * Build the wage lines for ONE store's pay week, correctly handling employees
  * whose week spans multiple stores. `clocks`/`shifts` must cover the whole pay
- * week across ALL stores (so the weekly NI/cash split is computed per employee
- * globally, then attributed per store). Only employees with cash and/or
+ * week across ALL stores: the "clock trumps schedule" resolution and the
+ * home-store NI rule both need to see the employee's full week (their home hours
+ * may sit at a different store than `storeId`). Only employees with cash and/or
  * deliveries AT `storeId` produce a line — so it can be handed the full employee
  * roster and it will keep just those who worked at the store.
  */
@@ -471,7 +484,7 @@ export function buildWageLinesForStore(
     const empClocks = clocksByEmp.get(emp.id) ?? [];
     const empShifts = shiftsByEmp.get(emp.id) ?? [];
     const days = resolveWorkingDays(empClocks, empShifts);
-    const cashHours = round2(cashHoursByStore(days, emp).get(storeId) ?? 0);
+    const cashHours = round2(cashHoursAtStore(days, storeId, emp));
 
     // Deliveries always come from the actual clock rows AT this store.
     const isDriver = hasRole(emp.position, "Driver");
