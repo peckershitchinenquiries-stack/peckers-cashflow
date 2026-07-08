@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import { updateStore } from "@/app/actions/stores";
+import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
 import type { Store } from "@/lib/types";
+
+/** Worst GPS accuracy (± metres) we'll accept when capturing a store's location.
+ *  Anything looser is a Wi-Fi/IP estimate that can be kilometres off — refuse it
+ *  so a store can't be pinned from a laptop and break everyone's clock-in. */
+const MAX_STORE_CAPTURE_ACCURACY_M = 100;
 
 export function StoresAdmin({ stores }: { stores: Store[] }) {
   const router = useRouter();
@@ -26,38 +32,41 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
   }
 
   // Capture the device's current GPS position into a store's lat/lng fields.
-  // Intended workflow: stand at the store's front door, click this, then Save.
+  // Intended workflow: stand at the store's front door on a PHONE, click this,
+  // then Save. Low-accuracy readings (a laptop's Wi-Fi/IP guess, which can be
+  // kilometres off) are refused — pinning a store from one of those is exactly
+  // how staff end up unable to clock in.
   function useCurrentLocation(store: Store) {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      toast.error("This device can't share a location.");
-      return;
-    }
     setLocating(store.id);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
+    getBestPosition({ desiredAccuracyM: 20, maxWaitMs: 15_000 })
+      .then((fix) => {
+        setLocating(null);
+        if (fix.accuracy > MAX_STORE_CAPTURE_ACCURACY_M) {
+          toast.error(
+            `Location is only accurate to ±${Math.round(fix.accuracy)}m — that's a Wi-Fi/network estimate, not GPS, and can be off by kilometres. Open this page on a phone with GPS, stand outside the store, and try again (or type the exact coordinates from Google Maps).`,
+          );
+          return;
+        }
         setEditing((prev) => ({
           ...prev,
           [store.id]: {
             ...prev[store.id],
-            latitude: Number(pos.coords.latitude.toFixed(7)),
-            longitude: Number(pos.coords.longitude.toFixed(7)),
+            latitude: Number(fix.lat.toFixed(7)),
+            longitude: Number(fix.lng.toFixed(7)),
           },
         }));
-        setLocating(null);
-        toast.success(
-          `Captured (±${Math.round(pos.coords.accuracy)}m). Review, then Save.`,
-        );
-      },
-      (err) => {
+        toast.success(`Captured (±${Math.round(fix.accuracy)}m). Review, then Save.`);
+      })
+      .catch((err: unknown) => {
         setLocating(null);
         toast.error(
-          err.code === err.PERMISSION_DENIED
+          isPermissionDenied(err)
             ? "Location permission denied — allow it in your browser to capture coordinates."
-            : err.message || "Could not get your location.",
+            : err instanceof Error
+              ? err.message
+              : "Could not get your location.",
         );
-      },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 0 },
-    );
+      });
   }
 
   async function save(store: Store) {

@@ -22,6 +22,7 @@ import {
   todayISO,
   weekdayIndex,
 } from "@/lib/utils";
+import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
 import { ClockIcon } from "@/components/ui/icons";
 import type {
   ClockEvent,
@@ -151,31 +152,25 @@ export function CrewClockApp({
 
   const requestLocation = React.useCallback(() => {
     setGeo({ status: "loading" });
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeo({ status: "error", message: "Geolocation not supported by this device." });
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGeo({
-          status: "ok",
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        });
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
+    // Wait for the GPS to converge instead of trusting the first (often coarse
+    // Wi-Fi/network) fix, so the in-range verdict reflects real precise position.
+    getBestPosition({ desiredAccuracyM: 30, maxWaitMs: 12_000 })
+      .then((fix) => {
+        setGeo({ status: "ok", lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy });
+      })
+      .catch((err: unknown) => {
+        if (isPermissionDenied(err)) {
           setGeo({
             status: "denied",
             message: "Location permission denied. Enable it in your browser settings, then tap Retry.",
           });
         } else {
-          setGeo({ status: "error", message: err.message || "Could not get your location. Tap Retry." });
+          setGeo({
+            status: "error",
+            message: err instanceof Error ? err.message : "Could not get your location. Tap Retry.",
+          });
         }
-      },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 },
-    );
+      });
   }, []);
 
   // Capture location automatically when the page opens so the clock button is

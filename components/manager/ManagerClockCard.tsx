@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { ClockIcon } from "@/components/ui/icons";
 import { managerClockIn, managerClockOut } from "@/app/actions/manager-clock";
+import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
 import {
   clockedHours,
   formatTimeOnly,
@@ -38,41 +39,40 @@ export function ManagerClockCard({ managerName, store, todayClock }: Props) {
 
   const requestLocation = React.useCallback(() => {
     setGeo({ status: "loading" });
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeo({ status: "error", message: "Geolocation not supported by this device." });
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
+    // Converge on a precise GPS fix rather than trusting the first coarse
+    // (Wi-Fi/network) reading, so the distance/in-range verdict is trustworthy.
+    getBestPosition({ desiredAccuracyM: 30, maxWaitMs: 12_000 })
+      .then((fix) => {
         const distance =
           store?.latitude != null && store?.longitude != null
             ? haversineMeters(
                 Number(store.latitude),
                 Number(store.longitude),
-                pos.coords.latitude,
-                pos.coords.longitude,
+                fix.lat,
+                fix.lng,
               )
             : null;
         setGeo({
           status: "ok",
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
+          lat: fix.lat,
+          lng: fix.lng,
+          accuracy: fix.accuracy,
           distance,
         });
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
+      })
+      .catch((err: unknown) => {
+        if (isPermissionDenied(err)) {
           setGeo({
             status: "denied",
             message: "Location permission denied. Enable it in your browser settings, then tap Retry.",
           });
         } else {
-          setGeo({ status: "error", message: err.message || "Could not get your location. Tap Retry." });
+          setGeo({
+            status: "error",
+            message: err instanceof Error ? err.message : "Could not get your location. Tap Retry.",
+          });
         }
-      },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 30_000 },
-    );
+      });
   }, [store?.latitude, store?.longitude]);
 
   React.useEffect(() => {

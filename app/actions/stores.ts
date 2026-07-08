@@ -39,8 +39,18 @@ export async function updateStore(input: {
   const supabase = createServerSupabase();
   const payload: Record<string, unknown> = {};
   if (input.name) payload.name = input.name.trim();
-  if (input.latitude != null) payload.latitude = Number(input.latitude);
-  if (input.longitude != null) payload.longitude = Number(input.longitude);
+  if (input.latitude != null) {
+    const lat = Number(input.latitude);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90)
+      throw new Error("Latitude must be between -90 and 90.");
+    payload.latitude = lat;
+  }
+  if (input.longitude != null) {
+    const lng = Number(input.longitude);
+    if (!Number.isFinite(lng) || lng < -180 || lng > 180)
+      throw new Error("Longitude must be between -180 and 180.");
+    payload.longitude = lng;
+  }
   if (input.geofence_radius_m != null)
     payload.geofence_radius_m = Math.max(50, Number(input.geofence_radius_m));
   if (input.shift_times) payload.shift_times = cleanShiftTimes(input.shift_times);
