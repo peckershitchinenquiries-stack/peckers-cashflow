@@ -8,6 +8,8 @@ import type {
   LunchDealChannelDetailRow,
   ProductRow,
   CategoryRow,
+  CategoryPerfRow,
+  ProductCategoryRow,
   DaypartRow,
   DaypartChannelRow,
   DaypartChannelDetailRow,
@@ -210,6 +212,40 @@ export async function getProducts(weekIso: string): Promise<ProductRow[]> {
     .order("gross_sales", { ascending: false });
   if (error) throw new Error(`getProducts: ${error.message}`);
   return (data ?? []) as ProductRow[];
+}
+
+// Per store × week × category aggregate with SQL-computed WoW, from
+// vm_v_category_performance. Returns [] if the view is missing (e.g. before the
+// category SQL has been run) so the Product Performance page still renders.
+export async function getCategoryPerformance(weekIso: string): Promise<CategoryPerfRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_category_performance")
+    .select("store, week_start, category, units_sold, gross_sales, revenue_wow_pct, units_wow_pct")
+    .eq("week_start", weekIso)
+    .order("gross_sales", { ascending: false });
+  if (error) {
+    console.warn(`getCategoryPerformance: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as CategoryPerfRow[];
+}
+
+// Every product row tagged with its category, from vm_v_product_category. Powers
+// the Category Performance drill-down. Returns [] if the view is missing so the
+// page degrades gracefully.
+export async function getCategoryItems(weekIso: string): Promise<ProductCategoryRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_product_category")
+    .select("*")
+    .eq("week_start", weekIso)
+    .order("gross_sales", { ascending: false });
+  if (error) {
+    console.warn(`getCategoryItems: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as ProductCategoryRow[];
 }
 
 export async function getCategories(weekIso: string): Promise<CategoryRow[]> {

@@ -86,10 +86,14 @@ export interface ProductInput {
   dashboard: "products";
   week: string;
   store?: string | null;
-  // Ordered best-first by UNITS sold (volume), not revenue.
+  // Single best-selling item by UNITS (volume) — named in the summary as a nod
+  // to the Volume Leaders chart, which shows items rather than categories.
   top: { item: string; units: number; revenue: number; revWow: number | null; prevRevenue?: number; prevUnits?: number }[];
-  rising: { item: string; revWow: number; revenue: number; prevRevenue: number; units: number; prevUnits: number }[];
-  falling: { item: string; revWow: number; revenue: number; prevRevenue: number; units: number; prevUnits: number }[];
+  // Category-level data now drives the commentary. Revenue desc, "Uncategorised"
+  // excluded (add-on categories like Fries/Drinks are kept — they are real volume).
+  categories: { category: string; units: number; revenue: number; revWow: number | null }[];
+  risingCats: { category: string; revenue: number; prevRevenue?: number; revWow: number }[];
+  fallingCats: { category: string; revenue: number; prevRevenue?: number; revWow: number }[];
 }
 
 export interface DaypartInput {
@@ -178,54 +182,59 @@ function execInsight(i: ExecInput): { summary: string; bullets: string[] } {
 function productInsight(i: ProductInput): { summary: string; bullets: string[] } {
   const bullets: string[] = [];
   const scope = scopePhrase(i.store);
-  const best = i.top[0];
+  const cats = i.categories;
+  const topCat = cats[0];
 
-  let summary = best
-    ? `The best seller ${scope} this week was the ${best.item}, selling ${num(
-        best.units
-      )} units and bringing in ${gbp(best.revenue)}.`
-    : `No product sales were recorded ${scope} this week.`;
-
-  if (i.top.length > 1) {
-    const runners = i.top
-      .slice(1, 3)
-      .map((t) => `${t.item} (${num(t.units)} units, ${gbp(t.revenue)})`)
-      .join(" and ");
-    summary += ` Close behind came ${runners}.`;
+  if (!topCat) {
+    return {
+      summary: `No category sales were recorded ${scope} this week.`,
+      bullets: [],
+    };
   }
 
-  if (i.rising.length) {
+  const totalRev = cats.reduce((s, c) => s + c.revenue, 0);
+  const topShare = totalRev > 0 ? (topCat.revenue / totalRev) * 100 : 0;
+
+  let summary = `The top category ${scope} this week was ${topCat.category}, bringing in ${gbp(
+    topCat.revenue
+  )} — ${share(topShare)} of category revenue.`;
+  const best = i.top[0];
+  if (best) {
+    summary += ` The single best-selling item was the ${best.item}, at ${num(
+      best.units
+    )} units.`;
+  }
+
+  if (i.risingCats.length) {
     bullets.push(
-      `Climbing fast: ${i.rising
+      `Growing categories: ${i.risingCats
         .slice(0, 3)
-        .map((r) => {
-          const prev = r.prevRevenue ? gbp(r.prevRevenue) : "—";
-          const curr = gbp(r.revenue);
-          return `${r.item} (${prev} → ${curr}, ${pct(r.revWow)})`;
+        .map((c) => {
+          const prev = c.prevRevenue ? gbp(c.prevRevenue) : "—";
+          return `${c.category} (${prev} → ${gbp(c.revenue)}, ${pct(c.revWow)})`;
         })
         .join("; ")}.`
     );
   }
-  if (i.falling.length) {
+  if (i.fallingCats.length) {
     bullets.push(
-      `Losing ground: ${i.falling
+      `Shrinking categories: ${i.fallingCats
         .slice(0, 3)
-        .map((r) => {
-          const prev = r.prevRevenue ? gbp(r.prevRevenue) : "—";
-          const curr = gbp(r.revenue);
-          return `${r.item} (${prev} → ${curr}, ${pct(r.revWow)})`;
+        .map((c) => {
+          const prev = c.prevRevenue ? gbp(c.prevRevenue) : "—";
+          return `${c.category} (${prev} → ${gbp(c.revenue)}, ${pct(c.revWow)})`;
         })
-        .join("; ")} — worth reviewing menu placement or a promotion.`
+        .join("; ")} — worth reviewing.`
     );
   }
-  if (!i.rising.length && !i.falling.length) {
-    bullets.push("Week-on-week trends will appear once a second week of data is synced.");
+  if (!i.risingCats.length && !i.fallingCats.length) {
+    bullets.push("Week-on-week category trends will appear once a second week of data is synced.");
   }
 
-  for (const t of i.top.slice(0, 5)) {
+  for (const c of cats.slice(0, 5)) {
     bullets.push(
-      `${t.item}: ${num(t.units)} units sold · ${gbp(t.revenue)}${
-        t.revWow !== null ? ` (${pct(t.revWow)} WoW)` : ""
+      `${c.category}: ${num(c.units)} units · ${gbp(c.revenue)}${
+        c.revWow !== null ? ` (${pct(c.revWow)} WoW)` : ""
       }.`
     );
   }

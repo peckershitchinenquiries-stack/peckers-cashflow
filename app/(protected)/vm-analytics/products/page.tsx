@@ -1,13 +1,22 @@
-import { getProducts, getWeeks } from "@/lib/vm-analytics/queries";
-import { n, gbp, int, weekRange, signedPct, deltaClass } from "@/lib/vm-analytics/format";
+import {
+  getProducts,
+  getWeeks,
+  getCategoryPerformance,
+  getCategoryItems,
+} from "@/lib/vm-analytics/queries";
+import { n, weekRange } from "@/lib/vm-analytics/format";
 import { resolveStore, shortStore, isExcludedProduct } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
-import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
+import {
+  CategoryPerformanceTable,
+  type CategoryPerf,
+  type CategoryItem,
+} from "@/components/vm-analytics/CategoryPerformanceTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
-import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
+import { BarChartCard, PieChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type ProductInput } from "@/lib/vm-analytics/insights";
-import type { ProductRow } from "@/lib/vm-analytics/types";
+import type { ProductRow, CategoryPerfRow, ProductCategoryRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +71,73 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
     .sort((a, b) => b.units - a.units);
 }
 
+// Category-level totals with an item drill-down for the selected scope. WoW is
+// recomputed from summed totals (never averaged across stores) so the combined
+// view is correct — same principle as aggregate() above. No EXCLUDED_PRODUCTS
+// filtering here: the category view deliberately includes Drinks, Fries, etc.
+function aggregateCategories(
+  catRows: CategoryPerfRow[],
+  catPrevRows: CategoryPerfRow[],
+  itemRows: ProductCategoryRow[],
+  itemPrevRows: ProductCategoryRow[],
+): CategoryPerf[] {
+  const wow = (cur: number, prev: number) => (prev > 0 ? ((cur - prev) / prev) * 100 : null);
+
+  const sumBy = <T,>(list: T[], key: (r: T) => string, rev: (r: T) => number, units: (r: T) => number) => {
+    const m = new Map<string, { revenue: number; units: number }>();
+    for (const r of list) {
+      const c = m.get(key(r)) ?? { revenue: 0, units: 0 };
+      c.revenue += rev(r);
+      c.units += units(r);
+      m.set(key(r), c);
+    }
+    return m;
+  };
+
+  const curCat = sumBy(catRows, (r) => r.category, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevCat = sumBy(catPrevRows, (r) => r.category, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevItem = sumBy(itemPrevRows, (r) => `${r.category}::${r.item_name}`, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+
+  const curItems = new Map<string, Map<string, { units: number; revenue: number }>>();
+  for (const r of itemRows) {
+    let byItem = curItems.get(r.category);
+    if (!byItem) {
+      byItem = new Map();
+      curItems.set(r.category, byItem);
+    }
+    const c = byItem.get(r.item_name) ?? { units: 0, revenue: 0 };
+    c.units += n(r.units_sold);
+    c.revenue += n(r.gross_sales);
+    byItem.set(r.item_name, c);
+  }
+
+  const cats: CategoryPerf[] = Array.from(curCat.entries()).map(([category, tot]) => {
+    const byItem = curItems.get(category) ?? new Map<string, { units: number; revenue: number }>();
+    const items: CategoryItem[] = Array.from(byItem.entries())
+      .map(([item, it]) => ({
+        item,
+        units: it.units,
+        revenue: it.revenue,
+        revWow: wow(it.revenue, prevItem.get(`${category}::${item}`)?.revenue ?? 0),
+      }))
+      .sort((a, b) => b.revenue - a.revenue);
+    return {
+      category,
+      units: tot.units,
+      revenue: tot.revenue,
+      revWow: wow(tot.revenue, prevCat.get(category)?.revenue ?? 0),
+      items,
+    };
+  });
+
+  // Revenue desc, but Uncategorised always last (its presence flags unmapped items).
+  return cats.sort((a, b) => {
+    if (a.category === "Uncategorised") return 1;
+    if (b.category === "Uncategorised") return -1;
+    return b.revenue - a.revenue;
+  });
+}
+
 export default async function ProductsPage({
   searchParams,
 }: {
@@ -73,6 +149,10 @@ export default async function ProductsPage({
   let weekIso: string | null;
   let rows: ProductRow[];
   let prevRows: ProductRow[] = [];
+  let catRows: CategoryPerfRow[] = [];
+  let catPrevRows: CategoryPerfRow[] = [];
+  let itemRows: ProductCategoryRow[] = [];
+  let itemPrevRows: ProductCategoryRow[] = [];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
@@ -81,9 +161,13 @@ export default async function ProductsPage({
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
     const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
     const prevWeekIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
-    [rows, prevRows] = await Promise.all([
+    [rows, prevRows, catRows, catPrevRows, itemRows, itemPrevRows] = await Promise.all([
       getProducts(weekIso),
       prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
+      getCategoryPerformance(weekIso),
+      prevWeekIso ? getCategoryPerformance(prevWeekIso) : Promise.resolve<CategoryPerfRow[]>([]),
+      getCategoryItems(weekIso),
+      prevWeekIso ? getCategoryItems(prevWeekIso) : Promise.resolve<ProductCategoryRow[]>([]),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -93,6 +177,10 @@ export default async function ProductsPage({
   if (activeStore) {
     rows = rows.filter((r) => r.store === activeStore);
     prevRows = prevRows.filter((r) => r.store === activeStore);
+    catRows = catRows.filter((r) => r.store === activeStore);
+    catPrevRows = catPrevRows.filter((r) => r.store === activeStore);
+    itemRows = itemRows.filter((r) => r.store === activeStore);
+    itemPrevRows = itemPrevRows.filter((r) => r.store === activeStore);
   }
 
   if (rows.length === 0) {
@@ -105,32 +193,42 @@ export default async function ProductsPage({
   }
 
   const items = aggregate(rows, prevRows);
-  const top = items.slice(0, 15);
-  const withWow = items.filter((i) => i.revWow !== null);
-  const rising = [...withWow].sort((a, b) => (b.revWow! - a.revWow!)).filter((i) => i.revWow! > 0).slice(0, 5);
-  const falling = [...withWow].sort((a, b) => (a.revWow! - b.revWow!)).filter((i) => i.revWow! < 0).slice(0, 5);
+  const categoryPerf = aggregateCategories(catRows, catPrevRows, itemRows, itemPrevRows);
+  const top = items.slice(0, 5);
 
-  const productColumns: Column<AggItem>[] = [
-    { key: "item", header: "Product", render: (r) => <span className="font-medium">{r.item}</span> },
-    { key: "units", header: "Units Sold", align: "right", render: (r) => int(r.units) },
-    { key: "revenue", header: "Revenue", align: "right", render: (r) => gbp(r.revenue) },
-    {
-      key: "wow",
-      header: "Revenue WoW",
-      align: "right",
-      render: (r) => (
-        <span className={deltaClass(r.revWow)}>{signedPct(r.revWow)}</span>
-      ),
-    },
-  ];
+  // Category commentary. Add-on categories (Fries, Drinks, etc.) stay in — they
+  // are real volume. Only the "Uncategorised" data-quality bucket is excluded.
+  const catsForInsight = categoryPerf.filter((c) => c.category !== "Uncategorised");
+  const risingCats = [...catsForInsight]
+    .filter((c) => c.revWow !== null && c.revWow > 0)
+    .sort((a, b) => b.revWow! - a.revWow!)
+    .slice(0, 3);
+  const fallingCats = [...catsForInsight]
+    .filter((c) => c.revWow !== null && c.revWow < 0)
+    .sort((a, b) => a.revWow! - b.revWow!)
+    .slice(0, 3);
 
-  const topChart = top.slice(0, 5).map((t) => ({ item: t.item, Units: Math.round(t.units) }));
+  // revWow = (cur - prev) / prev, so prev = cur / (1 + revWow/100) — exact.
+  const prevRevOf = (revenue: number, revWow: number) =>
+    revWow !== 0 ? revenue / (1 + revWow / 100) : undefined;
+
+  const topChart = top.map((t) => ({ item: t.item, Units: Math.round(t.units) }));
+
+  // Category revenue-share donut: top 7 categories by revenue, remainder bundled
+  // into "Other" so the donut stays legible. Add-on categories are kept in.
+  const catShareSorted = [...categoryPerf].sort((a, b) => b.revenue - a.revenue);
+  const catShareData = catShareSorted.slice(0, 7).map((c) => ({
+    category: c.category,
+    revenue: c.revenue,
+  }));
+  const otherRev = catShareSorted.slice(7).reduce((s, c) => s + c.revenue, 0);
+  if (otherRev > 0) catShareData.push({ category: "Other", revenue: otherRev });
 
   const insightInput: ProductInput = {
     dashboard: "products",
     week: weekIso,
     store: activeStore,
-    top: top.slice(0, 5).map((t) => ({
+    top: top.map((t) => ({
       item: t.item,
       units: t.units,
       revenue: t.revenue,
@@ -138,21 +236,23 @@ export default async function ProductsPage({
       prevRevenue: t.prevRevenue > 0 ? t.prevRevenue : undefined,
       prevUnits: t.prevUnits > 0 ? t.prevUnits : undefined,
     })),
-    rising: rising.map((r) => ({
-      item: r.item,
-      revWow: r.revWow!,
-      revenue: r.revenue,
-      prevRevenue: r.prevRevenue,
-      units: r.units,
-      prevUnits: r.prevUnits,
+    categories: catsForInsight.map((c) => ({
+      category: c.category,
+      units: c.units,
+      revenue: c.revenue,
+      revWow: c.revWow,
     })),
-    falling: falling.map((r) => ({
-      item: r.item,
-      revWow: r.revWow!,
-      revenue: r.revenue,
-      prevRevenue: r.prevRevenue,
-      units: r.units,
-      prevUnits: r.prevUnits,
+    risingCats: risingCats.map((c) => ({
+      category: c.category,
+      revenue: c.revenue,
+      revWow: c.revWow!,
+      prevRevenue: prevRevOf(c.revenue, c.revWow!),
+    })),
+    fallingCats: fallingCats.map((c) => ({
+      category: c.category,
+      revenue: c.revenue,
+      revWow: c.revWow!,
+      prevRevenue: prevRevOf(c.revenue, c.revWow!),
     })),
   };
   const draft = buildInsights(insightInput);
@@ -166,8 +266,23 @@ export default async function ProductsPage({
 
       <Commentary initial={draft} input={insightInput} />
 
-      <Section title="Top Products" description="Ranked by units sold. Service/delivery-fee lines are excluded.">
-        <DataTable columns={productColumns} rows={top} caption="Top 15 menu items by volume" />
+      <Section
+        title="Category Performance"
+        description="Units, revenue and week-on-week per menu category. Click a category to see its items."
+      >
+        <CategoryPerformanceTable rows={categoryPerf} />
+      </Section>
+
+      <Section title="Category Revenue Share">
+        <ChartCard title="Share of weekly revenue by category">
+          <PieChartCard
+            data={catShareData}
+            nameKey="category"
+            valueKey="revenue"
+            height={340}
+            showPercent
+          />
+        </ChartCard>
       </Section>
 
       <Section title="Volume Leaders">
