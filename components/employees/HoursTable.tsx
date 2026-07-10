@@ -120,13 +120,29 @@ export function HoursTable({
   const [to, setTo] = React.useState<string>("");
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [approvingKey, setApprovingKey] = React.useState<string | null>(null);
+  // Manager-edited hours per row, keyed by row key, staged before approval.
+  const [editedHours, setEditedHours] = React.useState<Record<string, string>>({});
 
-  async function handleApprove(employee_id: string, week_start_date: string, key: string) {
+  async function handleApprove(
+    employee_id: string,
+    week_start_date: string,
+    key: string,
+    overrideHours?: number,
+  ) {
     setApprovingKey(key);
     try {
-      const res = await approveClockedHours({ employee_id, week_start_date });
+      const res = await approveClockedHours({
+        employee_id,
+        week_start_date,
+        override_hours: overrideHours,
+      });
       toast.success("Clocked hours approved");
       onApproved?.(res.hours);
+      setEditedHours((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to approve");
     } finally {
@@ -252,6 +268,15 @@ export function HoursTable({
                   bothExist &&
                   Math.abs(r.manual!.total_hours - r.clocked!.total_hours) > 0.25;
 
+                // Clocked hours awaiting approval can be adjusted by a manager/admin.
+                const isPendingApproval = r.clocked !== null && !r.manual?.approved;
+                const rawEdit = editedHours[r.key];
+                const parsedEdit = rawEdit !== undefined ? parseFloat(rawEdit) : NaN;
+                const effectiveHours =
+                  rawEdit !== undefined && !isNaN(parsedEdit) && parsedEdit > 0
+                    ? parsedEdit
+                    : (r.clocked?.total_hours ?? 0);
+
                 return (
                   <tr
                     key={r.key}
@@ -275,7 +300,35 @@ export function HoursTable({
 
                     {/* Clock-event weekly total */}
                     <td className="px-3 py-3 text-right tabular-nums">
-                      {r.clocked ? (
+                      {r.clocked && isPendingApproval ? (
+                        <div className="flex items-center justify-end gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={rawEdit ?? r.clocked.total_hours.toFixed(2)}
+                            onChange={(e) =>
+                              setEditedHours((prev) => ({ ...prev, [r.key]: e.target.value }))
+                            }
+                            aria-label={`Edit clocked hours for ${r.employee_name}, week of ${formatDDMMYYYY(r.week_start_date)}`}
+                            className="w-16 rounded-lg border border-border bg-surface px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
+                          />
+                          <span
+                            className="text-[10px] text-text-muted"
+                            title={`${r.clocked.session_count} clock session${r.clocked.session_count === 1 ? "" : "s"} this week`}
+                          >
+                            ×{r.clocked.session_count}d
+                          </span>
+                          {discrepancy && (
+                            <span
+                              className="text-warning text-[10px]"
+                              title="Entered and clocked hours differ by more than 15 min"
+                            >
+                              ⚠
+                            </span>
+                          )}
+                        </div>
+                      ) : r.clocked ? (
                         <span
                           className={discrepancy ? "text-warning" : ""}
                           title={`${r.clocked.session_count} clock session${r.clocked.session_count === 1 ? "" : "s"} this week`}
@@ -328,10 +381,13 @@ export function HoursTable({
                         <Button
                           variant="primary"
                           size="sm"
-                          onClick={() => handleApprove(r.employee_id, r.week_start_date, r.key)}
+                          onClick={() =>
+                            handleApprove(r.employee_id, r.week_start_date, r.key, effectiveHours)
+                          }
                           loading={approvingKey === r.key}
+                          disabled={!(effectiveHours > 0)}
                         >
-                          Approve {r.clocked.total_hours.toFixed(1)}h
+                          Approve {effectiveHours.toFixed(1)}h
                         </Button>
                       ) : (
                         <span className="text-text-muted">—</span>

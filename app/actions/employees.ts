@@ -269,6 +269,7 @@ export async function logEmployeeHours(input: {
 export async function approveClockedHours(input: {
   employee_id: string;
   week_start_date: string;
+  override_hours?: number;
 }) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
@@ -299,10 +300,18 @@ export async function approveClockedHours(input: {
     const ms = new Date(ev.clock_out_at).getTime() - new Date(ev.clock_in_at).getTime();
     return sum + Math.max(0, ms) / 3_600_000;
   }, 0);
-  const totalHours = Math.round(clockedHours * 100) / 100;
-  if (totalHours <= 0) {
+  const clockedTotal = Math.round(clockedHours * 100) / 100;
+  if (clockedTotal <= 0) {
     throw new Error("No completed clock-in/out sessions to approve for this week.");
   }
+
+  // Manager/admin may adjust the hours before approving (e.g. correcting a
+  // missed clock-out). Falls back to the recomputed clocked total otherwise.
+  const hasOverride =
+    input.override_hours != null && !isNaN(Number(input.override_hours));
+  const totalHours = hasOverride ? Number(input.override_hours) : clockedTotal;
+  if (totalHours <= 0) throw new Error("Hours must be greater than 0");
+  const wasAdjusted = hasOverride && Math.abs(totalHours - clockedTotal) > 0.01;
 
   const { data: existing } = await supabase
     .from("employee_hours")
@@ -316,6 +325,9 @@ export async function approveClockedHours(input: {
     week_start_date: input.week_start_date,
     total_hours_worked: totalHours,
     hourly_rate_snapshot: rate,
+    notes: wasAdjusted
+      ? `Adjusted from clocked ${clockedTotal.toFixed(2)}h by manager`
+      : null,
     logged_by: user.id,
     source: "clocked" as const,
     approved: true,
