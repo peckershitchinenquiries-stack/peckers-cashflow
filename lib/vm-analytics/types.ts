@@ -49,6 +49,26 @@ export interface ProductRow {
   revenue_wow_pct: Num;
 }
 
+// Per store × week × category aggregate from vm_v_category_performance, with
+// SQL-computed WoW vs the same category exactly 7 days earlier. Unmapped items
+// fall into an 'Uncategorised' category. Powers the Product Performance
+// dashboard's Category Performance table.
+export interface CategoryPerfRow {
+  store: string;
+  week_start: string;
+  category: string;
+  units_sold: Num;
+  gross_sales: Num;
+  revenue_wow_pct: Num | null;
+  units_wow_pct: Num | null;
+}
+
+// A product-performance row tagged with its category, from vm_v_product_category.
+// Used to drill down into a category's individual items.
+export interface ProductCategoryRow extends ProductRow {
+  category: string;
+}
+
 export interface CategoryRow {
   store: string;
   week_start: string;
