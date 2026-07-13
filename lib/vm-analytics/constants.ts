@@ -66,8 +66,12 @@ export const EXCLUDED_PRODUCTS = new Set(
   ),
 );
 
-export const isExcludedProduct = (itemName: string) =>
-  EXCLUDED_PRODUCTS.has(normalizeItem(itemName));
+// Also excludes any fries variant (Cheesy Fries, Loaded Fries, …): the exact
+// set only matched plain "Fries", but no non-fries menu item contains "fries".
+export const isExcludedProduct = (itemName: string) => {
+  const norm = normalizeItem(itemName);
+  return EXCLUDED_PRODUCTS.has(norm) || norm.includes("fries");
+};
 
 // Thresholds for the Weekly Exception Report (rule-based exceptions).
 export const EXCEPTION_THRESHOLDS = {
