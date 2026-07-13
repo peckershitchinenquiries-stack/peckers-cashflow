@@ -71,6 +71,11 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
     .sort((a, b) => b.units - a.units);
 }
 
+// Fold "Churros" into "Desserts" so the two aggregate into one row. Applied to
+// every map key in aggregateCategories; all other categories pass through.
+const canonicalCategory = (name: string): string =>
+  name.toLowerCase() === "churros" ? "Desserts" : name;
+
 // Category-level totals with an item drill-down for the selected scope. WoW is
 // recomputed from summed totals (never averaged across stores) so the combined
 // view is correct — same principle as aggregate() above. No EXCLUDED_PRODUCTS
@@ -94,16 +99,17 @@ function aggregateCategories(
     return m;
   };
 
-  const curCat = sumBy(catRows, (r) => r.category, (r) => n(r.gross_sales), (r) => n(r.units_sold));
-  const prevCat = sumBy(catPrevRows, (r) => r.category, (r) => n(r.gross_sales), (r) => n(r.units_sold));
-  const prevItem = sumBy(itemPrevRows, (r) => `${r.category}::${r.item_name}`, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const curCat = sumBy(catRows, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevCat = sumBy(catPrevRows, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevItem = sumBy(itemPrevRows, (r) => `${canonicalCategory(r.category)}::${r.item_name}`, (r) => n(r.gross_sales), (r) => n(r.units_sold));
 
   const curItems = new Map<string, Map<string, { units: number; revenue: number }>>();
   for (const r of itemRows) {
-    let byItem = curItems.get(r.category);
+    const category = canonicalCategory(r.category);
+    let byItem = curItems.get(category);
     if (!byItem) {
       byItem = new Map();
-      curItems.set(r.category, byItem);
+      curItems.set(category, byItem);
     }
     const c = byItem.get(r.item_name) ?? { units: 0, revenue: 0 };
     c.units += n(r.units_sold);
@@ -130,12 +136,10 @@ function aggregateCategories(
     };
   });
 
-  // Revenue desc, but Uncategorised always last (its presence flags unmapped items).
-  return cats.sort((a, b) => {
-    if (a.category === "Uncategorised") return 1;
-    if (b.category === "Uncategorised") return -1;
-    return b.revenue - a.revenue;
-  });
+  // Drop the Uncategorised data-quality bucket entirely, then revenue desc.
+  return cats
+    .filter((c) => c.category !== "Uncategorised")
+    .sort((a, b) => b.revenue - a.revenue);
 }
 
 export default async function ProductsPage({
