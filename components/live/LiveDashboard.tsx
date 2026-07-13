@@ -285,18 +285,14 @@ export function LiveDashboard({
           const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
           const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
 
-          // Managers are on a fixed daily wage (not hourly), so their expected
-          // wage is always the full day-rate. Their actual wage only lands
-          // once clocked in — but unlike staff it doesn't prorate by hours,
-          // it's the full fixed amount for the day.
-          const managerExpectedTotal = storeManagers.reduce(
-            (s, m) => s + (Number(m.fixed_daily_wage) || 0),
-            0,
-          );
-          const managerActualTotal = storeManagers.reduce((s, m) => {
+          // Managers are on a fixed daily wage (not hourly), and it only
+          // counts once they've actually clocked in — no clock-in, no wage.
+          // So expected and actual are the same figure for managers.
+          const managerExpectedTotal = storeManagers.reduce((s, m) => {
             const mc = managerClockByMgr.get(m.id);
             return s + (mc?.clock_in_at ? Number(m.fixed_daily_wage) || 0 : 0);
           }, 0);
+          const managerActualTotal = managerExpectedTotal;
           const expectedGrandTotal = expectedTotal + managerExpectedTotal;
           const actualGrandTotal = actualTotal + managerActualTotal;
 
