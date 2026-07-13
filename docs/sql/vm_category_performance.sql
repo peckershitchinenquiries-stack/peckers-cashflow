@@ -147,7 +147,7 @@ insert into vm_menu_item_category (item_name, category) values
   ('Korean Gochujang Tenders', 'Tenders'),
   ('Southern fried Mango Pineappled Glazed Tenders','Tenders'),
   ('Mango Pineapple Glazed Southern Fried Buttermilk Tenders', 'Tenders'),
-  ('Mango Pineapple Glaze Tenders','Tenders'),
+  ('Mango Pineapple Glazed Tenders','Tenders'),
   ('Peanut Sweet Chilli Coriander Tenders', 'Tenders'),
   ('Southern Fried  Buttermilk Tenders', 'Tenders'),
   ('Southern Fried Buttermilk Tenders', 'Tenders'),
@@ -197,6 +197,33 @@ insert into vm_menu_item_category (item_name, category) values
   ('The OG Wrap', 'Wraps')
 on conflict (item_name) do update set category = excluded.category, updated_at = now();
 
+-- Single source of truth for item -> category, used by both views below.
+-- 1) exact match against the curated table (authoritative; wins first)
+-- 2) fallback for self-describing names: anything ending in wing(s)/tender(s).
+--    This auto-classifies new flavours and quantity-prefixed names
+--    ("2 Mango Pineapple Glazed Tenders") without a table edit.
+-- 3) otherwise Uncategorised.
+create or replace function vm_category_for(p_item_name text)
+returns text
+language sql
+stable
+as $$
+  with n as (
+    select regexp_replace(lower(btrim(p_item_name)), '\s+', ' ', 'g') as name
+  )
+  select coalesce(
+    (select m.category
+       from vm_menu_item_category m
+      where regexp_replace(lower(btrim(m.item_name)), '\s+', ' ', 'g') = (select name from n)
+      limit 1),
+    (select case
+       when name like '%wing' or name like '%wings' then 'Wings'
+       when name like '%tender' or name like '%tenders' then 'Tenders'
+     end from n),
+    'Uncategorised'
+  );
+$$;
+
 -- These view names may already exist with a different (older) column set.
 -- CREATE OR REPLACE VIEW can only append columns, never change existing ones, so
 -- drop first. No CASCADE: if anything else depends on them the drop will fail and
@@ -210,17 +237,11 @@ create or replace view vm_v_category_performance as
 with base as (
   select p.store,
          p.week_start,
-         coalesce(m.category, 'Uncategorised') as category,
+         vm_category_for(p.item_name) as category,
          sum(p.units_sold)  as units_sold,
          sum(p.gross_sales) as gross_sales
   from vm_v_product_performance p
-  left join vm_menu_item_category m
-    -- Normalise both sides: lowercase, trim ends, and collapse any run of
-    -- whitespace to a single space so the POS's inconsistent spacing (double
-    -- spaces, tabs) can't force an item into 'Uncategorised'.
-    on regexp_replace(lower(btrim(p.item_name)), '\s+', ' ', 'g')
-     = regexp_replace(lower(btrim(m.item_name)), '\s+', ' ', 'g')
-  group by p.store, p.week_start, coalesce(m.category, 'Uncategorised')
+  group by p.store, p.week_start, vm_category_for(p.item_name)
 )
 select b.store,
        b.week_start,
@@ -240,8 +261,5 @@ left join base pw
 -- Drill-down: every item row tagged with its category (for expanding a category).
 create or replace view vm_v_product_category as
 select p.*,
-       coalesce(m.category, 'Uncategorised') as category
-from vm_v_product_performance p
-left join vm_menu_item_category m
-  on regexp_replace(lower(btrim(p.item_name)), '\s+', ' ', 'g')
-   = regexp_replace(lower(btrim(m.item_name)), '\s+', ' ', 'g');
+       vm_category_for(p.item_name) as category
+from vm_v_product_performance p;
