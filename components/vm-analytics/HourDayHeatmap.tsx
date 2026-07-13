@@ -1,4 +1,4 @@
-// Hour × weekday order-count heat map. The 7-day data cells are shaded on a
+ // Hour × weekday order-count heat map. The 7-day data cells are shaded on a
 // smooth red→yellow→green gradient (Excel's default 3-colour scale) so busy and
 // quiet windows read at a glance. The Total column and Total row are left
 // uncoloured (neutral) — they sit on a larger scale and the heat shading is only
