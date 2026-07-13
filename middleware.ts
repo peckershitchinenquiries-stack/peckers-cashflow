@@ -176,6 +176,9 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/health|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    // Exclude Next internals, static assets, and machine endpoints that do their
+    // own auth: the service worker + manifest (must be served as-is, not
+    // redirected to a login page), and secret-guarded cron routes.
+    "/((?!_next/static|_next/image|favicon.ico|api/health|api/cron|sw.js|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
   ],
 };

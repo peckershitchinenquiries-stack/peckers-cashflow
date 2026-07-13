@@ -1,0 +1,51 @@
+name: Clock-in/out reminders
+
+# Pushes a browser reminder to employees at their shift start (clock in) and
+# shift end (clock out). Runs every 5 minutes; the endpoint's WINDOW constants
+# absorb GitHub's scheduling jitter and a per-day send log prevents repeats.
+#
+# NOTE: GitHub's scheduler can be delayed during peak load. For tighter timing,
+# use cron-job.org instead (every 5 min, POST to the same URL with the same
+# Bearer secret) — see the endpoint header for details.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  # Allow manual runs from the Actions tab for testing.
+  workflow_dispatch:
+
+# Don't stack runs if one is slow — skip the new one instead.
+concurrency:
+  group: shift-reminders
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required secrets
+        # Requires two repository secrets:
+        #   APP_URL      — e.g. https://peckers.vercel.app (no trailing slash)
+        #   CRON_SECRET  — must match CRON_SECRET in the app's server env
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=0
+          if [ -z "$APP_URL" ]; then
+            echo "::error::Repository secret APP_URL is not set. Add it under Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is not set. It must match CRON_SECRET in the app's server env."
+            missing=1
+          fi
+          exit $missing
+
+      - name: Call shift-reminders endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "${APP_URL%/}/api/cron/shift-reminders" \
+            -H "Authorization: Bearer ${CRON_SECRET}"

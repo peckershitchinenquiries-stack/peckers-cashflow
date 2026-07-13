@@ -23,6 +23,7 @@ import {
   weekdayIndex,
 } from "@/lib/utils";
 import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
+import { ClockReminderOptIn } from "@/components/crew/ClockReminderOptIn";
 import { ClockIcon } from "@/components/ui/icons";
 import type {
   ClockEvent,
@@ -566,6 +567,9 @@ export function CrewClockApp({
           </div>
         )}
       </Card>
+
+      {/* ---------- Reminder opt-in ---------- */}
+      <ClockReminderOptIn />
 
       {/* ---------- Week shifts ---------- */}
       <Card className="p-0 overflow-hidden">

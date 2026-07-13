@@ -356,6 +356,24 @@ export type GeofenceFailure = {
   message: string;
 };
 
+/**
+ * One browser/device an employee opted into clock-in/out push reminders from.
+ * Stores the W3C Push subscription the server needs to reach that device — see
+ * migrations/015_push_subscriptions.sql.
+ */
+export type PushSubscriptionRecord = {
+  id: string;
+  employee_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+};
+
+export type ReminderType = "clock_in" | "clock_out";
+
 export type EmployeeWeeklySummary = {
   employee_id: string;
   employee_name: string;

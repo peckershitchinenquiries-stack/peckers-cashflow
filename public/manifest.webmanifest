@@ -1,0 +1,19 @@
+{
+  "name": "Peckers Rota",
+  "short_name": "Peckers",
+  "description": "Clock in and out, view your shifts, and get reminders when it's time.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f0f0f",
+  "theme_color": "#0f0f0f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

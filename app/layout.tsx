@@ -16,6 +16,15 @@ export const metadata: Metadata = {
   description: "Internal cash flow management",
   icons: {
     icon: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
+  manifest: "/manifest.webmanifest",
+  // Enables "Add to Home Screen" as a standalone app — required for Web Push
+  // (clock-in/out reminders) to work on iPhone/iPad.
+  appleWebApp: {
+    capable: true,
+    title: "Peckers",
+    statusBarStyle: "black-translucent",
   },
 };
 
@@ -23,6 +32,7 @@ export const viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  themeColor: "#0f0f0f",
 };
 
 export default function RootLayout({
