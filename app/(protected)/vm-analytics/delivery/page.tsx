@@ -260,26 +260,6 @@ export default async function DeliveryPage({
           />
         </ChartCard>
       </Section>
-
-      {activeStores.length > 1 && (
-        <Section
-          title="Revenue Share by Store"
-          description="Each store's split across In-store, Own Delivery and Aggregate, as a % of that store's net sales."
-        >
-          <div className="grid gap-4 lg:grid-cols-2">
-            {activeStores.map((s) => (
-              <ChartCard key={s} title={`${shortStore(s)} — revenue share`}>
-                <PieChartCard
-                  data={threeWayPie(buildBreakdown([s], rows, chanRows))}
-                  nameKey="name"
-                  valueKey="value"
-                  showPercent
-                />
-              </ChartCard>
-            ))}
-          </div>
-        </Section>
-      )}
     </div>
   );
 }
