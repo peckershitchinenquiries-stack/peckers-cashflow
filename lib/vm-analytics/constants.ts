@@ -73,6 +73,16 @@ export const isExcludedProduct = (itemName: string) => {
   return EXCLUDED_PRODUCTS.has(norm) || norm.includes("fries");
 };
 
+// Products hidden from the Product Performance dashboard everywhere (rankings AND
+// category totals/drill-down) without touching the source data. Delete a line to
+// bring one back. Kept separate from EXCLUDED_PRODUCTS, which only drops drinks/
+// sides from rankings but keeps them in category totals.
+export const HIDDEN_PRODUCTS = new Set(
+  ["The OG Burger & Chips", "Alpha OG burger meal"].map(normalizeItem),
+);
+
+export const isHiddenProduct = (itemName: string) => HIDDEN_PRODUCTS.has(normalizeItem(itemName));
+
 // Thresholds for the Weekly Exception Report (rule-based exceptions).
 export const EXCEPTION_THRESHOLDS = {
   labourTargetPct: 30, // labour % of NET sales above this = risk

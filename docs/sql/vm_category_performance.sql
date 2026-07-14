@@ -11,7 +11,6 @@ create table if not exists vm_menu_item_category (
 );
 
 insert into vm_menu_item_category (item_name, category) values
-  ('Alpha OG burger meal', 'Burgers'),
   ('Buffalo Soldier Burger', 'Burgers'),
   ('Butter Me Up Burger 🇮🇳', 'Burgers'),
   ('Hert and Seoul Burger', 'Burgers'),
@@ -20,7 +19,6 @@ insert into vm_menu_item_category (item_name, category) values
   ('Murgar on the Dance Floor Burger', 'Burgers'),
   ('Supercharged OG Burger', 'Burgers'),
   ('The OG Burger', 'Burgers'),
-  ('The OG Burger & Chips', 'Burgers'),
   ('1 piece Southern Fried Chicken', 'Chicken on the bone'),
   ('1 piece Southern Fried Chicken & Chips', 'Chicken on the bone'),
   ('2 pieces Southern Fried Chicken & Chips', 'Chicken on the bone'),
@@ -94,13 +92,13 @@ insert into vm_menu_item_category (item_name, category) values
   ('OG PERI-PERI Grilled Wrap', 'Peri peri grilled'),
   ('Peckers Grilled Snack-wrap', 'Peri peri grilled'),
   ('PERI PERI Butterfly Chicken', 'Peri peri grilled'),
+  ('Peckers Health Box', 'Peri peri grilled'),
   ('PERI PERI Grilled Wings', 'Peri peri grilled'),
   ('PERI PERI Half Grilled Chicken', 'Peri peri grilled'),
   ('PERI PERI Quarter Grilled Chicken', 'Peri peri grilled'),
   ('Quarter Grilled Chicken & Chips', 'Peri peri grilled'),
   ('Mini Platter for 1', 'Platters'),
   ('Peckers Fried Platter for 4', 'Platters'),
-  ('Peckers Health Box', 'Platters'),
   ('Peckers Platter for 4', 'Platters'),
   ('Buffalo Soldier Rice Bowl', 'Rice bowl'),
   ('Hert and Seoul Rice Bowl', 'Rice bowl'),

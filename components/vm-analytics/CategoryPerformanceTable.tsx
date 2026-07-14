@@ -8,6 +8,8 @@ export interface CategoryItem {
   units: number;
   revenue: number;
   revWow: number | null;
+  hitchinWow: number | null;
+  stevenageWow: number | null;
 }
 
 export interface CategoryPerf {
@@ -15,10 +17,21 @@ export interface CategoryPerf {
   units: number;
   revenue: number;
   revWow: number | null;
+  hitchinWow: number | null;
+  stevenageWow: number | null;
   items: CategoryItem[];
 }
 
-export function CategoryPerformanceTable({ rows }: { rows: CategoryPerf[] }) {
+// showStoreWow adds the per-store Hitchin/Stevenage WoW columns. They only make
+// sense in combined view — when a single store is selected they'd just duplicate
+// the (already store-scoped) Revenue WoW column, so the page hides them.
+export function CategoryPerformanceTable({
+  rows,
+  showStoreWow = false,
+}: {
+  rows: CategoryPerf[];
+  showStoreWow?: boolean;
+}) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const toggle = (category: string) =>
@@ -46,12 +59,22 @@ export function CategoryPerformanceTable({ rows }: { rows: CategoryPerf[] }) {
               <th className="whitespace-nowrap px-4 py-3 font-semibold uppercase text-xs tracking-wide border-b border-line text-right">
                 Revenue WoW
               </th>
+              {showStoreWow && (
+                <>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold uppercase text-xs tracking-wide border-b border-line text-right">
+                    Hitchin WoW
+                  </th>
+                  <th className="whitespace-nowrap px-4 py-3 font-semibold uppercase text-xs tracking-wide border-b border-line text-right">
+                    Stevenage WoW
+                  </th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-tertiary">
+                <td colSpan={showStoreWow ? 6 : 4} className="px-4 py-8 text-center text-tertiary">
                   No data for this week.
                 </td>
               </tr>
@@ -79,6 +102,16 @@ export function CategoryPerformanceTable({ rows }: { rows: CategoryPerf[] }) {
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
                         <span className={deltaClass(cat.revWow)}>{signedPct(cat.revWow)}</span>
                       </td>
+                      {showStoreWow && (
+                        <>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
+                            <span className={deltaClass(cat.hitchinWow)}>{signedPct(cat.hitchinWow)}</span>
+                          </td>
+                          <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
+                            <span className={deltaClass(cat.stevenageWow)}>{signedPct(cat.stevenageWow)}</span>
+                          </td>
+                        </>
+                      )}
                     </tr>
                     {isOpen &&
                       cat.items.map((it) => (
@@ -95,6 +128,16 @@ export function CategoryPerformanceTable({ rows }: { rows: CategoryPerf[] }) {
                           <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
                             <span className={deltaClass(it.revWow)}>{signedPct(it.revWow)}</span>
                           </td>
+                          {showStoreWow && (
+                            <>
+                              <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
+                                <span className={deltaClass(it.hitchinWow)}>{signedPct(it.hitchinWow)}</span>
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
+                                <span className={deltaClass(it.stevenageWow)}>{signedPct(it.stevenageWow)}</span>
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
                   </Fragment>

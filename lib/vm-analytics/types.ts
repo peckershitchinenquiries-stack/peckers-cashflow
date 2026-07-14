@@ -69,6 +69,16 @@ export interface ProductCategoryRow extends ProductRow {
   category: string;
 }
 
+// One curated new-launch entry, from vm_new_launches. Each row maps a raw
+// sales-data item_name to a display_name; several raw variants can share one
+// display_name so they roll up into a single New Launches line. launch_date is
+// informational (items stay until manually removed).
+export interface NewLaunchRow {
+  item_name: string;
+  display_name: string;
+  launch_date: string | null;
+}
+
 export interface CategoryRow {
   store: string;
   week_start: string;
