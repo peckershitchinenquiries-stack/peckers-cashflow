@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // Per-dashboard cache version. Present only for dashboards whose commentary
 // data definition has changed; absent dashboards keep the unversioned key.
 const CACHE_VERSIONS: Partial<Record<InsightInput["dashboard"], string>> = {
-  products: "v2",
+  products: "v3",
 };
 
 export async function POST(req: Request): Promise<Response> {
@@ -29,7 +29,7 @@ export async function POST(req: Request): Promise<Response> {
   //
   // Bump the version when the commentary's underlying data changes so stale
   // pre-change rows stop matching and regenerate from the corrected input.
-  // products=v2: drinks and side add-ons (Fries, Pepsi, …) now excluded.
+  // products=v3: all fries variants (Cheesy Fries, Loaded Fries, …) now excluded.
   const version = CACHE_VERSIONS[input.dashboard];
   const base = input.store ? `${input.dashboard}@${input.store}` : input.dashboard;
   const cacheKey = version ? `${base}#${version}` : base;

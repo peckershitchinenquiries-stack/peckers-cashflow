@@ -163,7 +163,8 @@ export default async function WeeklyExceptionPage({
         getDayparts(weekIso),
         getDelivery(weekIso),
         getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
-        getMealDeals(weekIso),
+        getMealDeals(weekIso).catch(() => []), // vm_v_meal_deals can time out on cold cache; degrade gracefully
+
         prevWeekIso ? getExec(prevWeekIso) : Promise.resolve([]),
         prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve([]),
       ]);
