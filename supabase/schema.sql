@@ -461,12 +461,19 @@ create table if not exists public.clock_events (
   extra_long_deliveries  integer not null default 0,
   extra_short_reason     text,
   extra_long_reason      text,
+  -- Per-day approval of clocked hours (see migration 016). A manager confirms
+  -- each day's hours; the weekly employee_hours row is the sum of approved_hours.
+  hours_approved      boolean not null default false,
+  approved_hours      numeric(6,2),
+  hours_approved_by   uuid references auth.users(id) on delete set null,
+  hours_approved_at   timestamptz,
   created_at          timestamptz not null default now()
 );
 
 create unique index if not exists clock_events_unique on public.clock_events (employee_id, event_date);
 create index if not exists clock_events_date_idx on public.clock_events (event_date);
 create index if not exists clock_events_store_date_idx on public.clock_events (store_id, event_date);
+create index if not exists clock_events_approval_idx on public.clock_events (hours_approved, event_date);
 
 -- =============================================================
 -- TABLE: weekly_deliveries

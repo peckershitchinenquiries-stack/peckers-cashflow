@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { EmployeesView } from "@/components/employees/EmployeesView";
 import { getAppSettings } from "@/app/actions/settings";
-import { addDays, groupClockEventsByWeek, startOfISOWeek, toISODate } from "@/lib/utils";
+import { addDays, groupClockEventsByWeek, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export default async function ManagerEmployeesPage() {
     supabase.from("stores").select("*").eq("id", storeId),
     supabase
       .from("clock_events")
-      .select("employee_id, event_date, clock_in_at, clock_out_at")
+      .select("id, employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours")
       .eq("store_id", storeId)
       .gte("event_date", eightWeeksBack)
       .not("clock_out_at", "is", null)
@@ -53,6 +53,7 @@ export default async function ManagerEmployeesPage() {
     })).map((e) => [e.id, e]),
   );
   const clockSummaries = groupClockEventsByWeek(clocksRes.data ?? [], empMap);
+  const clockDailySummaries = mapClockEventsToDaily(clocksRes.data ?? [], empMap);
 
   return (
     <>
@@ -65,6 +66,8 @@ export default async function ManagerEmployeesPage() {
         initialHours={(hoursRes.data ?? []) as any[]}
         initialCoverDrivers={(coverRes.data ?? []) as any[]}
         clockSummaries={clockSummaries}
+        clockDailySummaries={clockDailySummaries}
+        todayISO={todayISO()}
         stores={storesRes.data ?? []}
         defaultStoreId={storeId || null}
         minWageBands={settings.min_wage_bands}

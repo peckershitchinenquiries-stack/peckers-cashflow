@@ -360,6 +360,56 @@ export function groupClockEventsByWeek(
     .sort((a, b) => b.week_start_date.localeCompare(a.week_start_date));
 }
 
+/**
+ * Map raw clock_events into per-DAY summaries for the daily approval view.
+ * clock_events already holds one row per (employee, day), so this is 1:1 —
+ * we just compute the day's clocked hours and carry the approval state.
+ * Structurally matches the ClockDailySummary type (kept inline to avoid a
+ * lib/types <-> lib/utils import cycle).
+ */
+export function mapClockEventsToDaily(
+  clockEvents: Array<{
+    employee_id: string;
+    event_date: string;
+    store_id?: string | null;
+    clock_in_at: string | null;
+    clock_out_at: string | null;
+    hours_approved?: boolean | null;
+    approved_hours?: number | string | null;
+  }>,
+  employeeMap: Map<string, { name: string }>,
+): Array<{
+  employee_id: string;
+  employee_name: string;
+  event_date: string;
+  store_id: string | null;
+  clocked_hours: number;
+  hours_approved: boolean;
+  approved_hours: number | null;
+}> {
+  const out = [];
+  for (const ce of clockEvents) {
+    if (!ce.clock_in_at || !ce.clock_out_at) continue;
+    const ms =
+      new Date(ce.clock_out_at).getTime() - new Date(ce.clock_in_at).getTime();
+    out.push({
+      employee_id: ce.employee_id,
+      employee_name: employeeMap.get(ce.employee_id)?.name ?? "—",
+      event_date: ce.event_date,
+      store_id: ce.store_id ?? null,
+      clocked_hours: Math.round((Math.max(0, ms) / 3_600_000) * 100) / 100,
+      hours_approved: !!ce.hours_approved,
+      approved_hours:
+        ce.approved_hours != null ? Number(ce.approved_hours) : null,
+    });
+  }
+  return out.sort(
+    (a, b) =>
+      b.event_date.localeCompare(a.event_date) ||
+      a.employee_name.localeCompare(b.employee_name),
+  );
+}
+
 // ---------------- numbers / safety ----------------
 export function clampNumber(n: unknown, fallback = 0) {
   const v = typeof n === "string" ? parseFloat(n) : (n as number);

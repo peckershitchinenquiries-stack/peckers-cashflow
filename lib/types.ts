@@ -407,6 +407,21 @@ export type ClockWeeklySummary = {
   hourly_rate: number;
 };
 
+// One clocked DAY for an employee, used by the daily hours-approval view.
+// clock_events holds exactly one row per (employee, day), so this maps 1:1.
+export type ClockDailySummary = {
+  employee_id: string;
+  employee_name: string;
+  event_date: string; // YYYY-MM-DD
+  store_id: string | null;
+  /** Raw hours from clock-in/out for the day. */
+  clocked_hours: number;
+  /** Has a manager approved this day for payroll? */
+  hours_approved: boolean;
+  /** Manager-confirmed hours (may differ from clocked_hours); null until approved. */
+  approved_hours: number | null;
+};
+
 export type LiveDashboardStatus =
   | "on_shift"
   | "expected"

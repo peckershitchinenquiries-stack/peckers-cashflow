@@ -107,12 +107,18 @@ export function HoursTable({
   clockSummaries = [],
   onDeleted,
   onApproved,
+  hideApprove = false,
 }: {
   employees: Employee[];
   rows: EmployeeHoursComputed[];
   clockSummaries?: ClockWeeklySummary[];
   onDeleted: (deletedId: string) => void;
   onApproved?: (freshHours: EmployeeHoursComputed[]) => void;
+  /**
+   * Weekly-log mode: hide the per-week Approve control (approval now happens
+   * day-by-day in the Daily Approval tab) and show a Pending badge instead.
+   */
+  hideApprove?: boolean;
 }) {
   const toast = useToast();
   const [filterEmp, setFilterEmp] = React.useState<string>("");
@@ -188,8 +194,10 @@ export function HoursTable({
       {/* Legend */}
       <p className="text-xs text-text-muted">
         <span className="font-medium text-text-primary">Clocked</span> = sum of all daily clock-in/out sessions for that week.{" "}
-        Managers <span className="font-medium text-text-primary">approve</span> clocked hours to confirm them for payroll.{" "}
-        <span className="font-medium text-text-primary">Entered</span> = an admin manual correction.
+        <span className="font-medium text-text-primary">Entered</span> = the approved weekly total (rolled up from daily approvals, or an admin manual correction).
+        {hideApprove && (
+          <> Approve hours day-by-day in the <span className="font-medium text-text-primary">Daily Approval</span> tab.</>
+        )}
       </p>
 
       {/* Filters */}
@@ -300,7 +308,7 @@ export function HoursTable({
 
                     {/* Clock-event weekly total */}
                     <td className="px-3 py-3 text-right tabular-nums">
-                      {r.clocked && isPendingApproval ? (
+                      {r.clocked && isPendingApproval && !hideApprove ? (
                         <div className="flex items-center justify-end gap-1">
                           <input
                             type="number"
@@ -376,6 +384,13 @@ export function HoursTable({
                         <Badge variant="success">
                           <CheckIcon size={12} />
                           {r.manual.source === "clocked" ? "Approved" : "Logged"}
+                        </Badge>
+                      ) : r.clocked && hideApprove ? (
+                        <Badge
+                          variant="warning"
+                          className="whitespace-nowrap"
+                        >
+                          Pending — approve daily
                         </Badge>
                       ) : r.clocked ? (
                         <Button
