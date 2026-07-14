@@ -10,6 +10,7 @@ import type {
   CategoryRow,
   CategoryPerfRow,
   ProductCategoryRow,
+  NewLaunchRow,
   DaypartRow,
   DaypartChannelRow,
   DaypartChannelDetailRow,
@@ -246,6 +247,22 @@ export async function getCategoryItems(weekIso: string): Promise<ProductCategory
     return [];
   }
   return (data ?? []) as ProductCategoryRow[];
+}
+
+// The curated new-launch list (item_name -> display_name + launch_date), from
+// vm_new_launches. Week-independent: the products page matches these against the
+// selected week's product rows. Returns [] if the table is missing (e.g. before
+// the seed SQL has been run) so the page still renders without the section.
+export async function getNewLaunches(): Promise<NewLaunchRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_new_launches")
+    .select("item_name, display_name, launch_date");
+  if (error) {
+    console.warn(`getNewLaunches: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as NewLaunchRow[];
 }
 
 export async function getCategories(weekIso: string): Promise<CategoryRow[]> {
