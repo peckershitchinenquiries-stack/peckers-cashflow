@@ -9,6 +9,7 @@ import { useToast } from "@/components/ui/Toast";
 import { DateRangePicker } from "@/components/ui/DateRangePicker";
 import { ShiftEditModal } from "./ShiftEditModal";
 import { DeliveryEditModal } from "./DeliveryEditModal";
+import { ManagerShiftEditModal } from "./ManagerShiftEditModal";
 import {
   WEEKDAY_SHORT,
   addDays,
@@ -27,9 +28,12 @@ import { worksForCash } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { DEFAULT_SETTINGS, type MinWageBands, type ShiftTimeSettings } from "@/lib/settings";
 import type {
+  AllowedUser,
   ClockEvent,
   Employee,
   EmployeeScheduleDay,
+  ManagerClockEvent,
+  ManagerShift,
   RotaShift,
   ShiftPreset,
   Store,
@@ -51,6 +55,10 @@ type Props = {
   clocks: ClockEvent[];
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
+  /** Manager rota section shown above the employee rota (admin Rota page only). */
+  managers?: AllowedUser[];
+  managerShifts?: ManagerShift[];
+  managerClocks?: ManagerClockEvent[];
   minWageBands?: MinWageBands;
   shiftTimes?: ShiftTimeSettings;
   rangeStartIso: string;
@@ -66,6 +74,9 @@ export function RotaView({
   clocks,
   weeklyDeliveries,
   schedules = [],
+  managers = [],
+  managerShifts = [],
+  managerClocks = [],
   minWageBands = DEFAULT_SETTINGS.min_wage_bands,
   shiftTimes = DEFAULT_SETTINGS.shift_times,
   rangeStartIso,
@@ -102,6 +113,12 @@ export function RotaView({
     existing: WeeklyDelivery | null;
     weekDays: string[];
     events: ClockEvent[];
+  } | null>(null);
+  const [editingManagerShift, setEditingManagerShift] = React.useState<{
+    manager: AllowedUser;
+    date: string;
+    existing: ManagerShift | null;
+    prefill: { start: string; end: string } | null;
   } | null>(null);
 
   const isSuperAdmin = userRole === "admin";
@@ -180,6 +197,38 @@ export function RotaView({
     for (const c of clocks) m.set(`${c.employee_id}:${c.event_date}`, c);
     return m;
   }, [clocks]);
+
+  // Managers shown above the employee rota — home store only (managers, unlike
+  // employees, don't currently work cross-store).
+  const activeManagers = React.useMemo(
+    () =>
+      managers
+        .filter((m) => m.store_id === activeStoreId)
+        .sort((a, b) => (a.name || a.username || "").localeCompare(b.name || b.username || "")),
+    [managers, activeStoreId],
+  );
+
+  // Manager shifts indexed by manager+date
+  const managerShiftByKey = React.useMemo(() => {
+    const m = new Map<string, ManagerShift>();
+    for (const s of managerShifts) m.set(`${s.manager_id}:${s.shift_date}`, s);
+    return m;
+  }, [managerShifts]);
+
+  // Manager clocks indexed by manager+date
+  const managerClockByKey = React.useMemo(() => {
+    const m = new Map<string, ManagerClockEvent>();
+    for (const c of managerClocks) m.set(`${c.manager_id}:${c.event_date}`, c);
+    return m;
+  }, [managerClocks]);
+
+  function weekManagerTotalHours(managerId: string): number {
+    return weekDays.reduce((sum, d) => {
+      const s = managerShiftByKey.get(`${managerId}:${toISODate(d)}`);
+      if (!s || s.is_day_off) return sum;
+      return sum + Number(s.scheduled_hours ?? 0);
+    }, 0);
+  }
 
   // Deliveries indexed by driver
   const deliveryByDriver = React.useMemo(() => {
@@ -421,6 +470,163 @@ export function RotaView({
           </div>
         </div>
       </Card>
+
+      {/* Manager rota — managers are on a fixed daily wage, not hourly, so this
+          is scheduling + attendance only (no wage/hours-avg columns). */}
+      {managers.length > 0 && (
+        <Card className="overflow-hidden p-0">
+          <CardHeader className="px-5 pt-5">
+            <CardTitle>{activeStore?.name ?? "—"} Manager Rota</CardTitle>
+            <CardDescription>
+              {activeManagers.length} manager{activeManagers.length === 1 ? "" : "s"} · fixed
+              daily wage — not hourly, shown for scheduling &amp; attendance only
+            </CardDescription>
+          </CardHeader>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[900px]">
+              <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
+                <tr>
+                  <th className="text-left px-3 py-2 sticky left-0 bg-surface-hover z-10">
+                    Manager
+                  </th>
+                  {weekDays.map((d) => (
+                    <th
+                      key={d.toISOString()}
+                      className="text-center px-2 py-2 min-w-[110px]"
+                    >
+                      <div>{WEEKDAY_SHORT[(d.getDay() + 6) % 7]}</div>
+                      <div className="text-[10px] font-normal text-text-muted normal-case">
+                        {String(d.getDate()).padStart(2, "0")}/{String(d.getMonth() + 1).padStart(2, "0")}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="text-right px-3 py-2">Total hrs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeManagers.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={weekDays.length + 2}
+                      className="px-4 py-8 text-center text-text-muted"
+                    >
+                      No managers assigned to this store yet. Add one on the Managers page.
+                    </td>
+                  </tr>
+                )}
+                {activeManagers.map((mgr) => {
+                  const total = weekManagerTotalHours(mgr.id);
+                  return (
+                    <tr
+                      key={mgr.id}
+                      className="border-t border-border hover:bg-surface-hover/60 transition-colors"
+                    >
+                      <td className="px-3 py-2 sticky left-0 bg-surface z-10 font-medium text-text-primary">
+                        {mgr.name || mgr.username || "Manager"}
+                      </td>
+                      {weekDays.map((d) => {
+                        const dateIso = toISODate(d);
+                        const cell = managerShiftByKey.get(`${mgr.id}:${dateIso}`);
+                        const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
+                        const isToday = dateIso === todayISO();
+                        const isPast = dateIso < todayISO();
+                        const prevShift = managerShiftByKey.get(
+                          `${mgr.id}:${toISODate(addDays(d, -1))}`,
+                        );
+                        const prefill =
+                          !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
+                            ? {
+                                start: prevShift.start_time.slice(0, 5),
+                                end: (prevShift.end_time ?? "").slice(0, 5),
+                              }
+                            : null;
+                        // "Came or not" — a past scheduled (non-day-off) shift
+                        // with no clock-in is a no-show.
+                        const missed = isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
+                        const cellInner = (
+                          <>
+                            {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time) : "—"}
+                            {clk?.clock_in_at && (
+                              <div className="text-[9px] text-success mt-0.5">
+                                ✓ in{" "}
+                                {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                                {clk.clock_out_at && (
+                                  <>
+                                    {" "}
+                                    · out{" "}
+                                    {new Date(clk.clock_out_at).toLocaleTimeString("en-GB", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}
+                                  </>
+                                )}
+                              </div>
+                            )}
+                            {missed && (
+                              <div className="text-[9px] text-danger mt-0.5">✗ not clocked in</div>
+                            )}
+                          </>
+                        );
+                        return (
+                          <td
+                            key={dateIso}
+                            className={
+                              "px-1 py-1 text-center align-middle " +
+                              (isToday ? "bg-gold/5" : "")
+                            }
+                          >
+                            {isPast ? (
+                              <div
+                                className={
+                                  "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
+                                  (cell?.is_day_off
+                                    ? "bg-danger/5 border-danger/20 text-danger"
+                                    : cell?.start_time
+                                      ? "bg-success/5 border-success/20 text-success"
+                                      : "border-dashed border-border text-text-muted")
+                                }
+                                title="Past day — view only (locked for editing)"
+                              >
+                                {cellInner}
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  setEditingManagerShift({
+                                    manager: mgr,
+                                    date: dateIso,
+                                    existing: cell ?? null,
+                                    prefill,
+                                  })
+                                }
+                                className={
+                                  "w-full h-12 rounded-lg text-xs border transition-colors " +
+                                  (cell?.is_day_off
+                                    ? "bg-danger/10 border-danger/30 text-danger"
+                                    : cell?.start_time
+                                      ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+                                      : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+                                }
+                              >
+                                {cellInner}
+                              </button>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-3 py-2 text-right font-medium">{total.toFixed(1)}h</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {/* Rota grid */}
       <Card className="overflow-hidden p-0">
@@ -812,6 +1018,21 @@ export function RotaView({
           onSaved={() => {
             setEditingDelivery(null);
             toast.success("Deliveries saved");
+            router.refresh();
+          }}
+        />
+      )}
+      {editingManagerShift && (
+        <ManagerShiftEditModal
+          manager={editingManagerShift.manager}
+          storeId={activeStoreId}
+          shiftDate={editingManagerShift.date}
+          existing={editingManagerShift.existing}
+          prefill={editingManagerShift.prefill}
+          onClose={() => setEditingManagerShift(null)}
+          onSaved={() => {
+            setEditingManagerShift(null);
+            toast.success("Shift updated");
             router.refresh();
           }}
         />

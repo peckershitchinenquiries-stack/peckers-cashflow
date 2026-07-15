@@ -274,6 +274,28 @@ export type ManagerClockEvent = {
   created_at: string;
 };
 
+/**
+ * A manager's scheduled shift for a day. Mirrors rota_shifts but keyed on the
+ * login account (allowed_users), since managers have no employees row.
+ * Scheduling + attendance visibility only — a manager's fixed_daily_wage
+ * never depends on this.
+ */
+export type ManagerShift = {
+  id: string;
+  manager_id: string;
+  store_id: string;
+  shift_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  is_day_off: boolean;
+  scheduled_hours: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  created_by: string | null;
+  updated_by: string | null;
+};
+
 export type WeeklyDelivery = {
   id: string;
   driver_id: string;

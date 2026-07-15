@@ -11,8 +11,11 @@ import {
   todayISO,
 } from "@/lib/utils";
 import type {
+  AllowedUser,
   Employee,
   EmployeeScheduleDay,
+  ManagerClockEvent,
+  ManagerShift,
   RotaShift,
   Store,
   ClockEvent,
@@ -39,30 +42,50 @@ export default async function RotaPage({
   // For 4-week rolling avg we also fetch the prior 4 weeks of shifts
   const fourWeeksBack = toISODate(addDays(parseISODate(weekStartIso), -28));
 
-  const [storesRes, employeesRes, shiftsRes, clocksRes, deliveriesRes, schedulesRes] =
-    await Promise.all([
-      supabase.from("stores").select("*").order("name"),
-      supabase
-        .from("employees")
-        .select("*")
-        .neq("employment_status", "left")
-        .order("name"),
-      supabase
-        .from("rota_shifts")
-        .select("*")
-        .gte("shift_date", fourWeeksBack)
-        .lte("shift_date", endIso),
-      supabase
-        .from("clock_events")
-        .select("*")
-        .gte("event_date", fourWeeksBack)
-        .lte("event_date", todayISO()),
-      supabase
-        .from("weekly_deliveries")
-        .select("*")
-        .eq("week_start_date", weekStartIso),
-      supabase.from("employee_schedules").select("*"),
-    ]);
+  const [
+    storesRes,
+    employeesRes,
+    shiftsRes,
+    clocksRes,
+    deliveriesRes,
+    schedulesRes,
+    managersRes,
+    managerShiftsRes,
+    managerClocksRes,
+  ] = await Promise.all([
+    supabase.from("stores").select("*").order("name"),
+    supabase
+      .from("employees")
+      .select("*")
+      .neq("employment_status", "left")
+      .order("name"),
+    supabase
+      .from("rota_shifts")
+      .select("*")
+      .gte("shift_date", fourWeeksBack)
+      .lte("shift_date", endIso),
+    supabase
+      .from("clock_events")
+      .select("*")
+      .gte("event_date", fourWeeksBack)
+      .lte("event_date", todayISO()),
+    supabase
+      .from("weekly_deliveries")
+      .select("*")
+      .eq("week_start_date", weekStartIso),
+    supabase.from("employee_schedules").select("*"),
+    supabase.from("allowed_users").select("*").eq("role", "manager"),
+    supabase
+      .from("manager_shifts")
+      .select("*")
+      .gte("shift_date", startIso)
+      .lte("shift_date", endIso),
+    supabase
+      .from("manager_clock_events")
+      .select("*")
+      .gte("event_date", startIso)
+      .lte("event_date", todayISO()),
+  ]);
 
   return (
     <>
@@ -77,6 +100,9 @@ export default async function RotaPage({
         clocks={(clocksRes.data ?? []) as ClockEvent[]}
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
+        managers={(managersRes.data ?? []) as AllowedUser[]}
+        managerShifts={(managerShiftsRes.data ?? []) as ManagerShift[]}
+        managerClocks={(managerClocksRes.data ?? []) as ManagerClockEvent[]}
         minWageBands={settings.min_wage_bands}
         shiftTimes={settings.shift_times}
         rangeStartIso={startIso}
