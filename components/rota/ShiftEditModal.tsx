@@ -86,7 +86,8 @@ export function ShiftEditModal({
       isDayOff !== existing.is_day_off);
 
   const calculated = !isDayOff && eff.start && eff.end ? shiftHours(eff.start, eff.end) : 0;
-  const canSave = isDayOff || isPreset || (!!start && !!end);
+  const canSave =
+    (isDayOff || isPreset || (!!start && !!end)) && (!showReason || !!reason.trim());
 
   async function save() {
     setBusy(true);
