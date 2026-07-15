@@ -229,6 +229,7 @@ export function PieChartCard({
   height = 280,
   currency = true,
   showPercent = false,
+  percentTotal,
 }: {
   data: Record<string, unknown>[];
   nameKey: string;
@@ -238,8 +239,13 @@ export function PieChartCard({
   // When true, slices are labelled with their share of the total (to 2 dp) and
   // the tooltip shows the percentage rather than the raw value.
   showPercent?: boolean;
+  // External denominator for the share %. When set (>0), percentages are
+  // value/percentTotal rather than value/sum-of-slices, so slices need not
+  // sum to 100% (e.g. dividing category net sales by the exec net-sales total).
+  percentTotal?: number;
 }) {
-  const total = data.reduce((s, d) => s + Number(d[valueKey] ?? 0), 0);
+  const sliceTotal = data.reduce((s, d) => s + Number(d[valueKey] ?? 0), 0);
+  const total = percentTotal && percentTotal > 0 ? percentTotal : sliceTotal;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
@@ -254,8 +260,10 @@ export function PieChartCard({
           paddingAngle={2}
           label={
             showPercent
-              ? (e: { percent?: number }) =>
-                  `${truncTo((e.percent ?? 0) * 100, 2).toFixed(2)}%`
+              ? (e: { value?: number; percent?: number }) =>
+                  total > 0
+                    ? `${truncTo((Number(e.value ?? 0) / total) * 100, 2).toFixed(2)}%`
+                    : `${truncTo((e.percent ?? 0) * 100, 2).toFixed(2)}%`
               : undefined
           }
           labelLine={false}
