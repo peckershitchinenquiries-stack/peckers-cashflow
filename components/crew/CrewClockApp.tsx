@@ -24,6 +24,7 @@ import {
 } from "@/lib/utils";
 import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
 import { ClockReminderOptIn } from "@/components/crew/ClockReminderOptIn";
+import { savePushSubscription, deletePushSubscription, sendTestPush } from "@/app/actions/push";
 import { ClockIcon } from "@/components/ui/icons";
 import type {
   ClockEvent,
@@ -569,7 +570,11 @@ export function CrewClockApp({
       </Card>
 
       {/* ---------- Reminder opt-in ---------- */}
-      <ClockReminderOptIn />
+      <ClockReminderOptIn
+        saveSubscription={savePushSubscription}
+        deleteSubscription={deletePushSubscription}
+        sendTest={sendTestPush}
+      />
 
       {/* ---------- Week shifts ---------- */}
       <Card className="p-0 overflow-hidden">

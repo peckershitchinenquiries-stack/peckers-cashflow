@@ -51,24 +51,28 @@ function ensureConfigured() {
 }
 
 /**
- * Deliver a push to every device an employee has subscribed. Dead subscriptions
- * (the push service replies 404/410 = gone) are pruned so they don't accumulate.
- * Returns how many devices actually accepted the notification.
+ * Deliver a push to every device subscribed in `table`, filtered by
+ * `idColumn = idValue` (e.g. push_subscriptions.employee_id, or
+ * manager_push_subscriptions.manager_id). Dead subscriptions (the push service
+ * replies 404/410 = gone) are pruned so they don't accumulate. Returns how many
+ * devices actually accepted the notification.
  *
  * Best-effort by design: a failure to reach one device never throws — it's
  * logged and skipped — so a reminder run isn't derailed by one stale endpoint.
  */
-export async function sendPushToEmployee(
+async function sendPushToSubscribers(
   admin: SupabaseClient,
-  employeeId: string,
+  table: "push_subscriptions" | "manager_push_subscriptions",
+  idColumn: "employee_id" | "manager_id",
+  idValue: string,
   payload: PushPayload,
 ): Promise<number> {
   ensureConfigured();
 
   const { data: subs } = await admin
-    .from("push_subscriptions")
+    .from(table)
     .select("id, endpoint, p256dh, auth")
-    .eq("employee_id", employeeId);
+    .eq(idColumn, idValue);
 
   if (!subs || subs.length === 0) return 0;
 
@@ -86,7 +90,7 @@ export async function sendPushToEmployee(
       const statusCode = (err as { statusCode?: number })?.statusCode;
       // 404 Not Found / 410 Gone — the browser dropped this subscription.
       if (statusCode === 404 || statusCode === 410) {
-        await admin.from("push_subscriptions").delete().eq("id", sub.id);
+        await admin.from(table).delete().eq("id", sub.id);
       } else {
         console.error(
           "[push] send failed:",
@@ -98,4 +102,26 @@ export async function sendPushToEmployee(
   }
 
   return delivered;
+}
+
+export function sendPushToEmployee(
+  admin: SupabaseClient,
+  employeeId: string,
+  payload: PushPayload,
+): Promise<number> {
+  return sendPushToSubscribers(admin, "push_subscriptions", "employee_id", employeeId, payload);
+}
+
+export function sendPushToManager(
+  admin: SupabaseClient,
+  managerId: string,
+  payload: PushPayload,
+): Promise<number> {
+  return sendPushToSubscribers(
+    admin,
+    "manager_push_subscriptions",
+    "manager_id",
+    managerId,
+    payload,
+  );
 }

@@ -5,11 +5,8 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
-import {
-  savePushSubscription,
-  deletePushSubscription,
-  sendTestPush,
-} from "@/app/actions/push";
+import type { ActionResult } from "@/lib/types";
+import type { BrowserSubscription } from "@/app/actions/push";
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -66,13 +63,28 @@ type Status =
   | "denied" // permission was blocked
   | "on"; // subscribed and permission granted
 
+type Props = {
+  /** Persist this device's Web Push subscription (employee or manager action). */
+  saveSubscription: (sub: BrowserSubscription, userAgent?: string | null) => Promise<ActionResult>;
+  /** Remove this device's subscription. */
+  deleteSubscription: (endpoint: string) => Promise<ActionResult>;
+  /** Fire a test notification to confirm delivery. */
+  sendTest: () => Promise<ActionResult>;
+  /** Where the "we'll nudge you" copy sends the reader — attendance/clock screen. */
+  homeHref?: string;
+};
+
 /**
- * Lets an employee turn on browser reminders so they get a push when it's time
- * to clock in (at their shift start) and clock out (at their shift end) — even
- * when the app is closed. Registers the service worker, subscribes to Web Push,
- * and stores the subscription server-side.
+ * Lets someone (employee or manager) turn on browser reminders so they get a
+ * push when it's time to clock in (at shift start) and clock out (at shift
+ * end) — even when the app is closed. Registers the service worker, subscribes
+ * to Web Push, and stores the subscription server-side via the given actions.
  */
-export function ClockReminderOptIn() {
+export function ClockReminderOptIn({
+  saveSubscription,
+  deleteSubscription,
+  sendTest,
+}: Props) {
   const toast = useToast();
   const [status, setStatus] = React.useState<Status>("checking");
   const [busy, setBusy] = React.useState(false);
@@ -146,7 +158,7 @@ export function ClockReminderOptIn() {
         return;
       }
 
-      const res = await savePushSubscription(
+      const res = await saveSubscription(
         { endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } },
         typeof navigator !== "undefined" ? navigator.userAgent : null,
       );
@@ -170,7 +182,7 @@ export function ClockReminderOptIn() {
       const reg = regRef.current;
       const sub = await reg?.pushManager.getSubscription();
       if (sub) {
-        await deletePushSubscription(sub.endpoint);
+        await deleteSubscription(sub.endpoint);
         await sub.unsubscribe();
       }
       setStatus("off");
@@ -186,7 +198,7 @@ export function ClockReminderOptIn() {
   async function test() {
     setBusy(true);
     try {
-      const res = await sendTestPush();
+      const res = await sendTest();
       if (!res.ok) toast.error(res.error);
       else toast.success("Test sent — check your notifications.");
     } finally {

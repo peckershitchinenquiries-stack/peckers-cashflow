@@ -3,6 +3,12 @@ import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { LiveDashboard } from "@/components/live/LiveDashboard";
 import { ManagerQuickEntry } from "@/components/manager/ManagerQuickEntry";
 import { ManagerClockCard } from "@/components/manager/ManagerClockCard";
+import { ClockReminderOptIn } from "@/components/crew/ClockReminderOptIn";
+import {
+  saveManagerPushSubscription,
+  deleteManagerPushSubscription,
+  sendManagerTestPush,
+} from "@/app/actions/manager-push";
 import { todayISO } from "@/lib/utils";
 import type {
   ClockEvent,
@@ -105,6 +111,13 @@ export default async function ManagerLivePage() {
         {storeId && (
           <ManagerQuickEntry storeId={storeId} today={today} existing={todayEntry} />
         )}
+      </div>
+      <div className="mb-6">
+        <ClockReminderOptIn
+          saveSubscription={saveManagerPushSubscription}
+          deleteSubscription={deleteManagerPushSubscription}
+          sendTest={sendManagerTestPush}
+        />
       </div>
       <LiveDashboard
         stores={stores}
