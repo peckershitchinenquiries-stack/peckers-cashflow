@@ -265,6 +265,36 @@ export async function getNewLaunches(): Promise<NewLaunchRow[]> {
   return (data ?? []) as NewLaunchRow[];
 }
 
+// NET counterparts of getProducts / getCategoryItems, reading the vm_v_product_net
+// chain. The net revenue column `net_sales` is aliased to `gross_sales` so the
+// Product Performance aggregation (which reads `gross_sales`) computes on NET with
+// no code change — the returned `gross_sales` field carries the NET value. The
+// gross variants above are kept for other consumers (e.g. weekly-exception).
+export async function getProductsNet(weekIso: string): Promise<ProductRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_product_net")
+    .select("store, week_start, item_name, units_sold, gross_sales:net_sales")
+    .eq("week_start", weekIso)
+    .order("net_sales", { ascending: false });
+  if (error) throw new Error(`getProductsNet: ${error.message}`);
+  return (data ?? []) as ProductRow[];
+}
+
+export async function getCategoryItemsNet(weekIso: string): Promise<ProductCategoryRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_product_category_net")
+    .select("store, week_start, item_name, units_sold, category, gross_sales:net_sales")
+    .eq("week_start", weekIso)
+    .order("net_sales", { ascending: false });
+  if (error) {
+    console.warn(`getCategoryItemsNet: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as ProductCategoryRow[];
+}
+
 export async function getCategories(weekIso: string): Promise<CategoryRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb

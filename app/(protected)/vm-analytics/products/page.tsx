@@ -1,8 +1,9 @@
 import {
-  getProducts,
+  getProductsNet,
   getWeeks,
-  getCategoryItems,
+  getCategoryItemsNet,
   getNewLaunches,
+  getExec,
 } from "@/lib/vm-analytics/queries";
 import { n, weekRange } from "@/lib/vm-analytics/format";
 import { resolveStore, shortStore, isExcludedProduct, isHiddenProduct, normalizeItem } from "@/lib/vm-analytics/constants";
@@ -20,7 +21,7 @@ import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard, PieChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type ProductInput } from "@/lib/vm-analytics/insights";
-import type { ProductRow, ProductCategoryRow, NewLaunchRow } from "@/lib/vm-analytics/types";
+import type { ProductRow, ProductCategoryRow, NewLaunchRow, ExecRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -236,6 +237,7 @@ export default async function ProductsPage({
   let itemRows: ProductCategoryRow[] = [];
   let itemPrevRows: ProductCategoryRow[] = [];
   let newLaunches: NewLaunchRow[] = [];
+  let execRows: ExecRow[] = [];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
@@ -244,12 +246,13 @@ export default async function ProductsPage({
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
     const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
     const prevWeekIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
-    [rows, prevRows, itemRows, itemPrevRows, newLaunches] = await Promise.all([
-      getProducts(weekIso),
-      prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
-      getCategoryItems(weekIso),
-      prevWeekIso ? getCategoryItems(prevWeekIso) : Promise.resolve<ProductCategoryRow[]>([]),
+    [rows, prevRows, itemRows, itemPrevRows, newLaunches, execRows] = await Promise.all([
+      getProductsNet(weekIso),
+      prevWeekIso ? getProductsNet(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
+      getCategoryItemsNet(weekIso),
+      prevWeekIso ? getCategoryItemsNet(prevWeekIso) : Promise.resolve<ProductCategoryRow[]>([]),
       getNewLaunches(),
+      getExec(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -267,6 +270,13 @@ export default async function ProductsPage({
     itemRows = itemRows.filter((r) => r.store === activeStore);
     itemPrevRows = itemPrevRows.filter((r) => r.store === activeStore);
   }
+
+  // Denominator for Category Revenue Share = Executive dashboard total net sales
+  // for the same week, scoped to the active store (summed across both when
+  // combined). Sourced from getExec so % of category = category net sales /
+  // total net sales; slices intentionally need not sum to 100%.
+  const scopedExec = activeStore ? execRows.filter((r) => r.store === activeStore) : execRows;
+  const totalNetSales = scopedExec.reduce((s, r) => s + n(r.net_sales), 0);
 
   if (rows.length === 0) {
     return (
@@ -347,7 +357,7 @@ export default async function ProductsPage({
     <div className="space-y-7">
       <PageTitle
         title="Product Performance"
-        subtitle={`Most & least sellers (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`Most & least sellers · net sales (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <Commentary initial={draft} input={insightInput} />
@@ -363,12 +373,15 @@ export default async function ProductsPage({
 
       <Section
         title="Category Performance"
-        description="Units, revenue and week-on-week per menu category. Click a category to see its items."
+        description="Units, net revenue and week-on-week per menu category. Click a category to see its items."
       >
         <CategoryPerformanceTable rows={categoryPerf} showStoreWow={!activeStore} />
       </Section>
 
-      <Section title="Category Revenue Share">
+      <Section
+        title="Category Revenue Share"
+        description="% of category = net sales of category / total net sales"
+      >
         <ChartCard title="Share of weekly revenue by category">
           <PieChartCard
             data={catShareData}
@@ -376,6 +389,7 @@ export default async function ProductsPage({
             valueKey="revenue"
             height={340}
             showPercent
+            percentTotal={totalNetSales}
           />
         </ChartCard>
       </Section>
