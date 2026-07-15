@@ -1,22 +1,27 @@
 import {
-  getProducts,
+  getProductsNet,
   getWeeks,
-  getCategoryPerformance,
-  getCategoryItems,
+  getCategoryItemsNet,
+  getNewLaunches,
+  getExec,
 } from "@/lib/vm-analytics/queries";
 import { n, weekRange } from "@/lib/vm-analytics/format";
-import { resolveStore, shortStore, isExcludedProduct } from "@/lib/vm-analytics/constants";
+import { resolveStore, shortStore, isExcludedProduct, isHiddenProduct, normalizeItem } from "@/lib/vm-analytics/constants";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import {
   CategoryPerformanceTable,
   type CategoryPerf,
   type CategoryItem,
 } from "@/components/vm-analytics/CategoryPerformanceTable";
+import {
+  NewLaunchesTable,
+  type NewLaunchDisplayRow,
+} from "@/components/vm-analytics/NewLaunchesTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
 import { BarChartCard, PieChartCard } from "@/components/vm-analytics/charts/Charts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type ProductInput } from "@/lib/vm-analytics/insights";
-import type { ProductRow, CategoryPerfRow, ProductCategoryRow } from "@/lib/vm-analytics/types";
+import type { ProductRow, ProductCategoryRow, NewLaunchRow, ExecRow } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +62,7 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
   }
 
   return Array.from(map.values())
-    .filter((c) => !isExcludedProduct(c.item))
+    .filter((c) => !isExcludedProduct(c.item) && !isHiddenProduct(c.item))
     .map((c) => ({
       item: c.item,
       units: c.units,
@@ -71,6 +76,52 @@ function aggregate(rows: ProductRow[], prevRows: ProductRow[]): AggItem[] {
     .sort((a, b) => b.units - a.units);
 }
 
+// New Launches: one row per curated launch (display_name), rolling up every raw
+// item_name variant that maps to it. Matching is by normalizeItem so casing /
+// spacing / punctuation variants collapse automatically. WoW is summed cur-vs-
+// prev across the scoped rows (never averaged), same principle as aggregate().
+// Only launches with at least one unit sold in the selected week are returned.
+// Rows arrive already scoped to the active store.
+function aggregateNewLaunches(
+  rows: ProductRow[],
+  prevRows: ProductRow[],
+  launches: NewLaunchRow[],
+): NewLaunchDisplayRow[] {
+  const byNorm = new Map<string, string>();
+  for (const l of launches) byNorm.set(normalizeItem(l.item_name), l.display_name);
+
+  const cur = new Map<string, { units: number; revenue: number }>();
+  const prev = new Map<string, { revenue: number }>();
+  for (const r of rows) {
+    const display = byNorm.get(normalizeItem(r.item_name));
+    if (!display) continue;
+    const c = cur.get(display) ?? { units: 0, revenue: 0 };
+    c.units += n(r.units_sold);
+    c.revenue += n(r.gross_sales);
+    cur.set(display, c);
+  }
+  for (const r of prevRows) {
+    const display = byNorm.get(normalizeItem(r.item_name));
+    if (!display) continue;
+    const p = prev.get(display) ?? { revenue: 0 };
+    p.revenue += n(r.gross_sales);
+    prev.set(display, p);
+  }
+
+  return Array.from(cur.entries())
+    .filter(([, c]) => c.units > 0)
+    .map(([display, c]) => {
+      const prevRevenue = prev.get(display)?.revenue ?? 0;
+      return {
+        item: display,
+        units: c.units,
+        revenue: c.revenue,
+        revWow: prevRevenue > 0 ? ((c.revenue - prevRevenue) / prevRevenue) * 100 : null,
+      };
+    })
+    .sort((a, b) => b.units - a.units);
+}
+
 // Fold "Churros" into "Desserts" so the two aggregate into one row. Applied to
 // every map key in aggregateCategories; all other categories pass through.
 const canonicalCategory = (name: string): string =>
@@ -78,15 +129,20 @@ const canonicalCategory = (name: string): string =>
 
 // Category-level totals with an item drill-down for the selected scope. WoW is
 // recomputed from summed totals (never averaged across stores) so the combined
-// view is correct — same principle as aggregate() above. No EXCLUDED_PRODUCTS
-// filtering here: the category view deliberately includes Drinks, Fries, etc.
+// view is correct — same principle as aggregate() above. Totals are summed from
+// the item rows so category totals always equal the sum of the visible items.
+// EXCLUDED_PRODUCTS (drinks, sides) deliberately stay in; only HIDDEN_PRODUCTS
+// are dropped, so they leave both the totals and the drill-down together.
 function aggregateCategories(
-  catRows: CategoryPerfRow[],
-  catPrevRows: CategoryPerfRow[],
   itemRows: ProductCategoryRow[],
   itemPrevRows: ProductCategoryRow[],
+  allItemRows: ProductCategoryRow[],
+  allItemPrevRows: ProductCategoryRow[],
 ): CategoryPerf[] {
   const wow = (cur: number, prev: number) => (prev > 0 ? ((cur - prev) / prev) * 100 : null);
+
+  const visibleItems = itemRows.filter((r) => !isHiddenProduct(r.item_name));
+  const visiblePrevItems = itemPrevRows.filter((r) => !isHiddenProduct(r.item_name));
 
   const sumBy = <T,>(list: T[], key: (r: T) => string, rev: (r: T) => number, units: (r: T) => number) => {
     const m = new Map<string, { revenue: number; units: number }>();
@@ -99,12 +155,33 @@ function aggregateCategories(
     return m;
   };
 
-  const curCat = sumBy(catRows, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
-  const prevCat = sumBy(catPrevRows, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
-  const prevItem = sumBy(itemPrevRows, (r) => `${canonicalCategory(r.category)}::${r.item_name}`, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  // Per-store WoW always comes from the full store-tagged rows (never the active-
+  // store-scoped rows), so the Hitchin/Stevenage columns stay populated for both
+  // stores in combined view. Same category folding / hidden-product filtering as
+  // the combined figures, and summed cur-vs-prev revenue — never averaged.
+  const storeWow = (store: string) => {
+    const cur = allItemRows.filter((r) => r.store === store && !isHiddenProduct(r.item_name));
+    const prev = allItemPrevRows.filter((r) => r.store === store && !isHiddenProduct(r.item_name));
+    const catKey = (r: ProductCategoryRow) => canonicalCategory(r.category);
+    const itemKey = (r: ProductCategoryRow) => `${canonicalCategory(r.category)}::${r.item_name}`;
+    const curCatS = sumBy(cur, catKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+    const prevCatS = sumBy(prev, catKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+    const curItemS = sumBy(cur, itemKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+    const prevItemS = sumBy(prev, itemKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
+    return {
+      cat: (category: string) => wow(curCatS.get(category)?.revenue ?? 0, prevCatS.get(category)?.revenue ?? 0),
+      item: (key: string) => wow(curItemS.get(key)?.revenue ?? 0, prevItemS.get(key)?.revenue ?? 0),
+    };
+  };
+  const hitchin = storeWow("Peckers Hitchin");
+  const stevenage = storeWow("Peckers Stevenage");
+
+  const curCat = sumBy(visibleItems, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevCat = sumBy(visiblePrevItems, (r) => canonicalCategory(r.category), (r) => n(r.gross_sales), (r) => n(r.units_sold));
+  const prevItem = sumBy(visiblePrevItems, (r) => `${canonicalCategory(r.category)}::${r.item_name}`, (r) => n(r.gross_sales), (r) => n(r.units_sold));
 
   const curItems = new Map<string, Map<string, { units: number; revenue: number }>>();
-  for (const r of itemRows) {
+  for (const r of visibleItems) {
     const category = canonicalCategory(r.category);
     let byItem = curItems.get(category);
     if (!byItem) {
@@ -125,6 +202,8 @@ function aggregateCategories(
         units: it.units,
         revenue: it.revenue,
         revWow: wow(it.revenue, prevItem.get(`${category}::${item}`)?.revenue ?? 0),
+        hitchinWow: hitchin.item(`${category}::${item}`),
+        stevenageWow: stevenage.item(`${category}::${item}`),
       }))
       .sort((a, b) => b.revenue - a.revenue);
     return {
@@ -132,6 +211,8 @@ function aggregateCategories(
       units: tot.units,
       revenue: tot.revenue,
       revWow: wow(tot.revenue, prevCat.get(category)?.revenue ?? 0),
+      hitchinWow: hitchin.cat(category),
+      stevenageWow: stevenage.cat(category),
       items,
     };
   });
@@ -153,10 +234,10 @@ export default async function ProductsPage({
   let weekIso: string | null;
   let rows: ProductRow[];
   let prevRows: ProductRow[] = [];
-  let catRows: CategoryPerfRow[] = [];
-  let catPrevRows: CategoryPerfRow[] = [];
   let itemRows: ProductCategoryRow[] = [];
   let itemPrevRows: ProductCategoryRow[] = [];
+  let newLaunches: NewLaunchRow[] = [];
+  let execRows: ExecRow[] = [];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
@@ -165,27 +246,37 @@ export default async function ProductsPage({
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
     const idx = weeks.findIndex((w) => w.week_start_iso === weekIso);
     const prevWeekIso = idx >= 0 ? weeks[idx + 1]?.week_start_iso ?? null : null;
-    [rows, prevRows, catRows, catPrevRows, itemRows, itemPrevRows] = await Promise.all([
-      getProducts(weekIso),
-      prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
-      getCategoryPerformance(weekIso),
-      prevWeekIso ? getCategoryPerformance(prevWeekIso) : Promise.resolve<CategoryPerfRow[]>([]),
-      getCategoryItems(weekIso),
-      prevWeekIso ? getCategoryItems(prevWeekIso) : Promise.resolve<ProductCategoryRow[]>([]),
+    [rows, prevRows, itemRows, itemPrevRows, newLaunches, execRows] = await Promise.all([
+      getProductsNet(weekIso),
+      prevWeekIso ? getProductsNet(prevWeekIso) : Promise.resolve<ProductRow[]>([]),
+      getCategoryItemsNet(weekIso),
+      prevWeekIso ? getCategoryItemsNet(prevWeekIso) : Promise.resolve<ProductCategoryRow[]>([]),
+      getNewLaunches(),
+      getExec(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
 
+  // Keep the full store-tagged category rows before scoping so the per-store
+  // Hitchin/Stevenage WoW columns stay populated regardless of the active filter.
+  const allItemRows = itemRows;
+  const allItemPrevRows = itemPrevRows;
+
   // Scope to the selected store (or keep both when "All Stores" is chosen).
   if (activeStore) {
     rows = rows.filter((r) => r.store === activeStore);
     prevRows = prevRows.filter((r) => r.store === activeStore);
-    catRows = catRows.filter((r) => r.store === activeStore);
-    catPrevRows = catPrevRows.filter((r) => r.store === activeStore);
     itemRows = itemRows.filter((r) => r.store === activeStore);
     itemPrevRows = itemPrevRows.filter((r) => r.store === activeStore);
   }
+
+  // Denominator for Category Revenue Share = Executive dashboard total net sales
+  // for the same week, scoped to the active store (summed across both when
+  // combined). Sourced from getExec so % of category = category net sales /
+  // total net sales; slices intentionally need not sum to 100%.
+  const scopedExec = activeStore ? execRows.filter((r) => r.store === activeStore) : execRows;
+  const totalNetSales = scopedExec.reduce((s, r) => s + n(r.net_sales), 0);
 
   if (rows.length === 0) {
     return (
@@ -197,7 +288,8 @@ export default async function ProductsPage({
   }
 
   const items = aggregate(rows, prevRows);
-  const categoryPerf = aggregateCategories(catRows, catPrevRows, itemRows, itemPrevRows);
+  const newLaunchRows = aggregateNewLaunches(rows, prevRows, newLaunches);
+  const categoryPerf = aggregateCategories(itemRows, itemPrevRows, allItemRows, allItemPrevRows);
   const top = items.slice(0, 5);
 
   // Category commentary. Add-on categories (Fries, Drinks, etc.) stay in — they
@@ -265,19 +357,31 @@ export default async function ProductsPage({
     <div className="space-y-7">
       <PageTitle
         title="Product Performance"
-        subtitle={`Most & least sellers (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
+        subtitle={`Most & least sellers · net sales (${scopeLabel}) · ${weekRange(weekIso, weekEnd)}`}
       />
 
       <Commentary initial={draft} input={insightInput} />
 
+      {newLaunches.length > 0 && (
+        <Section
+          title="New Launches"
+          description="Recently launched items and how they're selling this week. Add or retire items in the vm_new_launches table."
+        >
+          <NewLaunchesTable rows={newLaunchRows} />
+        </Section>
+      )}
+
       <Section
         title="Category Performance"
-        description="Units, revenue and week-on-week per menu category. Click a category to see its items."
+        description="Units, net revenue and week-on-week per menu category. Click a category to see its items."
       >
-        <CategoryPerformanceTable rows={categoryPerf} />
+        <CategoryPerformanceTable rows={categoryPerf} showStoreWow={!activeStore} />
       </Section>
 
-      <Section title="Category Revenue Share">
+      <Section
+        title="Category Revenue Share"
+        description="% of category = net sales of category / total net sales"
+      >
         <ChartCard title="Share of weekly revenue by category">
           <PieChartCard
             data={catShareData}
@@ -285,6 +389,7 @@ export default async function ProductsPage({
             valueKey="revenue"
             height={340}
             showPercent
+            percentTotal={totalNetSales}
           />
         </ChartCard>
       </Section>

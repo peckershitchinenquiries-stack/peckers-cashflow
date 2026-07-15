@@ -10,6 +10,7 @@ import type {
   CategoryRow,
   CategoryPerfRow,
   ProductCategoryRow,
+  NewLaunchRow,
   DaypartRow,
   DaypartChannelRow,
   DaypartChannelDetailRow,
@@ -243,6 +244,52 @@ export async function getCategoryItems(weekIso: string): Promise<ProductCategory
     .order("gross_sales", { ascending: false });
   if (error) {
     console.warn(`getCategoryItems: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as ProductCategoryRow[];
+}
+
+// The curated new-launch list (item_name -> display_name + launch_date), from
+// vm_new_launches. Week-independent: the products page matches these against the
+// selected week's product rows. Returns [] if the table is missing (e.g. before
+// the seed SQL has been run) so the page still renders without the section.
+export async function getNewLaunches(): Promise<NewLaunchRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_new_launches")
+    .select("item_name, display_name, launch_date");
+  if (error) {
+    console.warn(`getNewLaunches: ${error.message}`);
+    return [];
+  }
+  return (data ?? []) as NewLaunchRow[];
+}
+
+// NET counterparts of getProducts / getCategoryItems, reading the vm_v_product_net
+// chain. The net revenue column `net_sales` is aliased to `gross_sales` so the
+// Product Performance aggregation (which reads `gross_sales`) computes on NET with
+// no code change — the returned `gross_sales` field carries the NET value. The
+// gross variants above are kept for other consumers (e.g. weekly-exception).
+export async function getProductsNet(weekIso: string): Promise<ProductRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_product_net")
+    .select("store, week_start, item_name, units_sold, gross_sales:net_sales")
+    .eq("week_start", weekIso)
+    .order("net_sales", { ascending: false });
+  if (error) throw new Error(`getProductsNet: ${error.message}`);
+  return (data ?? []) as ProductRow[];
+}
+
+export async function getCategoryItemsNet(weekIso: string): Promise<ProductCategoryRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_product_category_net")
+    .select("store, week_start, item_name, units_sold, category, gross_sales:net_sales")
+    .eq("week_start", weekIso)
+    .order("net_sales", { ascending: false });
+  if (error) {
+    console.warn(`getCategoryItemsNet: ${error.message}`);
     return [];
   }
   return (data ?? []) as ProductCategoryRow[];
