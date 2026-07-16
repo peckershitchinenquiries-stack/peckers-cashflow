@@ -16,6 +16,7 @@ import type {
   DaypartChannelDetailRow,
   MenuCategoryChannelRow,
   HourlyActivityRow,
+  HourlyNetActivityRow,
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
@@ -375,9 +376,9 @@ export async function getMenuCategoryChannels(
 }
 
 // Per (store, weekday, hour) trading activity from the raw
-// vm_hourly_order_activity report. Powers the hourly "Performance by Time
-// Period" table on the Daypart dashboard. Summing avg_daily_* per hour across
-// weekdays reconciles to vm_v_daypart_summary to the penny.
+// vm_hourly_order_activity report. Powers the Daypart order heat map (weekday x
+// hour order counts). Its avg_daily_sales is GROSS, so it is no longer used for
+// the hourly Revenue column — see getHourlyNetActivity for that.
 export async function getHourlyActivity(weekIso: string): Promise<HourlyActivityRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
@@ -387,6 +388,21 @@ export async function getHourlyActivity(weekIso: string): Promise<HourlyActivity
     .order("order_hour", { ascending: true });
   if (error) throw new Error(`getHourlyActivity: ${error.message}`);
   return (data ?? []) as HourlyActivityRow[];
+}
+
+// Per (store, week, hour) NET revenue joined to order counts, from the
+// vm_v_hourly_net_activity view. Powers the hourly "Performance by Time Period"
+// table (Revenue = net, AOV = net / orders). Net comes from vm_net_sales_by_hour;
+// orders from vm_hourly_order_activity.
+export async function getHourlyNetActivity(weekIso: string): Promise<HourlyNetActivityRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_hourly_net_activity")
+    .select("store, week_start, hour, orders, net_sales")
+    .eq("week_start", weekIso)
+    .order("hour", { ascending: true });
+  if (error) throw new Error(`getHourlyNetActivity: ${error.message}`);
+  return (data ?? []) as HourlyNetActivityRow[];
 }
 
 export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {
