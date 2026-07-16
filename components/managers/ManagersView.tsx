@@ -19,7 +19,9 @@ import {
   resetAccountPassword,
   deleteAccount,
   updateManagerWage,
+  updateAccountContactEmail,
 } from "@/app/actions/accounts";
+import { validateContactEmail } from "@/lib/credentials";
 import { formatGBP } from "@/lib/utils";
 import type { AllowedUser, Store } from "@/lib/types";
 
@@ -36,6 +38,7 @@ export function ManagersView({
   const toast = useToast();
   const [showAdd, setShowAdd] = React.useState(false);
   const [name, setName] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [storeId, setStoreId] = React.useState(stores[0]?.id ?? "");
   const [wage, setWage] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -45,17 +48,23 @@ export function ManagersView({
   const [wageEditing, setWageEditing] = React.useState<AllowedUser | null>(null);
   const [wageValue, setWageValue] = React.useState("");
   const [wageSaving, setWageSaving] = React.useState(false);
+  const [emailEditing, setEmailEditing] = React.useState<AllowedUser | null>(null);
+  const [emailValue, setEmailValue] = React.useState("");
+  const [emailSaving, setEmailSaving] = React.useState(false);
 
   const storeName = (id: string | null) =>
     stores.find((s) => s.id === id)?.name ?? "—";
 
   async function createManager() {
     if (!name.trim()) return toast.error("Enter a name");
+    const emailProblem = validateContactEmail(email);
+    if (emailProblem) return toast.error(emailProblem);
     if (!storeId) return toast.error("Pick a store");
     setBusy(true);
     try {
       const res = await createManagerAccount({
         name: name.trim(),
+        contact_email: email,
         store_id: storeId,
         fixed_daily_wage: wage.trim() ? Number(wage) : null,
       });
@@ -63,12 +72,39 @@ export function ManagersView({
       setCreds({ username: res.username, password: res.password, loginUrl: res.loginUrl });
       setShowAdd(false);
       setName("");
+      setEmail("");
       setWage("");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function openEmail(m: AllowedUser) {
+    setEmailEditing(m);
+    setEmailValue(m.contact_email ?? "");
+  }
+
+  async function saveEmail() {
+    if (!emailEditing) return;
+    // Blank is allowed: it clears the address (they fall back to an admin reset).
+    const problem = emailValue.trim() ? validateContactEmail(emailValue) : null;
+    if (problem) return toast.error(problem);
+    setEmailSaving(true);
+    try {
+      await updateAccountContactEmail({
+        allowed_user_id: emailEditing.id,
+        contact_email: emailValue,
+      });
+      toast.success("Email updated");
+      setEmailEditing(null);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setEmailSaving(false);
     }
   }
 
@@ -174,6 +210,7 @@ export function ManagersView({
                 <tr>
                   <th className="text-left px-4 py-2.5">Name</th>
                   <th className="text-left px-3 py-2.5">Username</th>
+                  <th className="text-left px-3 py-2.5">Reset email</th>
                   <th className="text-left px-3 py-2.5">Store</th>
                   <th className="text-right px-3 py-2.5">Daily wage</th>
                   <th className="text-right px-4 py-2.5">Actions</th>
@@ -187,6 +224,17 @@ export function ManagersView({
                     </td>
                     <td className="px-3 py-3 font-mono text-text-subtle">
                       {m.username || m.email}
+                    </td>
+                    <td className="px-3 py-3">
+                      <button
+                        onClick={() => openEmail(m)}
+                        className="text-text-primary hover:text-gold underline-offset-2 hover:underline text-left"
+                        title="Where this manager's password-reset links are sent"
+                      >
+                        {m.contact_email || (
+                          <span className="text-warning">Add email</span>
+                        )}
+                      </button>
                     </td>
                     <td className="px-3 py-3">
                       <Badge variant="neutral">{storeName(m.store_id)}</Badge>
@@ -261,6 +309,14 @@ export function ManagersView({
               onChange={(e) => setName(e.target.value)}
               autoFocus
             />
+            <Input
+              type="email"
+              label="Email address *"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="manager@example.com"
+              hint="Their own inbox. Password-reset links are sent here, so they can get back in without you."
+            />
             <Select
               label="Store *"
               value={storeId}
@@ -313,6 +369,35 @@ export function ManagersView({
             value={wageValue}
             onChange={(e) => setWageValue(e.target.value)}
             placeholder="e.g. 2400"
+            autoFocus
+          />
+        </Modal>
+      )}
+
+      {emailEditing && (
+        <Modal
+          open
+          onClose={() => setEmailEditing(null)}
+          title={`Reset email — ${emailEditing.name || emailEditing.username}`}
+          description="Where this manager's password-reset links are sent. It must be their own inbox — anyone who can read it can take over the account."
+          size="sm"
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => setEmailEditing(null)}>
+                Cancel
+              </Button>
+              <Button onClick={saveEmail} loading={emailSaving}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Input
+            type="email"
+            label="Email address"
+            value={emailValue}
+            onChange={(e) => setEmailValue(e.target.value)}
+            placeholder="manager@example.com"
             autoFocus
           />
         </Modal>

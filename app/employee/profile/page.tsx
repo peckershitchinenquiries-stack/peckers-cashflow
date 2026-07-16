@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/Badge";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { findEmployeeForUser } from "@/lib/employee-lookup";
 import { EmployeeSelfProfile } from "@/components/employee/EmployeeSelfProfile";
+import { ContactEmailCard } from "@/components/accounts/ContactEmailCard";
 import { formatDDMMYYYY } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
 
@@ -54,6 +55,8 @@ export default async function ProfilePage() {
             <dd className="col-span-2 text-text-primary">{user.allowed?.username ?? "—"}</dd>
           </dl>
         </Card>
+
+        <ContactEmailCard initialEmail={user.allowed?.contact_email ?? null} />
 
         <EmployeeSelfProfile employee={emp} />
       </div>

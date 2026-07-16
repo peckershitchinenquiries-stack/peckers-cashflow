@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import { EmployeesView } from "@/components/employees/EmployeesView";
+import { withContactEmails } from "@/lib/contact-email";
 import { getAppSettings } from "@/app/actions/settings";
 import { addDays, groupClockEventsByWeek, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
 import type { Employee } from "@/lib/types";
@@ -39,7 +40,7 @@ export default async function EmployeesPage() {
       .limit(500),
   ]);
 
-  const employees = (empRes.data ?? []) as Employee[];
+  const employees = await withContactEmails(supabase, (empRes.data ?? []) as Employee[]);
   const empMap = new Map(
     employees.map((e) => ({
       id: e.id,

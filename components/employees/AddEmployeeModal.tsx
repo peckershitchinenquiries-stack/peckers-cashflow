@@ -42,7 +42,7 @@ export function AddEmployeeModal({
   const [creds, setCreds] = React.useState<Credentials | null>(null);
 
   async function submit() {
-    const errs = validateEmployeeForm(form);
+    const errs = validateEmployeeForm(form, { requireContactEmail: true });
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       toast.error("Please fix the highlighted fields.");
@@ -52,6 +52,7 @@ export function AddEmployeeModal({
     try {
       const res = await createEmployeeWithAccount({
         name: form.name,
+        contact_email: form.contact_email,
         phone: form.phone || null,
         date_of_birth: form.date_of_birth || null,
         gender: form.gender || null,
@@ -120,6 +121,7 @@ export function AddEmployeeModal({
         errors={errors}
         stores={stores}
         lockStore={lockStore}
+        requireContactEmail
       />
     </Modal>
   );

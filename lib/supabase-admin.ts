@@ -30,3 +30,25 @@ export function isProvisioningConfigured(): boolean {
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
   );
 }
+
+/**
+ * Look up an auth user by their login email (allowed_users.email — the synthetic
+ * `<username>@staff.peckers-app.co.uk` address for managers/crew, a real one for
+ * admins).
+ *
+ * The Auth Admin API has no get-by-email, so this pages through listUsers and
+ * matches case-insensitively. Fine at this scale (tens of staff); if the group
+ * ever outgrows the page cap, store the auth id on allowed_users and look it up
+ * directly instead of raising the limit.
+ */
+export async function findAuthUserByEmail(
+  admin: ReturnType<typeof createAdminClient>,
+  email: string,
+): Promise<{ id: string; email?: string } | null> {
+  const target = email.trim().toLowerCase();
+  const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+  if (error) throw new Error(error.message);
+  return (
+    data?.users?.find((u) => (u.email ?? "").toLowerCase() === target) ?? null
+  );
+}

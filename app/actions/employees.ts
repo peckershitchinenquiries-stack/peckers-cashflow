@@ -2,9 +2,16 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
+import { normalizeContactEmail, validateContactEmail } from "@/lib/credentials";
 import { writeAudit } from "./audit";
 import { addDays, parseISODate, startOfISOWeek, toISODate } from "@/lib/utils";
-import type { EmployeeHoursComputed, EmployeePosition, EmploymentStatus } from "@/lib/types";
+import type {
+  EmployeeHoursComputed,
+  EmployeePosition,
+  EmploymentStatus,
+  SessionUser,
+} from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -12,11 +19,111 @@ async function requireAllowed() {
   return user;
 }
 
+/**
+ * Change the password-reset address for an existing employee. It lives on the
+ * linked login account (allowed_users.contact_email), not on employees, so it
+ * can't ride along in buildPayload — see migration 019.
+ *
+ * SECURITY — why this is ADMIN-ONLY, even though managers otherwise run their
+ * own store's crew:
+ *
+ * Whoever controls this address can request a reset link for the account and
+ * walk in as that person. So being able to change it IS being able to take the
+ * account over, and the app deliberately withholds that from managers:
+ * resetAccountPassword and updateAccountContactEmail are both requireAdmin.
+ * Letting a manager edit this field would hand back the exact capability those
+ * guards withhold — impersonated clock-ins, self-approved hours, all attributed
+ * to the employee.
+ *
+ * (Provisioning is different: a manager creating crew already sees the generated
+ * password on screen, so collecting the address there grants nothing new.)
+ *
+ * RLS is NOT the backstop here — allowed_users writes are admin-only under RLS,
+ * but this needs the service-role client to reach the row, so the check below is
+ * the only thing standing between a caller and this field. updateEmployee's own
+ * guard (requireAllowed) admits ANY whitelisted user, including crew.
+ *
+ * Pass an empty string to clear the address (the remediation path when one is
+ * wrong, stale, or attacker-controlled).
+ */
+async function writeContactEmail(
+  actor: SessionUser,
+  employeeId: string,
+  raw: string,
+) {
+  if (!isProvisioningConfigured()) {
+    throw new Error(
+      "Can't save the email: SUPABASE_SERVICE_ROLE_KEY isn't set on the server.",
+    );
+  }
+  const admin = createAdminClient();
+
+  const { data: acct } = await admin
+    .from("allowed_users")
+    .select("id, store_id, contact_email")
+    .eq("employee_id", employeeId)
+    .maybeSingle();
+
+  const trimmed = raw.trim();
+  const contactEmail = trimmed ? normalizeContactEmail(trimmed) : null;
+
+  // No change? Then nothing to authorise. This is what lets a manager edit a
+  // crew member's phone or pay rate through the same form: the field round-trips
+  // untouched and never reaches the admin check below.
+  if ((acct?.contact_email ?? null) === contactEmail) return;
+
+  if (actor.allowed?.role !== "admin") {
+    throw new Error(
+      "Only an admin can change the password-reset email. Ask them, or have the staff member set it themselves on their profile page.",
+    );
+  }
+
+  if (contactEmail) {
+    const problem = validateContactEmail(contactEmail);
+    if (problem) throw new Error(problem);
+  }
+
+  if (!acct) {
+    // An HR row with no login account (pre-dates one-step provisioning): there is
+    // nowhere to put a reset address and no password to reset. Say so rather than
+    // dropping it silently, which would look like a successful save.
+    throw new Error(
+      "This employee has no login account, so there's no password to reset. Leave the email blank.",
+    );
+  }
+
+  const { error } = await admin
+    .from("allowed_users")
+    .update({ contact_email: contactEmail })
+    .eq("id", acct.id);
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error(
+        "That email is already used by another account. Each person needs their own.",
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  // buildPayload deliberately excludes contact_email, so updateEmployee's own
+  // audit row would not record this — and this is the write most worth tracing.
+  await writeAudit({
+    action: "update_contact_email",
+    entity: "allowed_user",
+    entity_id: acct.id,
+    changes: { contact_email: contactEmail, employee_id: employeeId },
+  });
+}
+
 export type EmployeeInput = {
   id?: string;
   name: string;
   phone?: string | null;
   email?: string | null;
+  /** Password-reset address. Stored on the linked allowed_users row, not on
+   *  employees — routed there by writeContactEmail, never by buildPayload. */
+  contact_email?: string | null;
   date_of_birth?: string | null;
   gender?: string | null;
   position?: string | null; // Pipe-delimited positions (e.g. "Kitchen Team Member|Driver")
@@ -40,7 +147,8 @@ function buildPayload(input: EmployeeInput) {
   const niRate = Number(input.hourly_ni_rate ?? input.hourly_rate ?? 0);
   // NOTE: we intentionally do NOT manage `email` or `auth_user_id` here — those
   // are the login linkage, set once by account provisioning (accounts.ts). The
-  // profile form must never overwrite them.
+  // profile form must never overwrite them. `contact_email` is likewise absent:
+  // it isn't an employees column at all (see writeContactEmail).
   return {
     name: input.name.trim(),
     phone: input.phone?.trim() || null,
@@ -110,7 +218,7 @@ export async function createEmployee(input: EmployeeInput) {
 
 export async function updateEmployee(input: EmployeeInput) {
   if (!input.id) throw new Error("Missing employee id");
-  await requireAllowed();
+  const actor = await requireAllowed();
   const supabase = createServerSupabase();
 
   const payload = {
@@ -120,6 +228,15 @@ export async function updateEmployee(input: EmployeeInput) {
         ? false
         : true,
   };
+
+  // Separate table, separate authorisation — and it throws. Done BEFORE the
+  // employees write so a rejected email (unauthorised, malformed, already taken)
+  // aborts the whole save, rather than reporting failure while the profile edit
+  // has already landed. `undefined` means "form didn't manage this field"; an
+  // empty string is an explicit clear.
+  if (input.contact_email !== undefined && input.contact_email !== null) {
+    await writeContactEmail(actor, input.id, input.contact_email);
+  }
 
   const { error } = await supabase
     .from("employees")

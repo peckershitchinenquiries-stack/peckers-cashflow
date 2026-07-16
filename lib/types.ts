@@ -32,7 +32,13 @@ export type AllowedUserRole = "admin" | "manager" | "employee";
 
 export type AllowedUser = {
   id: string;
+  /** Login identity. Synthetic (`<username>@staff.peckers-app.co.uk`) for
+   *  managers/crew, a real address for admins. NOT a mailbox — see contact_email. */
   email: string;
+  /** The person's REAL email, used only to send password-reset links. Unique
+   *  across all accounts. Null for staff provisioned before migration 019 who
+   *  haven't added one yet — they can't self-reset until they do. */
+  contact_email: string | null;
   name: string | null;
   role: AllowedUserRole;
   store_id: string | null;
@@ -122,7 +128,13 @@ export type Employee = {
   sort_code: string | null;
   employment_status: EmploymentStatus;
   auth_user_id: string | null;
+  /** Synthetic LOGIN address (`<username>@staff.peckers-app.co.uk`), not a
+   *  mailbox. Set once at provisioning; never edit it from the profile form. */
   email: string | null;
+  /** DERIVED — not an employees column. The linked allowed_users.contact_email
+   *  (their real inbox, where reset links go), merged in by withContactEmails().
+   *  Undefined on rows from queries that don't merge it. */
+  contact_email?: string | null;
   /** Per-driver £/delivery rate for SHORT deliveries. Null for non-drivers. */
   short_delivery_rate: number | null;
   /** Per-driver £/delivery rate for LONG deliveries. Null for non-drivers. */

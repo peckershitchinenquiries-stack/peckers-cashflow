@@ -7,6 +7,7 @@ import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { signOutAction } from "@/app/actions/auth";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
+import { ContactEmailCard } from "@/components/accounts/ContactEmailCard";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,8 @@ export default async function ManagerSettingsPage() {
           </form>
         </Card>
       </div>
-      <div className="mt-5">
+      <div className="mt-5 grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <ContactEmailCard initialEmail={user.allowed?.contact_email ?? null} />
         <ChangePasswordCard />
       </div>
     </>

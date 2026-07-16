@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
-import { createAdminClient } from "@/lib/supabase-admin";
+import { createAdminClient, findAuthUserByEmail } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
 import {
   buildLoginEmail,
+  normalizeContactEmail,
   usernameStemFromName,
+  validateContactEmail,
 } from "@/lib/credentials";
 import type { EmployeePosition } from "@/lib/types";
 
@@ -36,6 +38,29 @@ function generatePassword(len = 10): string {
     out += PASSWORD_ALPHABET[Math.floor(Math.random() * PASSWORD_ALPHABET.length)];
   }
   return out;
+}
+
+/**
+ * Validate + normalise a contact email (the address password-reset links go to),
+ * throwing a message fit for a toast. Required at creation so every new account
+ * can recover itself without an admin.
+ */
+function requireContactEmail(raw: string | null | undefined): string {
+  const problem = validateContactEmail(raw ?? "");
+  if (problem) throw new Error(problem);
+  return normalizeContactEmail(raw!);
+}
+
+/**
+ * Turn a contact_email unique-violation into something an admin can act on.
+ * The address is unique across every account precisely so a reset link is never
+ * ambiguous, so a clash is a real conflict, not a glitch to retry.
+ */
+function describeAccountWriteError(err: { code?: string; message: string }): string {
+  if (err.code === "23505" && err.message.includes("contact_email")) {
+    return "That email is already used by another account. Each person needs their own.";
+  }
+  return err.message;
 }
 
 /** Find a free username based on a name stem, checking existing accounts. */
@@ -74,12 +99,15 @@ export type ProvisionResult = {
 export async function createManagerAccount(input: {
   name: string;
   store_id: string;
+  /** Real address for password-reset links. Required — see requireContactEmail. */
+  contact_email: string;
   /** Fixed daily wage (£) — monitoring/display only, never drives pay. */
   fixed_daily_wage?: number | null;
 }): Promise<ProvisionResult> {
   await requireAdmin();
   if (!input.name?.trim()) throw new Error("Name is required");
   if (!input.store_id) throw new Error("Store is required");
+  const contactEmail = requireContactEmail(input.contact_email);
 
   const admin = createAdminClient();
 
@@ -107,6 +135,7 @@ export async function createManagerAccount(input: {
       : null;
   const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
+    contact_email: contactEmail,
     name: input.name.trim(),
     role: "manager",
     store_id: input.store_id,
@@ -118,14 +147,14 @@ export async function createManagerAccount(input: {
   if (rowErr) {
     // roll back the auth user so we don't orphan it
     await admin.auth.admin.deleteUser(created.user.id);
-    throw new Error(rowErr.message);
+    throw new Error(describeAccountWriteError(rowErr));
   }
 
   await writeAudit({
     action: "create_manager_account",
     entity: "allowed_user",
     entity_id: created.user.id,
-    changes: { username, store_id: input.store_id },
+    changes: { username, store_id: input.store_id, contact_email: contactEmail },
   });
 
   revalidatePath("/managers");
@@ -203,8 +232,11 @@ export async function createAdminAccount(input: {
     throw new Error(authErr?.message || "Failed to create login account");
   }
 
+  // An admin signs in with a real address, so it serves as both login identity
+  // and reset target — no separate field to collect.
   const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
+    contact_email: email,
     name: input.name.trim(),
     role: "admin",
     store_id: null,
@@ -212,7 +244,7 @@ export async function createAdminAccount(input: {
   });
   if (rowErr) {
     await admin.auth.admin.deleteUser(created.user.id);
-    throw new Error(rowErr.message);
+    throw new Error(describeAccountWriteError(rowErr));
   }
 
   await writeAudit({
@@ -232,6 +264,8 @@ export async function createAdminAccount(input: {
  */
 export async function createEmployeeWithAccount(input: {
   name: string;
+  /** Real address for password-reset links. Required — see requireContactEmail. */
+  contact_email: string;
   phone?: string | null;
   date_of_birth?: string | null;
   gender?: string | null;
@@ -253,6 +287,7 @@ export async function createEmployeeWithAccount(input: {
   if (!input.position) throw new Error("Position is required");
   if (!input.hourly_ni_rate || input.hourly_ni_rate <= 0)
     throw new Error("Hourly NI rate must be greater than 0");
+  const contactEmail = requireContactEmail(input.contact_email);
 
   // Managers can only create staff for their own store; admins choose freely.
   const store_id =
@@ -324,6 +359,7 @@ export async function createEmployeeWithAccount(input: {
   // 3) whitelist login account linked to the employee row
   const { error: rowErr } = await admin.from("allowed_users").insert({
     email,
+    contact_email: contactEmail,
     name: input.name.trim(),
     role: "employee",
     store_id,
@@ -335,14 +371,14 @@ export async function createEmployeeWithAccount(input: {
   if (rowErr) {
     await admin.from("employees").delete().eq("id", emp.id);
     await admin.auth.admin.deleteUser(authUserId);
-    throw new Error(rowErr.message);
+    throw new Error(describeAccountWriteError(rowErr));
   }
 
   await writeAudit({
     action: "create_employee_account",
     entity: "employee",
     entity_id: emp.id,
-    changes: { username, store_id, position: input.position },
+    changes: { username, store_id, position: input.position, contact_email: contactEmail },
   });
 
   revalidatePath("/employees");
@@ -353,6 +389,47 @@ export async function createEmployeeWithAccount(input: {
     loginUrl: "/employee/login",
     employee_id: emp.id,
   };
+}
+
+/**
+ * Admin-only: set/change the address a staff member's password-reset links go
+ * to. The fallback for anyone provisioned before migration 019 (no contact_email
+ * yet) and for anyone who changes address; staff can also do this themselves
+ * from their own profile/settings page (see app/actions/self.ts).
+ */
+export async function updateAccountContactEmail(input: {
+  allowed_user_id: string;
+  /** Empty string clears it — the remediation path for a wrong or stale address. */
+  contact_email: string;
+}): Promise<{ ok: true; contact_email: string | null }> {
+  await requireAdmin();
+  const trimmed = (input.contact_email ?? "").trim();
+  const contactEmail = trimmed ? requireContactEmail(trimmed) : null;
+  const supabase = createServerSupabase();
+
+  const { data: acct } = await supabase
+    .from("allowed_users")
+    .select("id")
+    .eq("id", input.allowed_user_id)
+    .maybeSingle();
+  if (!acct) throw new Error("Account not found");
+
+  const { error } = await supabase
+    .from("allowed_users")
+    .update({ contact_email: contactEmail })
+    .eq("id", acct.id);
+  if (error) throw new Error(describeAccountWriteError(error));
+
+  await writeAudit({
+    action: "update_contact_email",
+    entity: "allowed_user",
+    entity_id: acct.id,
+    changes: { contact_email: contactEmail },
+  });
+
+  revalidatePath("/managers");
+  revalidatePath("/employees");
+  return { ok: true, contact_email: contactEmail };
 }
 
 /** Regenerate the password for an existing account (manager or employee). */
@@ -371,12 +448,8 @@ export async function resetAccountPassword(input: {
   if (error || !acct) throw new Error("Account not found");
   if (acct.role === "admin") throw new Error("Admin passwords are managed in Supabase");
 
-  // find the auth user by email
   const password = generatePassword();
-  const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const authUser = list?.users?.find(
-    (u) => (u.email ?? "").toLowerCase() === acct.email.toLowerCase(),
-  );
+  const authUser = await findAuthUserByEmail(admin, acct.email);
   if (!authUser) throw new Error("Login account not found in auth");
 
   const { error: updErr } = await admin.auth.admin.updateUserById(authUser.id, {
@@ -416,10 +489,7 @@ export async function deleteAccount(input: { allowed_user_id: string }) {
 
   // Remove the auth user FIRST; only drop the whitelist row if that succeeded,
   // so we never leave a usable login pointing at a deleted whitelist entry.
-  const { data: list } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
-  const authUser = list?.users?.find(
-    (u) => (u.email ?? "").toLowerCase() === acct.email.toLowerCase(),
-  );
+  const authUser = await findAuthUserByEmail(admin, acct.email);
   if (authUser) {
     const { error: delErr } = await admin.auth.admin.deleteUser(authUser.id);
     if (delErr) throw new Error(delErr.message);

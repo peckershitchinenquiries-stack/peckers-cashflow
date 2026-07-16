@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Input, Select, Textarea } from "@/components/ui/Input";
 import { DatePicker } from "@/components/ui/DatePicker";
+import { validateContactEmail } from "@/lib/credentials";
 import { POSITION_OPTIONS, parsePositions, hasRole } from "@/lib/types";
 import { ageFromDOB, minWageForAge } from "@/lib/compliance";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
@@ -16,6 +17,8 @@ import type {
 export type EmployeeFormState = {
   name: string;
   email: string;
+  /** Real address for password-reset links (allowed_users.contact_email). */
+  contact_email: string;
   phone: string;
   date_of_birth: string;
   gender: string;
@@ -38,6 +41,7 @@ export function emptyEmployeeForm(): EmployeeFormState {
   return {
     name: "",
     email: "",
+    contact_email: "",
     phone: "",
     date_of_birth: "",
     gender: "",
@@ -61,6 +65,7 @@ export function employeeToForm(emp: Employee): EmployeeFormState {
   return {
     name: emp.name ?? "",
     email: emp.email ?? "",
+    contact_email: emp.contact_email ?? "",
     phone: emp.phone ?? "",
     date_of_birth: emp.date_of_birth ?? "",
     gender: emp.gender ?? "",
@@ -105,9 +110,24 @@ function formatSortCode(v: string): string {
   return d.replace(/(\d{2})(?=\d)/g, "$1-");
 }
 
-export function validateEmployeeForm(form: EmployeeFormState): FormErrors {
+export function validateEmployeeForm(
+  form: EmployeeFormState,
+  opts: {
+    /**
+     * Demand a contact email. True when ADDING (a login account is always
+     * created, so the address is what makes it self-recoverable). Left false
+     * when EDITING: some legacy HR rows have no login account at all, and
+     * forcing an address there would make them unsaveable.
+     */
+    requireContactEmail?: boolean;
+  } = {},
+): FormErrors {
   const errs: FormErrors = {};
   if (!form.name.trim()) errs.name = "Required";
+  if (opts.requireContactEmail || form.contact_email.trim()) {
+    const emailProblem = validateContactEmail(form.contact_email);
+    if (emailProblem) errs.contact_email = emailProblem;
+  }
   if (!form.date_of_birth) errs.date_of_birth = "Required for minimum-wage compliance";
   if (!form.position) errs.position = "Required";
   if (!form.employment_start_date) errs.employment_start_date = "Required";
@@ -155,12 +175,18 @@ export function EmployeeProfileForm({
   errors,
   stores,
   lockStore = false,
+  requireContactEmail = false,
+  lockContactEmail = false,
 }: {
   form: EmployeeFormState;
   setForm: React.Dispatch<React.SetStateAction<EmployeeFormState>>;
   errors: FormErrors;
   stores: Store[];
   lockStore?: boolean;
+  /** Mark the email required — mirrors validateEmployeeForm's option. */
+  requireContactEmail?: boolean;
+  /** Show the reset email read-only (manager portal — changing it is admin-only). */
+  lockContactEmail?: boolean;
 }) {
   const set = <K extends keyof EmployeeFormState>(k: K, v: EmployeeFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }));
@@ -187,6 +213,22 @@ export function EmployeeProfileForm({
             value={form.name}
             onChange={(e) => set("name", e.target.value)}
             error={errors.name}
+          />
+          <Input
+            type="email"
+            label={requireContactEmail ? "Email address *" : "Email address"}
+            value={form.contact_email}
+            onChange={(e) => set("contact_email", e.target.value)}
+            error={errors.contact_email}
+            placeholder={lockContactEmail ? "—" : "their.name@example.com"}
+            disabled={lockContactEmail}
+            hint={
+              errors.contact_email
+                ? undefined
+                : lockContactEmail
+                  ? "Password-reset links go here. Only an admin can change it — or they can set it themselves on their profile."
+                  : "Their own inbox — password-reset links are sent here."
+            }
           />
           <Input
             label="Phone"

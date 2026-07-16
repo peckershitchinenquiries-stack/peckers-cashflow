@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import { findEmployeeForUser } from "@/lib/employee-lookup";
+import { normalizeContactEmail, validateContactEmail } from "@/lib/credentials";
 import { writeAudit } from "./audit";
 
 async function currentEmployee() {
@@ -44,6 +45,61 @@ export async function updateOwnProfile(input: {
 
   revalidatePath("/employee/profile");
   return { ok: true };
+}
+
+/**
+ * A manager or employee sets/updates their OWN password-reset address.
+ *
+ * Most existing staff predate migration 019 and have no contact_email, and the
+ * admin won't know everyone's address — so the person themselves is often the
+ * only one who can fill this in, and without it they can't self-reset.
+ *
+ * Same service-role trick as clearMustChangePassword below: allowed_users writes
+ * are admin-only under RLS, so an anon client would silently update 0 rows.
+ * Scoped strictly to the caller's own row (by their session email), so it can
+ * never touch anyone else's.
+ */
+export async function updateOwnContactEmail(input: {
+  contact_email: string;
+}): Promise<{ ok: true; contact_email: string }> {
+  const user = await getSessionUser();
+  if (!user || !user.email || !user.allowed) throw new Error("Not authorised");
+
+  const problem = validateContactEmail(input.contact_email ?? "");
+  if (problem) throw new Error(problem);
+  const contactEmail = normalizeContactEmail(input.contact_email);
+
+  const client = isProvisioningConfigured()
+    ? createAdminClient()
+    : createServerSupabase();
+
+  // Scoped by primary key, not `.ilike("email", ...)`: this write bypasses RLS,
+  // and `_`/`%` are LIKE wildcards, so an address containing one could match
+  // rows beyond the caller's own. The id is already in hand — use it.
+  const { error } = await client
+    .from("allowed_users")
+    .update({ contact_email: contactEmail })
+    .eq("id", user.allowed.id);
+
+  if (error) {
+    if (error.code === "23505") {
+      throw new Error(
+        "That email is already used by another account. Please use your own address.",
+      );
+    }
+    throw new Error(error.message);
+  }
+
+  await writeAudit({
+    action: "update_own_contact_email",
+    entity: "allowed_user",
+    entity_id: user.allowed.id,
+    changes: { contact_email: contactEmail },
+  });
+
+  revalidatePath("/employee/profile");
+  revalidatePath("/manager/settings");
+  return { ok: true, contact_email: contactEmail };
 }
 
 /**

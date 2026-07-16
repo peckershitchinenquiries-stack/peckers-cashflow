@@ -51,6 +51,14 @@ type Props = {
    * hours instead of logging them, so this is false in the manager portal.
    */
   canManualLog?: boolean;
+  /**
+   * Whether an existing employee's password-reset email can be changed here.
+   * False in the manager portal: controlling that address means being able to
+   * request a reset link and sign in as that person, which is admin-only
+   * (see writeContactEmail in app/actions/employees.ts). Managers still set it
+   * when CREATING crew, where they already see the generated password anyway.
+   */
+  canEditContactEmail?: boolean;
 };
 
 type TabId = "daily" | "people" | "weekly";
@@ -67,6 +75,7 @@ export function EmployeesView({
   minWageBands,
   lockToStore = false,
   canManualLog = true,
+  canEditContactEmail = true,
 }: Props) {
   const router = useRouter();
   const [tab, setTab] = React.useState<TabId>("daily");
@@ -394,6 +403,7 @@ export function EmployeesView({
         <EditEmployeeModal
           employee={editing}
           stores={stores}
+          canEditContactEmail={canEditContactEmail}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);

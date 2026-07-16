@@ -17,11 +17,14 @@ import type { Employee, Store } from "@/lib/types";
 export function EditEmployeeModal({
   employee,
   stores,
+  canEditContactEmail = true,
   onClose,
   onSaved,
 }: {
   employee: Employee;
   stores: Store[];
+  /** False in the manager portal — changing it is admin-only. See EmployeesView. */
+  canEditContactEmail?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -45,6 +48,9 @@ export function EditEmployeeModal({
         id: employee.id,
         name: form.name,
         email: form.email || null,
+        // Pass the raw string, not `|| null`: "" is an explicit clear, whereas
+        // null would mean "leave it alone" and make the field unclearable.
+        contact_email: form.contact_email,
         phone: form.phone || null,
         date_of_birth: form.date_of_birth || null,
         gender: form.gender || null,
@@ -95,6 +101,7 @@ export function EditEmployeeModal({
         setForm={setForm}
         errors={errors}
         stores={stores}
+        lockContactEmail={!canEditContactEmail}
       />
     </Modal>
   );

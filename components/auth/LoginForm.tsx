@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { Button } from "@/components/ui/Button";
@@ -121,6 +122,15 @@ export function LoginForm({ portal }: { portal: Portal }) {
         onChange={(e) => setPassword(e.target.value)}
         required
       />
+
+      <div className="flex justify-end -mt-1">
+        <Link
+          href={`/forgot-password?portal=${portal}`}
+          className="text-xs text-text-muted hover:text-gold transition-colors"
+        >
+          Forgot password?
+        </Link>
+      </div>
 
       {error && (
         <div className="text-sm text-danger bg-danger/10 border border-danger/30 rounded-xl px-3 py-2.5">
