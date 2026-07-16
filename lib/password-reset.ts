@@ -45,8 +45,8 @@ export function resetTokenExpiry(): Date {
 }
 
 /**
- * Absolute base URL for links in outbound mail. Read ONLY from APP_URL — never
- * from the request.
+ * Absolute base URL for links in outbound mail. Read only from SERVER CONFIG —
+ * never from the request.
  *
  * Deriving it from Host / X-Forwarded-Host (the obvious "just use the origin"
  * fallback) is the classic password-reset host-poisoning bug: those headers are
@@ -56,12 +56,36 @@ export function resetTokenExpiry(): Date {
  * genuine email, from the real sender, carrying a live token pointed at the
  * attacker's host.
  *
- * Returns null when unset, which makes the reset flow fail closed and say so.
+ * Order:
+ *   1. APP_URL — set this to the custom domain once there is one.
+ *   2. VERCEL_PROJECT_PRODUCTION_URL — the project's STABLE production domain,
+ *      injected by Vercel itself. Platform config, not request input, so it
+ *      carries none of the risk above. Note APP_URL historically lived only in
+ *      .github/workflows (a GitHub Actions secret, so the cron jobs could call
+ *      the app) and was never a Vercel runtime var — without this fallback the
+ *      flow fails closed in production even though everything else is set.
+ *      Deliberately NOT VERCEL_URL: that is the per-deployment URL, so links
+ *      would point at a one-off preview host that changes every deploy.
+ *
+ * Returns null when neither is set, which makes the reset flow fail closed.
  */
 export function resolveAppUrl(): string | null {
   const configured = process.env.APP_URL?.trim();
-  if (!configured) return null;
-  return configured.replace(/\/+$/, "");
+  if (configured) return stripTrailingSlash(configured);
+
+  const vercelProd = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (vercelProd) {
+    const withProto = /^https?:\/\//i.test(vercelProd)
+      ? vercelProd
+      : `https://${vercelProd}`;
+    return stripTrailingSlash(withProto);
+  }
+
+  return null;
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
 }
 
 /** The link we email. Token rides in the path, never a query string. */

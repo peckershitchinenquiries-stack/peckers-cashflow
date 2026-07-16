@@ -102,13 +102,24 @@ export async function requestPasswordReset(input: {
   // Checked up front, before any lookup: these are all-or-nothing server config,
   // so failing here reveals nothing about who does or doesn't have an account —
   // and it beats telling someone to watch an inbox nothing can arrive in.
-  // APP_URL included: without it we cannot build a trustworthy link (see
+  // The base URL is included: without it we cannot build a trustworthy link (see
   // resolveAppUrl), and guessing one from request headers is exactly the bug
   // that turns this feature into an account-takeover vector.
+  //
+  // The log names the specific missing var: the user-facing copy stays vague on
+  // purpose, so without this the only symptom is "isn't set up yet" with no clue
+  // which of three things is absent.
   const baseUrl = resolveAppUrl();
-  if (!isProvisioningConfigured() || !isEmailConfigured() || !baseUrl) {
+  const missing: string[] = [];
+  if (!isProvisioningConfigured()) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  if (!isEmailConfigured()) missing.push("RESEND_API_KEY");
+  if (!baseUrl) missing.push("APP_URL (or VERCEL_PROJECT_PRODUCTION_URL)");
+
+  // `!baseUrl` is already covered by `missing`; it's repeated here so the compiler
+  // narrows baseUrl to a string for buildResetUrl below.
+  if (missing.length > 0 || !baseUrl) {
     console.error(
-      "[password-reset] not configured — need SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY and APP_URL",
+      `[password-reset] refusing to send — missing server config: ${missing.join(", ")}`,
     );
     return {
       ok: false,
