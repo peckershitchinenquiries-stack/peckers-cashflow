@@ -4,6 +4,8 @@ export function KpiCard({
   label,
   value,
   delta,
+  deltaLabel = "WoW",
+  deltaTitle = "Week-on-Week vs previous week",
   yoy,
   hint,
   tone,
@@ -11,6 +13,11 @@ export function KpiCard({
   label: string;
   value: string;
   delta?: number | string | null;
+  // Badge suffix and tooltip for `delta`. Default to week-on-week; the
+  // Executive dashboard's 4/12-week modes override them with the
+  // prior-period wording ("vs prev 4w").
+  deltaLabel?: string;
+  deltaTitle?: string;
   yoy?: number | null;
   hint?: string;
   // Semantic colour for the value: "good" (green — in-store / own delivery,
@@ -41,9 +48,9 @@ export function KpiCard({
                 ? "bg-success/10 text-success"
                 : "bg-danger/10 text-danger",
             ].join(" ")}
-            title="Week-on-Week vs previous week"
+            title={deltaTitle}
           >
-            {signedPct(delta)} WoW
+            {signedPct(delta)} {deltaLabel}
           </span>
         )}
         {typeof yoy === "number" && (

@@ -3,7 +3,6 @@ import {
   getExecChannels,
   getExecMulti,
   getExecChannelsMulti,
-  getLatestWeeks,
   getWeeks,
   getYoy,
   getYoyMulti,
@@ -48,6 +47,11 @@ function averageBreakdown(b: Breakdown, count: number): Breakdown {
     inStore: averageGroup(b.inStore, count),
   };
 }
+
+// Stand-in comparison group when no prior period exists, so buildChannelTable
+// always receives a well-formed GroupAgg. Every prevNet lookup returns 0, which
+// the `prevNet > 0` guard turns into a null delta.
+const EMPTY_GROUP: GroupAgg = { netSales: 0, orders: 0, aov: 0, channels: [] };
 
 function averageYoyRow(y: YoyRow, count: number): YoyRow {
   if (count <= 1) return y;
@@ -101,6 +105,10 @@ export default async function ExecutivePage({
   let periodRequested = 0;
   let yoyMatched = 0;
   let yoyRequested = 0;
+  // The N weeks immediately before the current period (multi-week mode only).
+  let priorExec: ExecRow[] = [];
+  let priorChan: ExecChannelRow[] = [];
+  let priorMatched = 0;
   try {
     // One getWeeks() call, then fan out all data fetches in parallel. Keeping the
     // render short reduces event-loop contention (and the chance the concurrent
@@ -126,10 +134,18 @@ export default async function ExecutivePage({
       ]);
     } else {
       // ── 4/12-week: aggregate latest N weeks vs same N weeks last year ───────
-      const periodWeeks = await getLatestWeeks(periodWeekCount);
+      // `weeks` is newest-first and excludes the in-progress week, so slice(0, N)
+      // is the current period and slice(N, 2N) the N weeks immediately before it,
+      // with no gap. Slicing the already-fetched array (rather than calling
+      // getLatestWeeks) avoids a second getWeeks() round-trip and guarantees both
+      // periods come from one consistent snapshot.
+      const periodWeeks = weeks.slice(0, periodWeekCount);
+      const priorWeeks = weeks.slice(periodWeekCount, periodWeekCount * 2);
       periodRequested = periodWeekCount;
       periodMatched = periodWeeks.length;
+      priorMatched = priorWeeks.length;
       const isoList = periodWeeks.map((w) => w.week_start_iso);
+      const priorIsoList = priorWeeks.map((w) => w.week_start_iso);
 
       if (periodWeeks.length > 0) {
         const oldest = periodWeeks[periodWeeks.length - 1];
@@ -142,13 +158,19 @@ export default async function ExecutivePage({
       }
       yoyWeek = `same ${periodWeekCount} wks`;
 
-      const [execMulti, chanMulti, yoy] = await Promise.all([
+      const [execMulti, chanMulti, yoy, priorExecMulti, priorChanMulti] = await Promise.all([
         getExecMulti(isoList),
         getExecChannelsMulti(isoList),
         getYoyMulti(isoList, activeStore),
+        priorIsoList.length ? getExecMulti(priorIsoList) : Promise.resolve<ExecRow[]>([]),
+        priorIsoList.length
+          ? getExecChannelsMulti(priorIsoList)
+          : Promise.resolve<ExecChannelRow[]>([]),
       ]);
       rows = execMulti;
       chanRows = chanMulti;
+      priorExec = priorExecMulti;
+      priorChan = priorChanMulti;
       prevRows = []; // no "previous week" in multi-week mode
       prevChanRows = [];
       yoyMatched = yoy.matched;
@@ -176,6 +198,7 @@ export default async function ExecutivePage({
   if (isMulti) {
     const notes: string[] = [];
     if (periodMatched < periodRequested) notes.push(`${periodMatched} of ${periodRequested} weeks synced`);
+    if (priorMatched < periodWeekCount) notes.push(`prior period: ${priorMatched} of ${periodWeekCount} weeks`);
     if (yoyMatched < yoyRequested) notes.push(`prior-year: ${yoyMatched} of ${yoyRequested} weeks matched`);
     subtitle =
       `${scopeLabel} · Latest ${periodWeekCount} weeks (${periodLabel})` +
@@ -185,12 +208,20 @@ export default async function ExecutivePage({
   }
 
   // Breakdowns: one per active store, plus the combined scope and prev week.
-  // In 4/12-week mode every extensive figure is shown as a per-week average
-  // (period total ÷ N); single-week (avgN = 1) is left byte-for-byte unchanged.
-  const avgN = isMulti ? periodWeekCount : 1;
+  // In 4/12-week mode every extensive figure is shown as a per-week average.
+  // Each period is divided by the number of weeks it ACTUALLY contains — not the
+  // number requested — so a partially-synced period is not understated, and so a
+  // short prior period stays comparable to a full current one.
+  const avgN = isMulti ? Math.max(periodMatched, 1) : 1;
+  const priorAvgN = Math.max(priorMatched, 1);
   const byStore = new Map<string, Breakdown>();
   for (const s of activeStores) byStore.set(s, averageBreakdown(buildBreakdown([s], rows, chanRows), avgN));
   const combined = averageBreakdown(buildBreakdown(activeStores, rows, chanRows), avgN);
+  // Prior period (multi-week only): same construction, its own divisor.
+  const hasPriorPeriod = isMulti && priorMatched > 0 && priorExec.length > 0;
+  const priorCombined = hasPriorPeriod
+    ? averageBreakdown(buildBreakdown(activeStores, priorExec, priorChan), priorAvgN)
+    : null;
   if (isMulti && yoyRow) yoyRow = averageYoyRow(yoyRow, periodWeekCount);
   const hasPrev = prevRows.length > 0;
   const prevCombined = buildBreakdown(activeStores, prevRows, prevChanRows);
@@ -211,6 +242,23 @@ export default async function ExecutivePage({
     : null;
   const aovBlendWow =
     hasPrev && prevCombined.aov > 0 ? share(combined.aov - prevCombined.aov, prevCombined.aov) : null;
+
+  // ---- Prior-period deltas (4/12-week modes) -----------------------------
+  // Current period vs the N weeks immediately before it. Both sides are
+  // per-week averages (each divided by its own week count), so the comparison
+  // holds even when the prior period is short.
+  const priorDelta = (cur: number, prior: number): number | null =>
+    priorCombined && prior > 0 ? share(cur - prior, prior) : null;
+
+  const netPrior = priorDelta(combined.netSales, priorCombined?.netSales ?? 0);
+  const netDelPrior = priorDelta(combined.delivery.netSales, priorCombined?.delivery.netSales ?? 0);
+  const netInPrior = priorDelta(combined.inStore.netSales, priorCombined?.inStore.netSales ?? 0);
+  const ordPrior = priorDelta(combined.orders, priorCombined?.orders ?? 0);
+  const custPrior = priorDelta(combined.customers, priorCombined?.customers ?? 0);
+  const aovBlendPrior = priorDelta(combined.aov, priorCombined?.aov ?? 0);
+
+  const priorLabel = `vs prev ${periodWeekCount}w`;
+  const priorTitle = `Versus the preceding ${periodWeekCount} weeks`;
 
   // Own Delivery vs Aggregator (Deliveroo + Uber Eats + Just Eat) net sales,
   // used for the YoY comparisons below.
@@ -261,6 +309,18 @@ export default async function ExecutivePage({
   const inStorePctWow = hasPrev && prevInStorePct > 0 ? share(inStorePct - prevInStorePct, prevInStorePct) : null;
   const deliveryPctYoy = hasYoy && yoyDeliveryPct > 0 ? share(deliveryPct - yoyDeliveryPct, yoyDeliveryPct) : null;
   const inStorePctYoy = hasYoy && yoyInStorePct > 0 ? share(inStorePct - yoyInStorePct, yoyInStorePct) : null;
+
+  // Prior-period share deltas. Expressed as a RELATIVE change of the share —
+  // the same basis as the YoY badge sitting next to them — so the two are read
+  // on the same scale. Percentage-point change would need both to move together.
+  const priorDeliveryPct = priorCombined
+    ? share(priorCombined.delivery.netSales, priorCombined.netSales)
+    : 0;
+  const priorInStorePct = priorCombined
+    ? share(priorCombined.inStore.netSales, priorCombined.netSales)
+    : 0;
+  const deliveryPctPrior = priorDelta(deliveryPct, priorDeliveryPct);
+  const inStorePctPrior = priorDelta(inStorePct, priorInStorePct);
 
   const yoyPctMap: Record<string, number | null> = {
     "Net Sales": netYoy,
@@ -382,10 +442,32 @@ export default async function ExecutivePage({
           },
         ]
       : []),
-    // "Previous Week" only exists in single-week mode; in 4/12-week mode the
-    // comparison column is prior-year same-N-weeks (the YoY column below).
+    // Comparison column: "Previous Week" in single-week mode, "Previous N Weeks"
+    // in 4/12-week mode. Both render the comparison period's value with its
+    // delta in brackets; the bracketed % only appears on rows that define a
+    // `wowVal` accessor (the five Net Sales rows).
     ...(isMulti
-      ? []
+      ? hasPriorPeriod
+        ? [
+            {
+              key: "prior",
+              header: `Previous ${periodWeekCount} Weeks`,
+              align: "right" as const,
+              render: (r: KpiRowDef) => {
+                const pct =
+                  r.wowVal && priorCombined ? priorDelta(r.wowVal(combined), r.wowVal(priorCombined)) : null;
+                return (
+                  <span className="text-tertiary">
+                    {priorCombined ? r.cell(priorCombined) : "—"}
+                    {pct !== null && (
+                      <span className={`ml-1.5 font-medium ${deltaClass(pct)}`}>({signedPct(pct)})</span>
+                    )}
+                  </span>
+                );
+              },
+            },
+          ]
+        : []
       : [
           {
             key: "prev",
@@ -503,7 +585,9 @@ export default async function ExecutivePage({
         netSales,
         aov,
         pctRevenue: scopeTotal > 0 ? (100 * netSales) / scopeTotal : 0,
-        wow: hasPrev && prevNet > 0 ? share(netSales - prevNet, prevNet) : null,
+        // Single-week: vs previous week. Multi-week: vs the prior N-week period.
+        // Exactly one of the two flags is ever true, so the disjunction is safe.
+        wow: (hasPrev || hasPriorPeriod) && prevNet > 0 ? share(netSales - prevNet, prevNet) : null,
         yoy: channelYoy(channel, groupName, netSales, orders, isTotal, yoy),
         isTotal,
       };
@@ -544,7 +628,7 @@ export default async function ExecutivePage({
     },
     {
       key: "wow",
-      header: "WoW%",
+      header: isMulti ? priorLabel : "WoW%",
       align: "right",
       render: (r) => (
         <span className={`font-medium ${deltaClass(r.wow)}`}>{signedPct(r.wow)}</span>
@@ -565,10 +649,14 @@ export default async function ExecutivePage({
       render: (r) => <span className={r.isTotal ? "font-semibold" : ""}>{gbp(r.aov)}</span>,
     },
   ];
-  // WoW is meaningless for an N-week aggregate — drop the column in multi-week.
-  const mixColumns = isMulti
-    ? mixColumnsAll.filter((c) => c.key !== "wow")
-    : mixColumnsAll;
+  // In multi-week mode the delta column compares against the prior N-week period;
+  // it is dropped only when there is no prior period to compare against.
+  const mixColumns =
+    isMulti && !hasPriorPeriod ? mixColumnsAll.filter((c) => c.key !== "wow") : mixColumnsAll;
+
+  // Comparison group feeding the Order Mix delta column.
+  const mixPrevDelivery = isMulti ? priorCombined?.delivery ?? EMPTY_GROUP : prevCombined.delivery;
+  const mixPrevInStore = isMulti ? priorCombined?.inStore ?? EMPTY_GROUP : prevCombined.inStore;
 
   const deliveryOrdersChart = combined.delivery.channels.map((c) => ({
     channel: c.channel,
@@ -636,8 +724,14 @@ export default async function ExecutivePage({
     ? (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput)
     : null;
 
-  // Suppress the WoW badge on KPI cards in multi-week mode (no "previous week").
-  const wow = (v: number | null) => (isMulti ? undefined : v);
+  // Delta badge: week-on-week in single-week mode, prior-period in 4/12-week
+  // mode. `undefined` hides the badge entirely (null would render it greyed).
+  const wow = (wowVal: number | null, priorVal: number | null = null) =>
+    isMulti ? (hasPriorPeriod ? priorVal : undefined) : wowVal;
+
+  // Spread onto every KpiCard: relabels the delta badge in multi-week mode and
+  // falls back to the component's "WoW" defaults in single-week mode.
+  const deltaBadge = isMulti ? { deltaLabel: priorLabel, deltaTitle: priorTitle } : {};
 
   return (
     <div className="space-y-7">
@@ -645,30 +739,32 @@ export default async function ExecutivePage({
         <PageTitle title="Executive Dashboard" subtitle={subtitle} />
         {isMulti && (
           <p className="-mt-4 text-xs text-tertiary">
-            All figures are weekly averages — each value is the period total ÷ {periodWeekCount} (÷ 4 on
-            the 4-week view, ÷ 12 on the 12-week view). AOV and percentage metrics are already
+            All figures are weekly averages — each value is the period total ÷ the number of weeks in
+            that period ({periodMatched} here). The comparison period is averaged over its own week
+            count, so the two are directly comparable. AOV and percentage metrics are already
             averages/ratios and are shown as-is.
           </p>
         )}
       </div>
 
       <KpiGrid>
-        {/* WoW is meaningless for an N-week aggregate — omit the delta entirely
-            in multi-week mode (undefined hides the badge; null would grey it). */}
-        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={wow(netWow)} yoy={netYoy} />
-        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={wow(netDelWow)} yoy={delYoy} />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={wow(netInWow)} yoy={inStYoy} tone="good" />
-        <KpiCard label="Total Orders" value={int(combined.orders)} delta={wow(ordWow)} yoy={ordYoy} />
+        {/* Single-week shows WoW; 4/12-week shows the prior-period comparison.
+            When neither exists the badge is omitted (undefined hides it). */}
+        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={wow(netWow, netPrior)} {...deltaBadge} yoy={netYoy} />
+        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={wow(netDelWow, netDelPrior)} {...deltaBadge} yoy={delYoy} />
+        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={wow(netInWow, netInPrior)} {...deltaBadge} yoy={inStYoy} tone="good" />
+        <KpiCard label="Total Orders" value={int(combined.orders)} delta={wow(ordWow, ordPrior)} {...deltaBadge} yoy={ordYoy} />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
-          delta={wow(aovBlendWow)}
+          delta={wow(aovBlendWow, aovBlendPrior)}
+          {...deltaBadge}
           yoy={aovBlendYoy}
           hint="net sales ÷ orders"
         />
-        <KpiCard label="Customers" value={int(combined.customers)} delta={wow(custWow)} yoy={custYoy} />
-        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={wow(deliveryPctWow)} yoy={deliveryPctYoy} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(inStorePct)} delta={wow(inStorePctWow)} yoy={inStorePctYoy} hint="of net sales" tone="good" />
+        <KpiCard label="Customers" value={int(combined.customers)} delta={wow(custWow, custPrior)} {...deltaBadge} yoy={custYoy} />
+        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={wow(deliveryPctWow, deliveryPctPrior)} {...deltaBadge} yoy={deliveryPctYoy} hint="of net sales" />
+        <KpiCard label="In-store %" value={pct(inStorePct)} delta={wow(inStorePctWow, inStorePctPrior)} {...deltaBadge} yoy={inStorePctYoy} hint="of net sales" tone="good" />
       </KpiGrid>
 
       {/* Commentary is weekly/WoW-framed; skip it in multi-week mode. */}
@@ -686,7 +782,7 @@ export default async function ExecutivePage({
           >
             <DataTable
               columns={mixColumns}
-              rows={buildChannelTable(combined.delivery, prevCombined.delivery, "delivery", yoyRow)}
+              rows={buildChannelTable(combined.delivery, mixPrevDelivery, "delivery", yoyRow)}
             />
             {deliveryOrdersChart.length > 0 && (
               <div className="mt-6">
@@ -706,7 +802,7 @@ export default async function ExecutivePage({
           >
             <DataTable
               columns={mixColumns}
-              rows={buildChannelTable(combined.inStore, prevCombined.inStore, "inStore", yoyRow)}
+              rows={buildChannelTable(combined.inStore, mixPrevInStore, "inStore", yoyRow)}
             />
             {inStoreOrdersChart.length > 0 && (
               <div className="mt-4">
