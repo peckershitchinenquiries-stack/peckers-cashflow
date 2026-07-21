@@ -132,8 +132,8 @@ export interface DaypartChannelDetailRow {
 
 // Per (store, weekday, hour) trading activity from the raw
 // vm_hourly_order_activity report. avg_daily_* are the average across the days
-// that hour traded, so summing them per hour across weekdays reproduces the
-// vm_v_daypart_summary orders/revenue exactly.
+// that hour traded. avg_daily_sales is GROSS; used here only for the order
+// heat map (weekday x hour order counts), not for revenue.
 export interface HourlyActivityRow {
   store: string;
   week_start: string;
@@ -142,6 +142,18 @@ export interface HourlyActivityRow {
   order_hour: Num;
   avg_daily_sales: Num;
   avg_daily_orders: Num;
+}
+
+// Per (store, week, hour) net revenue joined to order counts, from the
+// vm_v_hourly_net_activity view (net from vm_net_sales_by_hour, orders from
+// vm_hourly_order_activity). Powers the hourly "Performance by Time Period"
+// table's Revenue (NET) and AOV columns.
+export interface HourlyNetActivityRow {
+  store: string;
+  week_start: string;
+  hour: Num;
+  orders: Num;
+  net_sales: Num;
 }
 
 export interface WeekdayRow {

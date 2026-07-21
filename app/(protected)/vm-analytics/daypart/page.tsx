@@ -2,6 +2,7 @@ import {
   getDaypartChannels,
   getDaypartChannelDetail,
   getHourlyActivity,
+  getHourlyNetActivity,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange } from "@/lib/vm-analytics/format";
@@ -16,6 +17,7 @@ import type {
   DaypartChannelRow,
   DaypartChannelDetailRow,
   HourlyActivityRow,
+  HourlyNetActivityRow,
 } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
@@ -156,9 +158,9 @@ function finalise(list: DaypartAgg[], detailed: boolean): DaypartAgg[] {
     .sort((a, b) => a.rank - b.rank);
 }
 
-// One row per trading hour, rolled up across the scoped store(s). avg_daily_*
-// per (weekday, hour) are summed the same way vm_v_daypart_summary rolls hours
-// into dayparts, so the hourly rows reconcile with the daypart totals exactly.
+// One row per trading hour, rolled up across the scoped store(s). Revenue is
+// NET (vm_net_sales_by_hour) and orders come from vm_hourly_order_activity, both
+// pre-joined per (store, week, hour) by the vm_v_hourly_net_activity view.
 interface HourAgg {
   hour: number;
   orders: number;
@@ -166,13 +168,13 @@ interface HourAgg {
   aov: number;
 }
 
-function aggregateHours(rows: HourlyActivityRow[]): HourAgg[] {
+function aggregateNetHours(rows: HourlyNetActivityRow[]): HourAgg[] {
   const m = new Map<number, HourAgg>();
   for (const r of rows) {
-    const hour = Math.trunc(n(r.order_hour));
+    const hour = Math.trunc(n(r.hour));
     const cur = m.get(hour) ?? { hour, orders: 0, revenue: 0, aov: 0 };
-    cur.orders += n(r.avg_daily_orders);
-    cur.revenue += n(r.avg_daily_sales);
+    cur.orders += n(r.orders);
+    cur.revenue += n(r.net_sales);
     m.set(hour, cur);
   }
   return Array.from(m.values())
@@ -228,16 +230,18 @@ export default async function DaypartPage({
   let detailRows: DaypartChannelDetailRow[];
   let basicRows: DaypartChannelRow[];
   let hourlyRows: HourlyActivityRow[];
+  let netRows: HourlyNetActivityRow[];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [detailRows, basicRows, hourlyRows] = await Promise.all([
+    [detailRows, basicRows, hourlyRows, netRows] = await Promise.all([
       getDaypartChannelDetail(weekIso),
       getDaypartChannels(weekIso),
       getHourlyActivity(weekIso),
+      getHourlyNetActivity(weekIso),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -248,9 +252,10 @@ export default async function DaypartPage({
     detailRows = detailRows.filter((c) => c.store === activeStore);
     basicRows = basicRows.filter((c) => c.store === activeStore);
     hourlyRows = hourlyRows.filter((c) => c.store === activeStore);
+    netRows = netRows.filter((c) => c.store === activeStore);
   }
 
-  const hours = aggregateHours(hourlyRows);
+  const hours = aggregateNetHours(netRows);
   const heatmap = buildHeatmap(hourlyRows);
 
   const hasDetail = detailRows.length > 0;
@@ -265,7 +270,7 @@ export default async function DaypartPage({
     );
   }
 
-  // Hourly "Performance by Time Period" table. The raw hourly report has no
+  // Hourly "Performance by Time Period" table. Net revenue per hour has no
   // channel dimension, so this view is Orders / Revenue / AOV only (the
   // Own Delivery / Aggregate / In-store cuts are only defined per daypart).
   const hourColumns: Column<HourAgg>[] = [
@@ -327,7 +332,7 @@ export default async function DaypartPage({
 
       <Section
         title="Performance by Time Period"
-        description="Orders, revenue and AOV per trading hour (AOV = revenue ÷ orders). Figures are the average day's activity for that hour, summed across the week — the same basis as the daypart totals, so the hours in a daypart add up to it exactly."
+        description="Orders, net revenue and AOV per trading hour (AOV = net revenue ÷ orders). Revenue is net sales — after VAT, service charge and delivery fees — totalled across the week for each hour."
       >
         <DataTable
           columns={hourColumns}
