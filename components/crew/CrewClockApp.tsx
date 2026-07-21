@@ -107,18 +107,21 @@ export function CrewClockApp({
     return m;
   }, [weekClocks]);
 
+  // A manager can correct a day's hours during approval (DailyHoursApproval) —
+  // once approved, that confirmed value is authoritative and must override the
+  // raw clock-in/out delta, or the crew screen would show a value the manager
+  // already fixed.
+  function effectiveWorkedHours(c: ClockEvent): number {
+    if (c.hours_approved && c.approved_hours != null) return Number(c.approved_hours);
+    return c.clock_out_at ? clockedHours(c.clock_in_at, c.clock_out_at) : 0;
+  }
+
   const weekWorkedHours = React.useMemo(
-    () =>
-      weekClocks.reduce(
-        (sum, c) => sum + (c.clock_out_at ? clockedHours(c.clock_in_at, c.clock_out_at) : 0),
-        0,
-      ),
+    () => weekClocks.reduce((sum, c) => sum + effectiveWorkedHours(c), 0),
     [weekClocks],
   );
 
-  const todayWorkedHours = todayClock?.clock_out_at
-    ? clockedHours(todayClock.clock_in_at, todayClock.clock_out_at)
-    : 0;
+  const todayWorkedHours = todayClock?.clock_out_at ? effectiveWorkedHours(todayClock) : 0;
 
   // Effective shift for a date: published rota row first, else the employee's
   // recurring schedule template for that weekday.
@@ -602,9 +605,7 @@ export function CrewClockApp({
             const dateIso = toISODate(date);
             const eff = effFor(dateIso, i);
             const clk = clockByDate.get(dateIso);
-            const worked = clk?.clock_out_at
-              ? clockedHours(clk.clock_in_at, clk.clock_out_at)
-              : 0;
+            const worked = clk?.clock_out_at ? effectiveWorkedHours(clk) : 0;
             const isToday = dateIso === today;
             return (
               <div

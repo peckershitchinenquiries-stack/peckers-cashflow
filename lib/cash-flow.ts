@@ -282,7 +282,31 @@ type ClockRow = {
   /** Deliveries beyond the normal round — paid the matching per-type rate. */
   extra_short_deliveries?: number | null;
   extra_long_deliveries?: number | null;
+  /** Manager approval override — see resolvedDayHours(). */
+  hours_approved?: boolean | null;
+  approved_hours?: number | string | null;
 };
+
+/**
+ * Hours that count for a completed clock day: the manager-approved override
+ * once the day is approved, else the raw clock_in→clock_out delta. A manager
+ * can correct a mis-clocked day during approval (DailyHoursApproval); every
+ * downstream wage calc must honour that correction instead of re-deriving the
+ * raw timestamps, or an approved edit silently reverts to the original clock.
+ */
+function resolvedDayHours(row: {
+  clock_in_at: string | null;
+  clock_out_at: string | null;
+  hours_approved?: boolean | null;
+  approved_hours?: number | string | null;
+}): number {
+  if (row.hours_approved && row.approved_hours != null) {
+    return Number(row.approved_hours) || 0;
+  }
+  if (!row.clock_in_at || !row.clock_out_at) return 0;
+  const ms = new Date(row.clock_out_at).getTime() - new Date(row.clock_in_at).getTime();
+  return ms > 0 ? ms / 3_600_000 : 0;
+}
 
 type ShiftRow = {
   employee_id: string;
@@ -315,9 +339,9 @@ export function aggregateWorked(
       longDeliveries.set(c.employee_id, (longDeliveries.get(c.employee_id) ?? 0) + longDelivered);
     }
     if (c.clock_in_at && c.clock_out_at) {
-      const ms = new Date(c.clock_out_at).getTime() - new Date(c.clock_in_at).getTime();
-      if (ms > 0) {
-        clockHours.set(c.employee_id, (clockHours.get(c.employee_id) ?? 0) + ms / 3_600_000);
+      const hours = resolvedDayHours(c);
+      if (hours > 0) {
+        clockHours.set(c.employee_id, (clockHours.get(c.employee_id) ?? 0) + hours);
       }
     }
   }
@@ -377,6 +401,9 @@ export type StoreClockRow = {
   long_deliveries_count: number | null;
   extra_short_deliveries?: number | null;
   extra_long_deliveries?: number | null;
+  /** Manager approval override — see resolvedDayHours(). */
+  hours_approved?: boolean | null;
+  approved_hours?: number | string | null;
 };
 
 /** A scheduled shift row carrying which store + day it belongs to. */
@@ -402,9 +429,9 @@ function resolveWorkingDays(clocks: StoreClockRow[], shifts: StoreShiftRow[]): D
   const clockedDays: DayWork[] = [];
   for (const c of clocks) {
     if (c.clock_in_at && c.clock_out_at) {
-      const ms = new Date(c.clock_out_at).getTime() - new Date(c.clock_in_at).getTime();
-      if (ms > 0) {
-        clockedDays.push({ date: c.event_date, store_id: c.store_id, hours: ms / 3_600_000 });
+      const hours = resolvedDayHours(c);
+      if (hours > 0) {
+        clockedDays.push({ date: c.event_date, store_id: c.store_id, hours });
       }
     }
   }

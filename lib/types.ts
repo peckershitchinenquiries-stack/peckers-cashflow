@@ -284,6 +284,10 @@ export type ClockEvent = {
   extra_short_reason: string | null;
   extra_long_reason: string | null;
   created_at: string;
+  /** Manager approval of this day's clocked hours — see components/employees/DailyHoursApproval.tsx. */
+  hours_approved?: boolean | null;
+  /** Manager-confirmed hours for the day (may differ from the raw clock_in/out delta). Authoritative once hours_approved is true. */
+  approved_hours?: number | null;
 };
 
 /**
