@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
-import type { CoverDriverRecord } from "@/lib/types";
+import { resolveActiveStoreId, type CoverDriverRecord } from "@/lib/types";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
 
@@ -18,9 +18,10 @@ async function requireStaff(): Promise<SessionUser> {
 
 function assertStoreAccess(user: SessionUser, storeId: string) {
   if (user.allowed!.role === "manager") {
-    if (!user.allowed!.store_id) throw new Error("No store assigned to your account.");
-    if (storeId !== user.allowed!.store_id) {
-      throw new Error("You can only manage cover driver records for your own store.");
+    const activeStore = resolveActiveStoreId(user.allowed);
+    if (!activeStore) throw new Error("No store assigned to your account.");
+    if (storeId !== activeStore) {
+      throw new Error("You can only manage cover driver records for the store you're managing.");
     }
   }
 }

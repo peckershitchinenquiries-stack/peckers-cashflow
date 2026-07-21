@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { EmployeesView } from "@/components/employees/EmployeesView";
 import { withContactEmails } from "@/lib/contact-email";
 import { getAppSettings } from "@/app/actions/settings";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ManagerEmployeesPage() {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? "";
+  const storeId = resolveActiveStoreId(user.allowed) ?? "";
   const supabase = createServerSupabase();
   const settings = await getAppSettings();
 

@@ -41,7 +41,13 @@ export type AllowedUser = {
   contact_email: string | null;
   name: string | null;
   role: AllowedUserRole;
+  /** The manager's HOME store — where they belong and, by default, where they
+   *  act. Set once by an admin. */
   store_id: string | null;
+  /** The store a manager is currently OPERATING AS (multi-store switching).
+   *  Null = use the home store. Only meaningful for managers; resolve via
+   *  {@link resolveActiveStoreId} rather than reading this directly. */
+  active_store_id: string | null;
   username: string | null;
   temp_password: string | null;
   must_change_password: boolean;
@@ -51,6 +57,19 @@ export type AllowedUser = {
   fixed_daily_wage: number | null;
   created_at: string;
 };
+
+/**
+ * The store a login account is currently acting on. For managers this is their
+ * ACTIVE store (the one they've switched to) falling back to their home store;
+ * for everyone else it's just their store_id. This is the single source pages
+ * and actions should use to scope a manager's data — never read
+ * `allowed.store_id` directly for that, or a switched manager will see the
+ * wrong store. Mirrors the DB's current_user_store_id() (migration 020) so the
+ * app layer and RLS agree.
+ */
+export function resolveActiveStoreId(allowed: AllowedUser | null | undefined): string | null {
+  return allowed?.active_store_id ?? allowed?.store_id ?? null;
+}
 
 /** Which portal a role lands in. */
 export type Portal = "admin" | "manager" | "employee";

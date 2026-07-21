@@ -12,7 +12,7 @@ import {
   type GeofenceLogContext,
 } from "@/lib/geofence-verify";
 import { findEmployeeForUser } from "@/lib/employee-lookup";
-import { hasRole, type ActionResult } from "@/lib/types";
+import { hasRole, resolveActiveStoreId, type ActionResult } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
 const AUTO_SHIFT_NOTE = "Auto-created from clock-in";
@@ -496,7 +496,7 @@ async function performSetClockDeliveries(input: SetClockDeliveriesInput) {
   // Managers are limited to their own store: they can edit a driver's deliveries
   // for any day that driver worked AT the manager's store. When no clock row
   // exists yet, a manager creates one at their own store.
-  const managerStoreId = user.allowed!.role === "manager" ? user.allowed!.store_id ?? null : null;
+  const managerStoreId = user.allowed!.role === "manager" ? resolveActiveStoreId(user.allowed) : null;
   const eventStoreId = existing?.store_id ?? managerStoreId ?? employee.store_id ?? null;
   if (user.allowed!.role === "manager" && eventStoreId !== managerStoreId) {
     throw new Error("You can only edit drivers for days they worked at your store.");

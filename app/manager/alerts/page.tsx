@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { AlertsView } from "@/components/alerts/AlertsView";
 import type { Employee, Store, SystemAlert } from "@/lib/types";
 
@@ -7,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ManagerAlertsPage() {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? "";
+  const storeId = resolveActiveStoreId(user.allowed) ?? "";
   const supabase = createServerSupabase();
 
   const [alertsRes, storesRes, employeesRes] = await Promise.all([

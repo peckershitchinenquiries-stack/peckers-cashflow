@@ -2,9 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
-import { verifyGeofenceAtStore } from "@/lib/geofence-verify";
+import { detectStoreForLocation, verifyGeofenceAtStore } from "@/lib/geofence-verify";
 import { todayISO } from "@/lib/utils";
-import type { ActionResult } from "@/lib/types";
+import { resolveActiveStoreId, type ActionResult } from "@/lib/types";
 import { writeAudit } from "./audit";
 
 /**
@@ -52,17 +52,26 @@ async function performManagerClockIn(input: ClockInput) {
   const user = await requireManager();
   const supabase = createServerSupabase();
   const managerId = user.allowed!.id;
-  const storeId = user.allowed!.store_id;
+  const storeId = resolveActiveStoreId(user.allowed);
   if (!storeId) throw new Error("You're not assigned to a store yet.");
 
-  await verifyGeofenceAtStore(
+  // Detect which store the manager is physically standing in. This enforces the
+  // geofence AND powers the "wrong store" nudge: a manager can only clock in at
+  // the store their app is currently switched to. If they're at a DIFFERENT
+  // store, we tell them to switch there first (matching the crew clock, which
+  // attributes each shift to the store actually worked).
+  const detected = await detectStoreForLocation(
     supabase,
-    storeId,
     input.latitude,
     input.longitude,
     input.accuracy,
     { actorEmail: user.email, managerId, action: "clock_in" },
   );
+  if (detected.id !== storeId) {
+    throw new Error(
+      `You're at ${detected.name}, but your app is set to a different store. Switch to ${detected.name} to clock in here.`,
+    );
+  }
 
   const today = todayISO();
   const { data: existing } = await supabase
@@ -114,17 +123,6 @@ async function performManagerClockOut(input: ClockInput) {
   const user = await requireManager();
   const supabase = createServerSupabase();
   const managerId = user.allowed!.id;
-  const storeId = user.allowed!.store_id;
-  if (!storeId) throw new Error("You're not assigned to a store yet.");
-
-  await verifyGeofenceAtStore(
-    supabase,
-    storeId,
-    input.latitude,
-    input.longitude,
-    input.accuracy,
-    { actorEmail: user.email, managerId, action: "clock_out" },
-  );
 
   const today = todayISO();
   const { data: existing } = await supabase
@@ -136,6 +134,21 @@ async function performManagerClockOut(input: ClockInput) {
 
   if (!existing?.clock_in_at) throw new Error("You haven't clocked in yet today.");
   if (existing.clock_out_at) throw new Error("You've already clocked out today.");
+
+  // Clock out from the store they clocked IN at (recorded on the row), not
+  // whatever store they may have switched to since — you sign off where your
+  // shift actually was.
+  const clockedStoreId = existing.store_id;
+  if (!clockedStoreId) throw new Error("Your clock-in has no store on record. Contact your admin.");
+
+  await verifyGeofenceAtStore(
+    supabase,
+    clockedStoreId,
+    input.latitude,
+    input.longitude,
+    input.accuracy,
+    { actorEmail: user.email, managerId, action: "clock_out" },
+  );
 
   const now = new Date().toISOString();
   const { error } = await supabase

@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { LiveDashboard } from "@/components/live/LiveDashboard";
 import { ManagerQuickEntry } from "@/components/manager/ManagerQuickEntry";
 import { ManagerClockCard } from "@/components/manager/ManagerClockCard";
@@ -24,7 +25,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ManagerLivePage() {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? null;
+  const storeId = resolveActiveStoreId(user.allowed);
   const supabase = createServerSupabase();
   const today = todayISO();
 
@@ -41,9 +42,9 @@ export default async function ManagerLivePage() {
     cashRes,
     managerClockRes,
   ] = await Promise.all([
-    storeId
-      ? supabase.from("stores").select("*").eq("id", storeId)
-      : supabase.from("stores").select("*"),
+    // All stores — the clock card needs every store's geofence to detect which
+    // one the manager is physically at (and nudge them to switch if needed).
+    supabase.from("stores").select("*").order("name"),
     supabase
       .from("employees")
       .select("id")
@@ -106,6 +107,7 @@ export default async function ManagerLivePage() {
         <ManagerClockCard
           managerName={user.allowed?.name ?? "Manager"}
           store={myStore}
+          allStores={stores}
           todayClock={managerClock}
         />
         {storeId && (

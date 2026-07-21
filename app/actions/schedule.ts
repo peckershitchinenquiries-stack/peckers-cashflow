@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
 import { addDays, parseISODate, shiftHours, toISODate, todayISO } from "@/lib/utils";
-import type { EmployeeScheduleDay } from "@/lib/types";
+import { resolveActiveStoreId, type EmployeeScheduleDay } from "@/lib/types";
 
 async function requireStaff() {
   const user = await getSessionUser();
@@ -134,10 +134,10 @@ export async function applyScheduleToWeek(input: {
   const user = await requireStaff();
   const supabase = createServerSupabase();
 
-  // Managers are locked to their own store; admins choose freely.
+  // Managers act on the store they're currently managing; admins choose freely.
   const store_id =
     user.allowed!.role === "manager"
-      ? user.allowed!.store_id ?? ""
+      ? resolveActiveStoreId(user.allowed) ?? ""
       : input.store_id;
   if (!store_id) throw new Error("Missing store");
   if (!input.week_start) throw new Error("Missing week");

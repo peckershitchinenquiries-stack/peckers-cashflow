@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { RotaView } from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
 import {
@@ -33,7 +34,7 @@ export default async function ManagerRotaPage({
   searchParams: { start?: string; end?: string };
 }) {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? "";
+  const storeId = resolveActiveStoreId(user.allowed) ?? "";
   const supabase = createServerSupabase();
   const settings = await getAppSettings();
 

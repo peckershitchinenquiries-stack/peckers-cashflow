@@ -8,6 +8,7 @@ import { Logo } from "./Logo";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/icons";
 import { NAV_FOR_PORTAL } from "./nav-config";
+import { StoreSwitcher, type StoreOption } from "./StoreSwitcher";
 import type { Portal } from "@/lib/types";
 
 const PORTAL_TAG: Record<Portal, string> = {
@@ -16,7 +17,20 @@ const PORTAL_TAG: Record<Portal, string> = {
   employee: "Crew",
 };
 
-export function Sidebar({ portal, userName }: { portal: Portal; userName?: string | null }) {
+export function Sidebar({
+  portal,
+  userName,
+  stores,
+  activeStoreId = null,
+  homeStoreId = null,
+}: {
+  portal: Portal;
+  userName?: string | null;
+  /** Manager multi-store switcher — omit to hide it. */
+  stores?: StoreOption[];
+  activeStoreId?: string | null;
+  homeStoreId?: string | null;
+}) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = React.useState(false);
   const items = NAV_FOR_PORTAL[portal];
@@ -53,6 +67,17 @@ export function Sidebar({ portal, userName }: { portal: Portal; userName?: strin
           {collapsed ? <ChevronRightIcon size={16} /> : <ChevronLeftIcon size={16} />}
         </button>
       </div>
+
+      {/* Manager store switcher (multi-store) — hidden when collapsed. */}
+      {portal === "manager" && stores && stores.length > 1 && !collapsed && (
+        <div className="px-3 pt-3">
+          <StoreSwitcher
+            stores={stores}
+            activeStoreId={activeStoreId}
+            homeStoreId={homeStoreId}
+          />
+        </div>
+      )}
 
       <nav className="flex-1 p-2 flex flex-col gap-1 overflow-y-auto">
         {items.map((item, idx) => {

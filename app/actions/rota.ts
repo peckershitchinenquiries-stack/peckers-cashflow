@@ -5,7 +5,7 @@ import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
 import { shiftHours, todayISO } from "@/lib/utils";
 import { presetTimes, DEFAULT_SETTINGS } from "@/lib/settings";
-import { hasRole, type ShiftPreset } from "@/lib/types";
+import { hasRole, resolveActiveStoreId, type ShiftPreset } from "@/lib/types";
 
 async function requireAllowed() {
   const user = await getSessionUser();
@@ -39,10 +39,12 @@ export async function upsertShift(input: RotaShiftInput) {
   if (!input.shift_date) throw new Error("Missing date");
 
   // A manager may schedule ANY employee (including staff visiting from the other
-  // store) but only ON their own store's rota — never edit another store's rota.
+  // store) but only ON the rota of the store they're currently managing — never
+  // another store's rota.
   if (user.allowed!.role === "manager") {
-    if (!user.allowed!.store_id || input.store_id !== user.allowed!.store_id) {
-      throw new Error("Managers can only edit shifts at their own store.");
+    const activeStore = resolveActiveStoreId(user.allowed);
+    if (!activeStore || input.store_id !== activeStore) {
+      throw new Error("Managers can only edit shifts at the store they're managing.");
     }
   }
 
@@ -178,9 +180,9 @@ export async function deleteShift(id: string) {
       "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
     );
   }
-  // Managers can only clear shifts on their own store's rota.
-  if (existing && user.allowed!.role === "manager" && existing.store_id !== user.allowed!.store_id) {
-    throw new Error("Managers can only clear shifts at their own store.");
+  // Managers can only clear shifts on the rota of the store they're managing.
+  if (existing && user.allowed!.role === "manager" && existing.store_id !== resolveActiveStoreId(user.allowed)) {
+    throw new Error("Managers can only clear shifts at the store they're managing.");
   }
 
   const { error } = await supabase.from("rota_shifts").delete().eq("id", id);

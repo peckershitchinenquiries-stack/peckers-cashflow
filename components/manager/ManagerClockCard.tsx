@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { ClockIcon } from "@/components/ui/icons";
 import { managerClockIn, managerClockOut } from "@/app/actions/manager-clock";
+import { switchStore } from "@/app/actions/store-switch";
 import { getBestPosition, isPermissionDenied } from "@/lib/geolocation";
 import {
   clockedHours,
@@ -19,7 +20,10 @@ import type { ManagerClockEvent, Store } from "@/lib/types";
 
 type Props = {
   managerName: string;
+  /** The store the manager is currently operating as (active store). */
   store: Store | null;
+  /** All stores, so we can detect which one the manager is physically at. */
+  allStores?: Store[];
   todayClock: ManagerClockEvent | null;
 };
 
@@ -29,11 +33,12 @@ type GeoState =
   | { status: "ok"; lat: number; lng: number; accuracy: number; distance: number | null }
   | { status: "denied" | "error"; message: string };
 
-export function ManagerClockCard({ managerName, store, todayClock }: Props) {
+export function ManagerClockCard({ managerName, store, allStores, todayClock }: Props) {
   const router = useRouter();
   const toast = useToast();
   const [geo, setGeo] = React.useState<GeoState>({ status: "idle" });
   const [busy, setBusy] = React.useState(false);
+  const [switching, setSwitching] = React.useState(false);
 
   const storeConfigured = store?.latitude != null && store?.longitude != null;
 
@@ -85,6 +90,44 @@ export function ManagerClockCard({ managerName, store, todayClock }: Props) {
     store?.geofence_radius_m != null &&
     geo.distance != null &&
     isWithinGeofence(geo.distance, store.geofence_radius_m, geo.accuracy);
+
+  // Which store is the manager physically standing in? Nearest one whose
+  // geofence contains their position. Used to nudge them to switch when they're
+  // at a store other than the one the app is currently set to.
+  const detectedStore = React.useMemo(() => {
+    if (geo.status !== "ok" || !allStores?.length) return null;
+    const ranked = allStores
+      .filter((s) => s.latitude != null && s.longitude != null)
+      .map((s) => ({
+        store: s,
+        distance: haversineMeters(Number(s.latitude), Number(s.longitude), geo.lat, geo.lng),
+      }))
+      .filter(({ store: s, distance }) =>
+        isWithinGeofence(distance, s.geofence_radius_m ?? 250, geo.accuracy),
+      )
+      .sort((a, b) => a.distance - b.distance);
+    return ranked[0]?.store ?? null;
+  }, [geo, allStores]);
+
+  const atDifferentStore = detectedStore != null && store != null && detectedStore.id !== store.id;
+
+  async function switchToDetected() {
+    if (!detectedStore) return;
+    setSwitching(true);
+    try {
+      const res = await switchStore(detectedStore.id);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success(`Switched to ${detectedStore.name}`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not switch store.");
+    } finally {
+      setSwitching(false);
+    }
+  }
 
   const clockedIn = !!todayClock?.clock_in_at && !todayClock?.clock_out_at;
   const clockedOut = !!todayClock?.clock_out_at;
@@ -173,6 +216,27 @@ export function ManagerClockCard({ managerName, store, todayClock }: Props) {
               </Button>
             </div>
           </div>
+
+          {/* You're at another store — offer to switch the whole app to it. */}
+          {atDifferentStore && phase !== "done" && (
+            <div className="rounded-xl border border-gold/40 bg-gold/10 p-4">
+              <p className="text-sm font-medium text-text-primary">
+                You&apos;re at {detectedStore!.name}
+              </p>
+              <p className="text-xs text-text-muted mt-0.5">
+                Your app is set to {store?.name ?? "another store"}. Switch to{" "}
+                {detectedStore!.name} to clock in and manage it here.
+              </p>
+              <Button
+                size="sm"
+                className="mt-3"
+                onClick={switchToDetected}
+                loading={switching}
+              >
+                Switch to {detectedStore!.name}
+              </Button>
+            </div>
+          )}
 
           {phase === "done" ? (
             <div className="rounded-xl border border-success/30 bg-success/10 p-4 text-sm text-success">

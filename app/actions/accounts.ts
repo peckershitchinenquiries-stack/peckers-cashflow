@@ -10,7 +10,7 @@ import {
   usernameStemFromName,
   validateContactEmail,
 } from "@/lib/credentials";
-import type { EmployeePosition } from "@/lib/types";
+import { resolveActiveStoreId, type EmployeePosition } from "@/lib/types";
 
 async function requireAdmin() {
   const user = await getSessionUser();
@@ -289,10 +289,10 @@ export async function createEmployeeWithAccount(input: {
     throw new Error("Hourly NI rate must be greater than 0");
   const contactEmail = requireContactEmail(input.contact_email);
 
-  // Managers can only create staff for their own store; admins choose freely.
+  // Managers create staff for the store they're currently managing; admins choose freely.
   const store_id =
     actor.allowed!.role === "manager"
-      ? actor.allowed!.store_id ?? null
+      ? resolveActiveStoreId(actor.allowed)
       : input.store_id;
   if (!store_id) throw new Error("Store is required");
 

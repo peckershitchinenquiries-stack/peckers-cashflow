@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { loadManualNiRows, loadNiRows } from "@/lib/ni-data";
 import { NiMonthlyView } from "@/components/ni/NiMonthlyView";
 
@@ -8,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ManagerNiMonthlyPage() {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? null;
+  const storeId = resolveActiveStoreId(user.allowed);
 
   if (!storeId) {
     return (

@@ -353,6 +353,12 @@ on conflict (code) do nothing;
 alter table public.allowed_users
   add column if not exists store_id uuid references public.stores(id) on delete set null;
 
+-- The store a manager is currently operating as (multi-store switching, see
+-- migration 020). Null = fall back to home store_id. Only meaningful for
+-- role='manager'; current_user_store_id() reads it via coalesce().
+alter table public.allowed_users
+  add column if not exists active_store_id uuid references public.stores(id) on delete set null;
+
 -- Login-account columns. Every allowed_users row IS a login account.
 --  - username: shown to admin to share; managers/employees log in with it.
 --  - temp_password: the generated password, kept so admins can re-share it
@@ -822,6 +828,9 @@ alter table public.employees
   add column if not exists long_delivery_rate  numeric(8,2);
 
 -- Store of the currently-authenticated login account (for manager scoping).
+-- Prefers the manager's ACTIVE store (multi-store switching, migration 020),
+-- falling back to their home store. Employees have no active_store_id, so this
+-- returns their store_id unchanged.
 create or replace function public.current_user_store_id()
 returns uuid
 language sql
@@ -829,7 +838,7 @@ stable
 security definer
 set search_path = public
 as $$
-  select store_id from public.allowed_users
+  select coalesce(active_store_id, store_id) from public.allowed_users
   where lower(email) = lower(auth.jwt() ->> 'email')
   limit 1;
 $$;

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { LogoutIcon } from "@/components/ui/icons";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { signOutAction } from "@/app/actions/auth";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
@@ -14,11 +15,12 @@ export const dynamic = "force-dynamic";
 export default async function ManagerSettingsPage() {
   const user = await requireRole(["manager"]);
   const supabase = createServerSupabase();
-  const { data: store } = user.allowed?.store_id
+  const activeStoreId = resolveActiveStoreId(user.allowed);
+  const { data: store } = activeStoreId
     ? await supabase
         .from("stores")
         .select("name")
-        .eq("id", user.allowed.store_id)
+        .eq("id", activeStoreId)
         .maybeSingle()
     : { data: null };
 

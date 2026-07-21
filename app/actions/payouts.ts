@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { addDays, parseISODate, startOfISOWeek, toISODate } from "@/lib/utils";
@@ -32,9 +33,10 @@ async function requireStaff(): Promise<SessionUser> {
 
 function assertStoreAccess(user: SessionUser, storeId: string) {
   if (user.allowed!.role === "manager") {
-    if (!user.allowed!.store_id) throw new Error("No store assigned to your account.");
-    if (storeId !== user.allowed!.store_id) {
-      throw new Error("You can only manage payouts for your own store.");
+    const activeStore = resolveActiveStoreId(user.allowed);
+    if (!activeStore) throw new Error("No store assigned to your account.");
+    if (storeId !== activeStore) {
+      throw new Error("You can only manage payouts for the store you're managing.");
     }
   }
 }

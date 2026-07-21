@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { writeAudit } from "./audit";
 import { scanForAlertsBackground } from "./alerts";
 import { addDays, parseISODate, toISODate, todayISO } from "@/lib/utils";
@@ -52,11 +53,13 @@ export async function upsertDailyCashEntry(input: {
   const user = await requireStaff();
   const supabase = createServerSupabase();
 
-  // Managers may only write to their assigned store (admins: any store).
+  // Managers may only write to the store they're currently operating as — their
+  // ACTIVE store (home store, or whichever they've switched to). Admins: any store.
   if (user.allowed!.role === "manager") {
-    if (!user.allowed!.store_id) throw new Error("No store assigned to your account.");
-    if (input.store_id !== user.allowed!.store_id) {
-      throw new Error("You can only record cash entries for your own store.");
+    const activeStore = resolveActiveStoreId(user.allowed);
+    if (!activeStore) throw new Error("No store assigned to your account.");
+    if (input.store_id !== activeStore) {
+      throw new Error("You can only record cash entries for the store you're managing.");
     }
   }
   if (!input.store_id) throw new Error("Store is required");

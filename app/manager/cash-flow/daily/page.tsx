@@ -1,6 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
+import { resolveActiveStoreId } from "@/lib/types";
 import { resolveWeek } from "@/lib/cash-flow";
 import { loadOpeningBalances, loadWeekEntries, loadRecentEntries } from "@/lib/cash-flow-data";
 import { DailyCashView } from "@/components/cash-flow/DailyCashView";
@@ -13,7 +14,7 @@ export default async function ManagerCashFlowDailyPage({
   searchParams: { week?: string };
 }) {
   const user = await requireRole(["manager"]);
-  const storeId = user.allowed?.store_id ?? null;
+  const storeId = resolveActiveStoreId(user.allowed);
 
   if (!storeId) {
     return (
