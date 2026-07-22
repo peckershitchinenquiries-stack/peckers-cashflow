@@ -62,12 +62,15 @@ export function signedPct(v: unknown, digits = 2): string {
 }
 
 // Tailwind text colour for a delta (green up / red down / grey flat).
+// Uses the theme tokens defined in tailwind.config.ts, NOT Tailwind's stock
+// palette: these class names must exist in the generated CSS, and this file is
+// only scanned because `lib/**` is in the config's `content` globs.
 export function deltaClass(v: unknown): string {
-  if (v === null || v === undefined || v === "") return "text-ink-faint";
+  if (v === null || v === undefined || v === "") return "text-tertiary";
   const num = n(v);
-  if (num > 0.05) return "text-emerald-600";
-  if (num < -0.05) return "text-rose-600";
-  return "text-ink-faint";
+  if (num > 0.05) return "text-success";
+  if (num < -0.05) return "text-danger";
+  return "text-tertiary";
 }
 
 // "1 Jun – 7 Jun 2026" style range from ISO dates.
