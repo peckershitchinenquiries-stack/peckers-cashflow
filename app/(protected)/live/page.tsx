@@ -8,6 +8,7 @@ import type {
   Employee,
   EmployeeScheduleDay,
   ManagerClockEvent,
+  ManagerShift,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -27,6 +28,7 @@ export default async function LivePage() {
     schedulesRes,
     managersRes,
     managerClocksRes,
+    managerShiftsRes,
   ] = await Promise.all([
     supabase.from("stores").select("*").order("name"),
     supabase.from("employees").select("*").neq("employment_status", "left"),
@@ -35,6 +37,7 @@ export default async function LivePage() {
     supabase.from("employee_schedules").select("*"),
     supabase.from("allowed_users").select("*").eq("role", "manager"),
     supabase.from("manager_clock_events").select("*").eq("event_date", today),
+    supabase.from("manager_shifts").select("*").eq("shift_date", today),
   ]);
 
   return (
@@ -51,6 +54,7 @@ export default async function LivePage() {
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         managers={(managersRes.data ?? []) as AllowedUser[]}
         managerClocks={(managerClocksRes.data ?? []) as ManagerClockEvent[]}
+        managerShifts={(managerShiftsRes.data ?? []) as ManagerShift[]}
         userRole={user.allowed?.role ?? "manager"}
         userStoreId={user.allowed?.store_id ?? null}
       />

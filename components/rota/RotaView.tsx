@@ -102,6 +102,10 @@ export function RotaView({
   // (before their first shift is saved). Cleared when the active store changes.
   const [addedVisitorIds, setAddedVisitorIds] = React.useState<string[]>([]);
   React.useEffect(() => setAddedVisitorIds([]), [activeStoreId]);
+  // Same idea for managers: other-store managers pulled onto this store's
+  // manager rota before their first cover shift is saved.
+  const [addedManagerVisitorIds, setAddedManagerVisitorIds] = React.useState<string[]>([]);
+  React.useEffect(() => setAddedManagerVisitorIds([]), [activeStoreId]);
   const [editingShift, setEditingShift] = React.useState<{
     employee: Employee;
     date: string;
@@ -198,15 +202,61 @@ export function RotaView({
     return m;
   }, [clocks]);
 
-  // Managers shown above the employee rota — home store only (managers, unlike
-  // employees, don't currently work cross-store).
+  // Managers who have a cover shift AT the active store within the visible range
+  // — i.e. a manager visiting from the other store to cover here.
+  const managerVisitorIds = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const s of managerShifts) {
+      if (s.store_id === activeStoreId && visibleDates.has(s.shift_date)) {
+        set.add(s.manager_id);
+      }
+    }
+    return set;
+  }, [managerShifts, activeStoreId, visibleDates]);
+
+  // Managers shown above the employee rota: this store's own managers, anyone
+  // covering here in range (a visitor), and anyone just picked from another
+  // store. Home managers sort first, then visitors, each alphabetical.
   const activeManagers = React.useMemo(
     () =>
       managers
-        .filter((m) => m.store_id === activeStoreId)
-        .sort((a, b) => (a.name || a.username || "").localeCompare(b.name || b.username || "")),
-    [managers, activeStoreId],
+        .filter(
+          (m) =>
+            m.store_id === activeStoreId ||
+            managerVisitorIds.has(m.id) ||
+            addedManagerVisitorIds.includes(m.id),
+        )
+        .sort((a, b) => {
+          const av = a.store_id === activeStoreId ? 0 : 1;
+          const bv = b.store_id === activeStoreId ? 0 : 1;
+          return (
+            av - bv ||
+            (a.name || a.username || "").localeCompare(b.name || b.username || "")
+          );
+        }),
+    [managers, activeStoreId, managerVisitorIds, addedManagerVisitorIds],
   );
+
+  // Other-store managers not already on the grid — the pool for "add a
+  // visiting manager".
+  const eligibleManagerVisitors = React.useMemo(
+    () =>
+      managers
+        .filter(
+          (m) =>
+            m.store_id !== activeStoreId &&
+            !managerVisitorIds.has(m.id) &&
+            !addedManagerVisitorIds.includes(m.id),
+        )
+        .sort((a, b) =>
+          (a.name || a.username || "").localeCompare(b.name || b.username || ""),
+        ),
+    [managers, activeStoreId, managerVisitorIds, addedManagerVisitorIds],
+  );
+
+  const managerVisitingCount = activeManagers.filter(
+    (m) => m.store_id !== activeStoreId,
+  ).length;
 
   // Manager shifts indexed by manager+date
   const managerShiftByKey = React.useMemo(() => {
@@ -222,10 +272,12 @@ export function RotaView({
     return m;
   }, [managerClocks]);
 
+  // Hours scheduled AT THE ACTIVE STORE only — a manager can be covering another
+  // store on a given day, and those hours belong to that store's rota.
   function weekManagerTotalHours(managerId: string): number {
     return weekDays.reduce((sum, d) => {
       const s = managerShiftByKey.get(`${managerId}:${toISODate(d)}`);
-      if (!s || s.is_day_off) return sum;
+      if (!s || s.is_day_off || s.store_id !== activeStoreId) return sum;
       return sum + Number(s.scheduled_hours ?? 0);
     }, 0);
   }
@@ -475,12 +527,34 @@ export function RotaView({
           is scheduling + attendance only (no wage/hours-avg columns). */}
       {managers.length > 0 && (
         <Card className="overflow-hidden p-0">
-          <CardHeader className="px-5 pt-5">
-            <CardTitle>{activeStore?.name ?? "—"} Manager Rota</CardTitle>
-            <CardDescription>
-              {activeManagers.length} manager{activeManagers.length === 1 ? "" : "s"} · fixed
-              daily wage — not hourly, shown for scheduling &amp; attendance only
-            </CardDescription>
+          <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3">
+            <div>
+              <CardTitle>{activeStore?.name ?? "—"} Manager Rota</CardTitle>
+              <CardDescription>
+                {activeManagers.length} manager{activeManagers.length === 1 ? "" : "s"}
+                {managerVisitingCount > 0 ? ` (${managerVisitingCount} visiting)` : ""} · fixed
+                daily wage — not hourly, shown for scheduling &amp; attendance only
+              </CardDescription>
+            </div>
+            {eligibleManagerVisitors.length > 0 && (
+              <select
+                className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-w-[260px]"
+                value=""
+                onChange={(e) => {
+                  if (e.target.value)
+                    setAddedManagerVisitorIds((p) => [...p, e.target.value]);
+                }}
+                title="Add a manager from another store to cover a shift here"
+              >
+                <option value="">+ Add manager from another store…</option>
+                {eligibleManagerVisitors.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name || m.username || "Manager"} —{" "}
+                    {storeById.get(m.store_id ?? "")?.name ?? "Other store"}
+                  </option>
+                ))}
+              </select>
+            )}
           </CardHeader>
 
           <div className="overflow-x-auto">
@@ -524,12 +598,48 @@ export function RotaView({
                     >
                       <td className="px-3 py-2 sticky left-0 bg-surface z-10 font-medium text-text-primary">
                         {mgr.name || mgr.username || "Manager"}
+                        {mgr.store_id !== activeStoreId && (
+                          <span
+                            className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
+                            title={`Visiting from ${storeById.get(mgr.store_id ?? "")?.name ?? "another store"}`}
+                          >
+                            visiting
+                          </span>
+                        )}
                       </td>
                       {weekDays.map((d) => {
                         const dateIso = toISODate(d);
                         const cell = managerShiftByKey.get(`${mgr.id}:${dateIso}`);
-                        const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
                         const isToday = dateIso === todayISO();
+                        // Covering ANOTHER store this day — read-only here, so this
+                        // store's view shows where the manager has gone.
+                        if (cell && cell.store_id !== activeStoreId) {
+                          const awayStore = storeById.get(cell.store_id);
+                          return (
+                            <td
+                              key={dateIso}
+                              className={
+                                "px-1 py-1 text-center align-middle " +
+                                (isToday ? "bg-gold/5" : "")
+                              }
+                            >
+                              <div
+                                className="w-full h-12 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
+                                title={`Covering ${awayStore?.name ?? "another store"} this day`}
+                              >
+                                <span className="font-medium truncate max-w-full">
+                                  @ {awayStore?.name?.split(" ")[0] ?? "Away"}
+                                </span>
+                                {!cell.is_day_off && cell.start_time && (
+                                  <span className="opacity-80 truncate max-w-full">
+                                    {formatShiftRange(false, cell.start_time, cell.end_time)}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        }
+                        const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
                         const isPast = dateIso < todayISO();
                         const prevShift = managerShiftByKey.get(
                           `${mgr.id}:${toISODate(addDays(d, -1))}`,

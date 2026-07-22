@@ -20,6 +20,7 @@ import type {
   EmployeeScheduleDay,
   LiveDashboardStatus,
   ManagerClockEvent,
+  ManagerShift,
   RotaShift,
   Store,
 } from "@/lib/types";
@@ -37,6 +38,9 @@ type Props = {
   managers?: AllowedUser[];
   /** Today's manager clock rows, keyed on the login account. */
   managerClocks?: ManagerClockEvent[];
+  /** Today's manager rota shifts — used to place a manager scheduled to cover
+   *  another store under that store before they've clocked in. */
+  managerShifts?: ManagerShift[];
   userRole: string;
   userStoreId: string | null;
 };
@@ -116,6 +120,7 @@ export function LiveDashboard({
   schedules = [],
   managers = [],
   managerClocks = [],
+  managerShifts = [],
   userRole,
   userStoreId,
 }: Props) {
@@ -169,6 +174,7 @@ export function LiveDashboard({
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
+  const managerShiftByMgr = new Map(managerShifts.map((s) => [s.manager_id, s]));
 
   const storeById = new Map(stores.map((s) => [s.id, s]));
 
@@ -182,6 +188,17 @@ export function LiveDashboard({
     const s = shiftByEmp.get(emp.id);
     if (s?.store_id) return s.store_id;
     return emp.store_id ?? null;
+  };
+
+  // Same rule for a manager: the store they clocked in at today (source of truth
+  // for where they actually are), else where they're scheduled to cover, else
+  // their home store. Lets a manager covering another store show under it.
+  const managerTodayStoreOf = (m: AllowedUser): string | null => {
+    const c = managerClockByMgr.get(m.id);
+    if (c?.store_id) return c.store_id;
+    const s = managerShiftByMgr.get(m.id);
+    if (s?.store_id && !s.is_day_off) return s.store_id;
+    return m.store_id ?? null;
   };
   const scheduleByEmpDay = new Map(
     schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
@@ -248,8 +265,23 @@ export function LiveDashboard({
           });
 
           // Managers are login accounts (allowed_users), not employees — pulled
-          // from their own table with their own clock rows.
-          const storeManagers = managers.filter((m) => m.store_id === store.id);
+          // from their own table with their own clock rows. A manager shows under
+          // the store they're actually at today (clocked in / scheduled to
+          // cover), so a visiting manager appears here, not at their home store.
+          const storeManagers = managers.filter(
+            (m) => managerTodayStoreOf(m) === store.id,
+          );
+          // This store's own managers covering ANOTHER store today.
+          const awayManagers = managers
+            .filter(
+              (m) => m.store_id === store.id && managerTodayStoreOf(m) !== store.id,
+            )
+            .map((m) => ({ mgr: m, at: storeById.get(managerTodayStoreOf(m) ?? "") ?? null }))
+            .sort((a, b) =>
+              (a.mgr.name || a.mgr.username || "").localeCompare(
+                b.mgr.name || b.mgr.username || "",
+              ),
+            );
 
           const onShiftCount = sorted.filter((e) => {
             const c = clockByEmp.get(e.id);
@@ -332,6 +364,14 @@ export function LiveDashboard({
                             <div className="min-w-0">
                               <div className="text-sm font-medium text-text-primary truncate">
                                 {m.name || m.username}
+                                {m.store_id !== store.id && (
+                                  <span
+                                    className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
+                                    title={`Covering — home store ${storeById.get(m.store_id ?? "")?.name ?? "elsewhere"}`}
+                                  >
+                                    visiting
+                                  </span>
+                                )}
                               </div>
                               {isSuperAdmin && m.fixed_daily_wage != null && (
                                 <div className="text-[11px] text-text-muted">
@@ -395,13 +435,29 @@ export function LiveDashboard({
                   </div>
                 </div>
 
-                {/* Home staff working at the other store today */}
-                {awayStaff.length > 0 && (
+                {/* Home staff & managers working at the other store today */}
+                {(awayStaff.length > 0 || awayManagers.length > 0) && (
                   <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 p-3">
                     <div className="text-[10px] uppercase tracking-wider text-gold/90 mb-1.5">
                       Working at another store today
                     </div>
                     <div className="flex flex-col gap-1">
+                      {awayManagers.map(({ mgr, at }) => (
+                        <div
+                          key={mgr.id}
+                          className="flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="text-text-primary truncate">
+                            {mgr.name || mgr.username}
+                            <span className="ml-1 text-[10px] uppercase tracking-wide text-text-muted">
+                              manager
+                            </span>
+                          </span>
+                          <span className="text-gold text-xs shrink-0">
+                            @ {at?.name ?? "another store"}
+                          </span>
+                        </div>
+                      ))}
                       {awayStaff.map(({ emp, at }) => (
                         <div
                           key={emp.id}
