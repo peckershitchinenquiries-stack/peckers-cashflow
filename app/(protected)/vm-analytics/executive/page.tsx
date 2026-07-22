@@ -56,6 +56,7 @@ const EMPTY_GROUP: GroupAgg = { netSales: 0, orders: 0, aov: 0, channels: [] };
 function averageYoyRow(y: YoyRow, count: number): YoyRow {
   if (count <= 1) return y;
   const div = (v: unknown) => n(v) / count;
+  const divN = (v: unknown): number | null => (v === null || v === undefined ? null : n(v) / count);
   return {
     ...y,
     total_sales: div(y.total_sales),
@@ -75,6 +76,16 @@ function averageYoyRow(y: YoyRow, count: number): YoyRow {
     kiosk: div(y.kiosk),
     till_eat_in: div(y.till_eat_in),
     till_takeaway: div(y.till_takeaway),
+    // Nullable per-channel sales: divide when present, preserve null when not.
+    // Left undivided by the spread these would be period TOTALS compared against
+    // per-week averages, understating every channel's YoY by a factor of N.
+    click_collect_sales: divN(y.click_collect_sales),
+    kiosk_sales: divN(y.kiosk_sales),
+    till_eat_in_sales: divN(y.till_eat_in_sales),
+    till_takeaway_sales: divN(y.till_takeaway_sales),
+    deliveroo_sales: divN(y.deliveroo_sales),
+    just_eat_sales: divN(y.just_eat_sales),
+    uber_eats_sales: divN(y.uber_eats_sales),
   };
 }
 
@@ -513,6 +524,23 @@ export default async function ExecutivePage({
       const base = n(yoy.own_delivery_sales);
       return base > 0 ? { pct: share(netSales - base, base), base, isOrders: false } : NO_YOY;
     }
+    // Prefer per-channel NET SALES, restored by supabase_yoy_channel_sales.sql,
+    // so every row compares like-for-like against the current-year net figure.
+    const yoySales: Record<string, number> = {
+      Deliveroo: n(yoy.deliveroo_sales),
+      "Uber Eats": n(yoy.uber_eats_sales),
+      "Just Eat": n(yoy.just_eat_sales),
+      "Click & Collect": n(yoy.click_collect_sales),
+      Kiosk: n(yoy.kiosk_sales),
+      "Till (takeaway)": n(yoy.till_takeaway_sales),
+      "Till (eat-in)": n(yoy.till_eat_in_sales),
+    };
+    const salesBase = yoySales[channel];
+    if (salesBase > 0) {
+      return { pct: share(netSales - salesBase, salesBase), base: salesBase, isOrders: false };
+    }
+    // Fallback for weeks predating the backfill: compare order counts, labelled
+    // as such in the cell so the different unit is never read as currency.
     const yoyOrders: Record<string, number> = {
       Deliveroo: n(yoy.deliveroo),
       "Uber Eats": n(yoy.uber_eats),
@@ -618,14 +646,22 @@ export default async function ExecutivePage({
       header: "YoY",
       align: "right",
       // The base is net sales at group/Own Delivery level and an ORDER COUNT for
-      // every other channel, so it is formatted accordingly rather than forced
-      // into one unit — see channelYoyInfo.
+      // every other channel — the prior-year table has no per-platform revenue.
+      // Order-based cells are labelled so the mixed unit is explicit rather than
+      // looking like an unformatted currency value. See channelYoyInfo.
       render: (r) =>
         r.yoyBase === null ? (
           <span className="text-tertiary">—</span>
         ) : (
           <span className={`${r.isTotal ? "font-semibold" : ""} ${deltaClass(r.yoy)}`}>
-            {r.yoyBaseIsOrders ? int(r.yoyBase) : gbp(r.yoyBase)}
+            {r.yoyBaseIsOrders ? (
+              <>
+                {int(r.yoyBase)}
+                <span className="ml-1 text-xs font-normal">orders</span>
+              </>
+            ) : (
+              gbp(r.yoyBase)
+            )}
             <span className="ml-1 text-xs font-medium">({signedPct(r.yoy)})</span>
           </span>
         ),
@@ -871,7 +907,7 @@ export default async function ExecutivePage({
 
       <Section
         title="Order Mix"
-        description="Delivery and in-store channels, each showing its share of total net sales with week-on-week and year-on-year change."
+        description="Delivery and in-store channels, each showing its share of total net sales with week-on-week and year-on-year change. YoY compares net sales throughout. Any week whose prior-year per-channel revenue has not been loaded falls back to comparing order counts, and those cells are labelled."
       >
         {/* Stacked, not side by side: the WoW/YoY columns now carry a figure as
             well as a percentage, which needs the full page width to stay legible. */}

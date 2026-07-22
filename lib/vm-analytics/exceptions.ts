@@ -16,6 +16,7 @@ import {
   shortStore,
   isThirdPartyPlatform,
   isExcludedProduct,
+  isHiddenProduct,
   EXCEPTION_THRESHOLDS as T,
 } from "@/lib/vm-analytics/constants";
 import { buildBreakdown } from "@/lib/vm-analytics/channels";
@@ -52,6 +53,7 @@ export interface KpiTableRow {
   deliveryPct: number;
   inStorePct: number;
   top3: { name: string; revenue: number; units: number }[];
+  bottom3: { name: string; revenue: number; units: number }[];
 }
 
 export interface Exception {
@@ -134,6 +136,7 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
       deliveryPct: b.deliveryPct,
       inStorePct: b.inStorePct,
       top3: topProductsForStore(products, e.store, 3),
+      bottom3: bottomProductsForStore(products, e.store, 3),
     });
 
     totRevenue += b.netSales;
@@ -158,6 +161,7 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
       deliveryPct: bAll.deliveryPct,
       inStorePct: bAll.inStorePct,
       top3: topProductsAcrossStores(products, 3),
+      bottom3: bottomProductsAcrossStores(products, 3),
     });
   }
 
@@ -340,12 +344,79 @@ function computeDeliveryDependence(
 
 // --- helpers ---------------------------------------------------------------
 
+// `gross_sales` carries NET sales here: getProductsNet aliases net_sales onto it
+// so ProductRow can be reused. Rankings are therefore net, matching the Product
+// Performance dashboard.
+//
+// Every ranking falls back to units then name so ties resolve deterministically.
+// Without this, equal-revenue items keep the arbitrary order Postgres returned
+// them in and can swap — or cross the top/bottom-3 cutoff — between page loads.
+const byRevenue = (dir: 1 | -1) => (a: ProductRow, b: ProductRow) =>
+  dir * (n(a.gross_sales) - n(b.gross_sales)) ||
+  dir * (n(a.units_sold) - n(b.units_sold)) ||
+  a.item_name.localeCompare(b.item_name);
+
+const asItem = (p: ProductRow) => ({
+  name: p.item_name,
+  revenue: n(p.gross_sales),
+  units: n(p.units_sold),
+});
+
 function topProductsForStore(products: ProductRow[], store: string, limit: number) {
   return products
     .filter((p) => p.store === store)
-    .sort((a, b) => n(b.gross_sales) - n(a.gross_sales))
+    .sort(byRevenue(-1))
     .slice(0, limit)
-    .map((p) => ({ name: p.item_name, revenue: n(p.gross_sales), units: n(p.units_sold) }));
+    .map(asItem);
+}
+
+// Which items are eligible for the "least performing" ranking.
+//
+// By name: hidden items and the drinks/sides EXCLUDED_PRODUCTS already keeps out
+// of rankings are dropped — structurally low-value add-ons that would otherwise
+// occupy all three slots every week, saying nothing about the core menu.
+const rankableName = (itemName: string) =>
+  !isHiddenProduct(itemName) && !isExcludedProduct(itemName);
+
+// By totals: an item must have both sold and earned. Zero units usually means the
+// item was off the menu that week rather than selling badly, and zero revenue on
+// non-zero units means a loyalty redemption or comp — neither is an
+// underperforming product, and both would otherwise rank bottom every week.
+const rankableTotals = (units: number, revenue: number) => units > 0 && revenue > 0;
+
+// Mirror images of the Top 3 helpers: same sort key, reversed. Per store that is
+// revenue (matching topProductsForStore); across stores it is units, matching
+// topProductsAcrossStores' "volume, not revenue" basis.
+function bottomProductsForStore(products: ProductRow[], store: string, limit: number) {
+  return products
+    .filter(
+      (p) =>
+        p.store === store &&
+        rankableName(p.item_name) &&
+        rankableTotals(n(p.units_sold), n(p.gross_sales)),
+    )
+    .sort(byRevenue(1))
+    .slice(0, limit)
+    .map(asItem);
+}
+
+function bottomProductsAcrossStores(products: ProductRow[], limit: number) {
+  // Name filtering happens per row but the totals test is applied to the SUMMED
+  // item: an item earning £0 at one store and £40 at the other is a £40 item, and
+  // dropping the zero row before summing would understate it.
+  const agg = new Map<string, { revenue: number; units: number }>();
+  for (const p of products) {
+    if (!rankableName(p.item_name)) continue;
+    const cur = agg.get(p.item_name) ?? { revenue: 0, units: 0 };
+    cur.revenue += n(p.gross_sales);
+    cur.units += n(p.units_sold);
+    agg.set(p.item_name, cur);
+  }
+  return [...agg.entries()]
+    .map(([name, v]) => ({ name, revenue: v.revenue, units: v.units }))
+    .filter((x) => rankableTotals(x.units, x.revenue))
+    .sort((a, b) => a.units - b.units || a.revenue - b.revenue || a.name.localeCompare(b.name))
+    .slice(0, limit);
 }
 
 function topProductsAcrossStores(products: ProductRow[], limit: number) {
@@ -359,7 +430,7 @@ function topProductsAcrossStores(products: ProductRow[], limit: number) {
   return [...agg.entries()]
     .map(([name, v]) => ({ name, revenue: v.revenue, units: v.units }))
     // Best seller = highest units sold (volume), not revenue.
-    .sort((a, b) => b.units - a.units)
+    .sort((a, b) => b.units - a.units || b.revenue - a.revenue || a.name.localeCompare(b.name))
     .slice(0, limit);
 }
 

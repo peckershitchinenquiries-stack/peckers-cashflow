@@ -3,13 +3,19 @@
 import { Fragment, useState } from "react";
 import { int, gbp, signedPct, deltaClass } from "@/lib/vm-analytics/format";
 
+// Each WoW column carries the previous week's revenue alongside its percentage,
+// so the % can be traced back to the figure it was measured against. The `*Prev`
+// fields are null exactly when their percentage is null (no prior revenue).
 export interface CategoryItem {
   item: string;
   units: number;
   revenue: number;
   revWow: number | null;
+  revPrev: number | null;
   hitchinWow: number | null;
+  hitchinPrev: number | null;
   stevenageWow: number | null;
+  stevenagePrev: number | null;
 }
 
 export interface CategoryPerf {
@@ -17,9 +23,35 @@ export interface CategoryPerf {
   units: number;
   revenue: number;
   revWow: number | null;
+  revPrev: number | null;
   hitchinWow: number | null;
+  hitchinPrev: number | null;
   stevenageWow: number | null;
+  stevenagePrev: number | null;
   items: CategoryItem[];
+}
+
+// Previous-week revenue with its delta underneath in a smaller font, coloured
+// green when up and red when down. `dense` is used on the drill-down rows, which
+// already render at text-xs.
+function WowCell({
+  prev,
+  pct,
+  dense,
+}: {
+  prev: number | null;
+  pct: number | null;
+  dense?: boolean;
+}) {
+  if (prev === null || pct === null) return <span className="text-tertiary">—</span>;
+  return (
+    <span className={deltaClass(pct)}>
+      {gbp(prev)}
+      <span className={`ml-1 font-medium ${dense ? "text-[10px]" : "text-xs"}`}>
+        ({signedPct(pct)})
+      </span>
+    </span>
+  );
 }
 
 // showStoreWow adds the per-store Hitchin/Stevenage WoW columns. They only make
@@ -100,15 +132,15 @@ export function CategoryPerformanceTable({
                         {gbp(cat.revenue)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                        <span className={deltaClass(cat.revWow)}>{signedPct(cat.revWow)}</span>
+                        <WowCell prev={cat.revPrev} pct={cat.revWow} />
                       </td>
                       {showStoreWow && (
                         <>
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                            <span className={deltaClass(cat.hitchinWow)}>{signedPct(cat.hitchinWow)}</span>
+                            <WowCell prev={cat.hitchinPrev} pct={cat.hitchinWow} />
                           </td>
                           <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                            <span className={deltaClass(cat.stevenageWow)}>{signedPct(cat.stevenageWow)}</span>
+                            <WowCell prev={cat.stevenagePrev} pct={cat.stevenageWow} />
                           </td>
                         </>
                       )}
@@ -126,15 +158,15 @@ export function CategoryPerformanceTable({
                             {gbp(it.revenue)}
                           </td>
                           <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
-                            <span className={deltaClass(it.revWow)}>{signedPct(it.revWow)}</span>
+                            <WowCell prev={it.revPrev} pct={it.revWow} dense />
                           </td>
                           {showStoreWow && (
                             <>
                               <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
-                                <span className={deltaClass(it.hitchinWow)}>{signedPct(it.hitchinWow)}</span>
+                                <WowCell prev={it.hitchinPrev} pct={it.hitchinWow} dense />
                               </td>
                               <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-xs">
-                                <span className={deltaClass(it.stevenageWow)}>{signedPct(it.stevenageWow)}</span>
+                                <WowCell prev={it.stevenagePrev} pct={it.stevenageWow} dense />
                               </td>
                             </>
                           )}
