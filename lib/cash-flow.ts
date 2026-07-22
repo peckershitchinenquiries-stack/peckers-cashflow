@@ -222,6 +222,10 @@ export function buildWageLines(
       cash_wage: cashWage,
       short_deliveries_count: shortDeliveries,
       long_deliveries_count: longDeliveries,
+      // This single-store roll-up folds the extra ("misc") drops into the
+      // counts above, so there is nothing left to report separately.
+      short_misc_count: 0,
+      long_misc_count: 0,
       short_delivery_rate: shortRate,
       long_delivery_rate: longRate,
       delivery_wages: deliveryWages,
@@ -515,17 +519,26 @@ export function buildWageLinesForStore(
 
     // Deliveries always come from the actual clock rows AT this store.
     const isDriver = hasRole(emp.position, "Driver");
+    // Normal-round drops and the extra ("miscellaneous") drops are counted
+    // separately so the payout sheet can show SD / LD / SM / LM, but both are
+    // paid at the same per-type rate.
     let shortDeliveries = 0;
     let longDeliveries = 0;
+    let shortMisc = 0;
+    let longMisc = 0;
     if (isDriver) {
       for (const c of empClocks) {
         if (c.store_id !== storeId) continue;
-        shortDeliveries += (Number(c.short_deliveries_count) || 0) + (Number(c.extra_short_deliveries) || 0);
-        longDeliveries += (Number(c.long_deliveries_count) || 0) + (Number(c.extra_long_deliveries) || 0);
+        shortDeliveries += Number(c.short_deliveries_count) || 0;
+        longDeliveries += Number(c.long_deliveries_count) || 0;
+        shortMisc += Number(c.extra_short_deliveries) || 0;
+        longMisc += Number(c.extra_long_deliveries) || 0;
       }
     }
     shortDeliveries = Math.max(0, Math.round(shortDeliveries));
     longDeliveries = Math.max(0, Math.round(longDeliveries));
+    shortMisc = Math.max(0, Math.round(shortMisc));
+    longMisc = Math.max(0, Math.round(longMisc));
 
     const cashRate = Number(emp.hourly_cash_rate ?? 0) || 0;
     const cashWage = round2(cashHours * cashRate);
@@ -539,7 +552,9 @@ export function buildWageLinesForStore(
         ? Number(emp.long_delivery_rate)
         : DELIVERY_PETROL_RATE
       : 0;
-    const deliveryWages = round2(shortDeliveries * shortRate + longDeliveries * longRate);
+    const deliveryWages = round2(
+      (shortDeliveries + shortMisc) * shortRate + (longDeliveries + longMisc) * longRate,
+    );
     const total = round2(cashWage + deliveryWages);
     if (total <= 0) continue;
 
@@ -552,6 +567,8 @@ export function buildWageLinesForStore(
       cash_wage: cashWage,
       short_deliveries_count: shortDeliveries,
       long_deliveries_count: longDeliveries,
+      short_misc_count: shortMisc,
+      long_misc_count: longMisc,
       short_delivery_rate: shortRate,
       long_delivery_rate: longRate,
       delivery_wages: deliveryWages,

@@ -16,6 +16,7 @@ import {
   toCSV,
   weekLabel,
   parseISODate,
+  deliveryBreakdown,
 } from "@/lib/utils";
 import type { CashPayoutWithLines, Store } from "@/lib/types";
 
@@ -51,7 +52,9 @@ export function PayoutHistoryView({
     const headers = [
       "Week start", "Store", "Payment date", "Confirmed by", "Status",
       "Employee", "Role", "Cash hours", "Cash rate", "Cash wage",
-      "Short deliveries", "Long deliveries", "Delivery wages", "Total paid",
+      "Short deliveries (SD)", "Long deliveries (LD)",
+      "Short misc (SM)", "Long misc (LM)",
+      "Delivery wages", "Total paid",
     ];
     const rows: (string | number)[][] = [];
     for (const p of filtered) {
@@ -70,6 +73,8 @@ export function PayoutHistoryView({
           formatGBPPlain(l.cash_wage),
           l.short_deliveries_count,
           l.long_deliveries_count,
+          l.short_misc_count ?? 0,
+          l.long_misc_count ?? 0,
           formatGBPPlain(l.delivery_wages),
           formatGBPPlain(l.total_payment),
         ]);
@@ -177,7 +182,9 @@ export function PayoutHistoryView({
                           </tr>
                         </thead>
                         <tbody>
-                          {p.lines.map((l, i) => (
+                          {p.lines.map((l, i) => {
+                            const del = deliveryBreakdown(l);
+                            return (
                             <tr key={l.id} className={`${i % 2 === 0 ? "" : "bg-bg/40"} border-t border-border/60`}>
                               <td className="px-4 py-2.5 font-medium">{l.employee_name}</td>
                               <td className="px-4 py-2.5 text-text-muted">{l.role ?? "—"}</td>
@@ -185,11 +192,11 @@ export function PayoutHistoryView({
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_wage)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">
-                                {l.short_deliveries_count + l.long_deliveries_count > 0 ? (
+                                {del.total > 0 ? (
                                   <>
-                                    {l.short_deliveries_count + l.long_deliveries_count}
-                                    <span className="block text-[10px] text-text-muted">
-                                      {l.short_deliveries_count}S / {l.long_deliveries_count}L
+                                    {del.total}
+                                    <span className="block text-[10px] text-text-muted whitespace-nowrap">
+                                      {del.label}
                                     </span>
                                   </>
                                 ) : (
@@ -199,7 +206,8 @@ export function PayoutHistoryView({
                               <td className="px-4 py-2.5 text-right tabular-nums">{l.delivery_wages > 0 ? formatGBP(l.delivery_wages) : "—"}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{formatGBP(l.total_payment)}</td>
                             </tr>
-                          ))}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

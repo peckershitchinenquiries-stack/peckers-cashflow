@@ -988,6 +988,9 @@ create table if not exists public.cash_payout_lines (
   cash_wage        numeric(10,2) not null default 0,
   short_deliveries_count integer not null default 0,
   long_deliveries_count  integer not null default 0,
+  -- Extra ("miscellaneous") drops beyond the normal round — see migration 021.
+  short_misc_count       integer not null default 0,
+  long_misc_count        integer not null default 0,
   short_delivery_rate    numeric(8,2) not null default 0,
   long_delivery_rate     numeric(8,2) not null default 0,
   delivery_wages   numeric(10,2) not null default 0,

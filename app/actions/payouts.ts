@@ -264,6 +264,8 @@ export async function generatePayout(input: {
       cash_wage: line.cash_wage,
       short_deliveries_count: line.short_deliveries_count,
       long_deliveries_count: line.long_deliveries_count,
+      short_misc_count: line.short_misc_count,
+      long_misc_count: line.long_misc_count,
       short_delivery_rate: line.short_delivery_rate,
       long_delivery_rate: line.long_delivery_rate,
       delivery_wages: line.delivery_wages,

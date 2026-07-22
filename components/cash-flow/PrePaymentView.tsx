@@ -15,7 +15,14 @@ import {
   confirmPayout,
   unlockPayout,
 } from "@/app/actions/payouts";
-import { formatGBP, formatDDMMYYYY, weekLabel, parseISODate, formatTimeOnly } from "@/lib/utils";
+import {
+  formatGBP,
+  formatDDMMYYYY,
+  weekLabel,
+  parseISODate,
+  formatTimeOnly,
+  deliveryBreakdown,
+} from "@/lib/utils";
 import type { CashPayoutWithLines, PrePaymentSummary } from "@/lib/types";
 
 type StoreOpt = { id: string; name: string };
@@ -26,6 +33,8 @@ type DisplayLine = {
   cash_rate: number;
   short_deliveries_count: number;
   long_deliveries_count: number;
+  short_misc_count?: number | null;
+  long_misc_count?: number | null;
   delivery_wages: number;
   total_payment: number;
   id?: string;
@@ -281,6 +290,7 @@ export function PrePaymentView({
                 {lines.map((l, i) => {
                   const lineId = l.id ?? null;
                   const isPaid = l.is_paid ?? false;
+                  const del = deliveryBreakdown(l);
                   return (
                     <tr key={lineId ?? l.employee_name + i} className={`${i % 2 === 0 ? "" : "bg-bg/40"} border-t border-border/60`}>
                       <td className="px-4 py-3 font-medium text-text-primary">{l.employee_name}</td>
@@ -288,11 +298,11 @@ export function PrePaymentView({
                       <td className="px-4 py-3 text-right tabular-nums">{l.cash_hours.toFixed(2)}h</td>
                       <td className="px-4 py-3 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">
-                        {l.short_deliveries_count + l.long_deliveries_count > 0 ? (
+                        {del.total > 0 ? (
                           <>
-                            {l.short_deliveries_count + l.long_deliveries_count}
-                            <span className="block text-[10px] text-text-muted">
-                              {l.short_deliveries_count}S / {l.long_deliveries_count}L
+                            {del.total}
+                            <span className="block text-[10px] text-text-muted whitespace-nowrap">
+                              {del.label}
                             </span>
                           </>
                         ) : (

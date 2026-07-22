@@ -554,8 +554,12 @@ export type CashPayoutLine = {
   cash_hours: number;
   cash_rate: number;
   cash_wage: number;
+  /** Rounds delivered on the normal run (excludes the misc/extra counts). */
   short_deliveries_count: number;
   long_deliveries_count: number;
+  /** Extra ("miscellaneous") drops beyond the normal round, paid at the same rate. */
+  short_misc_count: number;
+  long_misc_count: number;
   short_delivery_rate: number;
   long_delivery_rate: number;
   delivery_wages: number;
@@ -584,8 +588,12 @@ export type WageLine = {
   cash_hours: number;
   cash_rate: number;
   cash_wage: number;
+  /** Rounds delivered on the normal run (excludes the misc/extra counts). */
   short_deliveries_count: number;
   long_deliveries_count: number;
+  /** Extra ("miscellaneous") drops beyond the normal round, paid at the same rate. */
+  short_misc_count: number;
+  long_misc_count: number;
   short_delivery_rate: number;
   long_delivery_rate: number;
   delivery_wages: number;

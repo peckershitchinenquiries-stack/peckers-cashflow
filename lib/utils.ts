@@ -451,3 +451,29 @@ export function downloadCSV(filename: string, csv: string) {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
+
+// ---------------- Deliveries ----------------
+/**
+ * Delivery counts for one payout line, split into the normal round and the
+ * extra ("miscellaneous") drops, plus the short-form label the payout sheet
+ * shows under the total: e.g. "40 SD / 6 LD / 2 SM".
+ * SD = short delivery, LD = long delivery, SM = short misc, LM = long misc.
+ * Zero parts are omitted so a driver with no misc drops still reads cleanly.
+ */
+export function deliveryBreakdown(line: {
+  short_deliveries_count?: number | null;
+  long_deliveries_count?: number | null;
+  short_misc_count?: number | null;
+  long_misc_count?: number | null;
+}): { total: number; label: string } {
+  const sd = Number(line.short_deliveries_count) || 0;
+  const ld = Number(line.long_deliveries_count) || 0;
+  const sm = Number(line.short_misc_count) || 0;
+  const lm = Number(line.long_misc_count) || 0;
+  const parts: string[] = [];
+  if (sd > 0) parts.push(`${sd} SD`);
+  if (ld > 0) parts.push(`${ld} LD`);
+  if (sm > 0) parts.push(`${sm} SM`);
+  if (lm > 0) parts.push(`${lm} LM`);
+  return { total: sd + ld + sm + lm, label: parts.join(" / ") };
+}
