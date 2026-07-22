@@ -1,7 +1,7 @@
 import {
   getExec,
   getExecChannels,
-  getProducts,
+  getProductsNet,
   getDayparts,
   getDelivery,
   getLaborCost,
@@ -20,6 +20,28 @@ import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 
 export const dynamic = "force-dynamic";
+
+function ProductList({
+  items,
+  empty,
+}: {
+  items: { name: string; revenue: number; units: number }[];
+  empty?: string;
+}) {
+  if (items.length === 0) return <span className="text-xs text-tertiary">{empty ?? "—"}</span>;
+  return (
+    <div className="space-y-0.5">
+      {items.map((p, i) => (
+        <div key={i} className="text-xs text-secondary">
+          {i + 1}. {p.name}{" "}
+          <span className="text-tertiary">
+            ({gbp(p.revenue)} · {int(p.units)} units)
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const kpiColumns: Column<KpiTableRow>[] = [
   {
@@ -59,21 +81,16 @@ const kpiColumns: Column<KpiTableRow>[] = [
   //     ),
   // },
   { key: "delivery", header: "Delivery %", align: "right", render: (r) => pct(r.deliveryPct) },
+  { key: "inStore", header: "In-store %", align: "right", render: (r) => pct(r.inStorePct) },
   {
     key: "top3",
     header: "Top 3 Products",
-    render: (r) => (
-      <div className="space-y-0.5">
-        {r.top3.map((p, i) => (
-          <div key={i} className="text-xs text-secondary">
-            {i + 1}. {p.name}{" "}
-            <span className="text-tertiary">
-              ({gbp(p.revenue)} · {int(p.units)} units)
-            </span>
-          </div>
-        ))}
-      </div>
-    ),
+    render: (r) => <ProductList items={r.top3} />,
+  },
+  {
+    key: "bottom3",
+    header: "3 Least Performing Products",
+    render: (r) => <ProductList items={r.bottom3} empty="No ranked sales this week." />,
   },
 ];
 
@@ -159,14 +176,17 @@ export default async function WeeklyExceptionPage({
       await Promise.all([
         getExec(weekIso),
         getExecChannels(weekIso),
-        getProducts(weekIso),
+        // NET item-level sales (vm_v_product_net), matching the Product
+        // Performance dashboard. The view also drops the 'delivery fee' and
+        // 'service charge' pseudo-rows the gross feed carries.
+        getProductsNet(weekIso),
         getDayparts(weekIso),
         getDelivery(weekIso),
         getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
         getMealDeals(weekIso).catch(() => []), // vm_v_meal_deals can time out on cold cache; degrade gracefully
 
         prevWeekIso ? getExec(prevWeekIso) : Promise.resolve([]),
-        prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve([]),
+        prevWeekIso ? getProductsNet(prevWeekIso) : Promise.resolve([]),
       ]);
 
     if (exec.length === 0) {
@@ -242,7 +262,7 @@ export default async function WeeklyExceptionPage({
 
       <Section
         title="KPI Summary"
-        description="Headline metrics per store. AOV is split into delivery and in-store. Labour % is scheduled rota wages ÷ net sales."
+        description="Headline metrics per store. AOV is split into delivery and in-store. Delivery % and In-store % are each channel's share of net sales. Products are ranked on NET item sales (same source as the Product Performance dashboard): highest for the top 3, lowest for the least performing. Items with no sales, hidden items and drinks/sides are excluded from the least-performing ranking so it reflects the core menu."
       >
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (

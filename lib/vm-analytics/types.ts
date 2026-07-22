@@ -339,6 +339,17 @@ export interface YoyRow {
   aggregate_sales:    Num;
   own_delivery_pct:   Num;
   aggregate_pct:      Num;
+  // Per-channel NET SALES. The unsuffixed columns above (deliveroo, kiosk, …)
+  // held these figures until supabase_yoy_epos.sql overwrote them with order
+  // counts; supabase_yoy_channel_sales.sql restores them here. Nullable: a week
+  // predating that backfill has no per-channel revenue.
+  click_collect_sales: Num | null;
+  kiosk_sales:         Num | null;
+  till_eat_in_sales:   Num | null;
+  till_takeaway_sales: Num | null;
+  deliveroo_sales:     Num | null;
+  just_eat_sales:      Num | null;
+  uber_eats_sales:     Num | null;
   // From EPOS channel exports
   total_orders:      Num;
   new_customers:     Num;
