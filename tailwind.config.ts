@@ -7,6 +7,10 @@ const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
+    // Helpers here return class-name strings (see deltaClass in
+    // lib/vm-analytics/format.ts). Without this glob those classes are never
+    // generated and the colour silently fails to render.
+    "./lib/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
