@@ -260,39 +260,32 @@ export default async function ExecutivePage({
   const priorLabel = `vs prev ${periodWeekCount}w`;
   const priorTitle = `Versus the preceding ${periodWeekCount} weeks`;
 
-  // Own Delivery vs Aggregator (Deliveroo + Uber Eats + Just Eat) net sales,
-  // used for the YoY comparisons below.
-  const ownDel = ownDelivery(combined.delivery);
-  const aggDel = aggregator(combined.delivery);
-
   // ---- YoY deltas (from historical Excel data) ----------------------------
+  // Own Delivery / Aggregator YoY is no longer computed here — the KPI Summary
+  // table derives those rows from their own `yoyVal` accessors.
   const hasYoy = yoyRow !== null;
   const yoyTotalSales    = yoyRow ? n(yoyRow.total_sales)         : 0;
   const yoyDeliverySales = yoyRow ? n(yoyRow.delivery_sales)      : 0;
   const yoyInStoreSales  = yoyRow ? n(yoyRow.in_store_sales)      : 0;
-  const yoyOwnDelivery   = yoyRow ? n(yoyRow.own_delivery_sales)  : 0;
-  const yoyAggregate     = yoyRow ? n(yoyRow.aggregate_sales)     : 0;
 
   const netYoy    = hasYoy && yoyTotalSales    > 0 ? share(combined.netSales           - yoyTotalSales,    yoyTotalSales)    : null;
   const delYoy    = hasYoy && yoyDeliverySales > 0 ? share(combined.delivery.netSales  - yoyDeliverySales, yoyDeliverySales) : null;
   const inStYoy   = hasYoy && yoyInStoreSales  > 0 ? share(combined.inStore.netSales   - yoyInStoreSales,  yoyInStoreSales)  : null;
-  const ownDelYoy = hasYoy && yoyOwnDelivery   > 0 ? share(ownDel.netSales             - yoyOwnDelivery,   yoyOwnDelivery)   : null;
-  const aggYoy    = hasYoy && yoyAggregate     > 0 ? share(aggDel.netSales             - yoyAggregate,     yoyAggregate)     : null;
 
   // YoY deltas for orders and customers (from EPOS data)
-  const yoyTotalOrders    = yoyRow ? n(yoyRow.total_orders)    : 0;
-  const yoyTotalCustomers = yoyRow ? n(yoyRow.total_customers)  : 0;
-
-  const ordYoy  = hasYoy && yoyTotalOrders    > 0 ? share(combined.orders     - yoyTotalOrders,    yoyTotalOrders)    : null;
-  const custYoy = hasYoy && yoyTotalCustomers > 0 ? share(combined.customers  - yoyTotalCustomers, yoyTotalCustomers) : null;
-
-  // AOV (Blended) YoY — same base as the table's YoY cell: total sales ÷ total
-  // orders (falling back to summed channel order counts when total_orders is 0).
+  // Order count uses the same base as the KPI Summary table's YoY cell: total
+  // orders, falling back to summed channel counts when total_orders is 0. The
+  // card now prints this figure next to its %, so the two must share a base.
   const yoyTotalOrdersEff = yoyRow
     ? n(yoyRow.total_orders) ||
       (n(yoyRow.own_delivery) + n(yoyRow.deliveroo) + n(yoyRow.just_eat) + n(yoyRow.uber_eats) +
         n(yoyRow.click_collect) + n(yoyRow.kiosk) + n(yoyRow.till_eat_in) + n(yoyRow.till_takeaway))
     : 0;
+  const yoyTotalCustomers = yoyRow ? n(yoyRow.total_customers)  : 0;
+
+  const ordYoy  = hasYoy && yoyTotalOrdersEff > 0 ? share(combined.orders     - yoyTotalOrdersEff, yoyTotalOrdersEff) : null;
+  const custYoy = hasYoy && yoyTotalCustomers > 0 ? share(combined.customers  - yoyTotalCustomers, yoyTotalCustomers) : null;
+
   const yoyAovBlend = yoyTotalOrdersEff > 0 && yoyTotalSales > 0 ? yoyTotalSales / yoyTotalOrdersEff : 0;
   const aovBlendYoy = hasYoy && yoyAovBlend > 0 ? share(combined.aov - yoyAovBlend, yoyAovBlend) : null;
 
@@ -322,14 +315,6 @@ export default async function ExecutivePage({
   const deliveryPctPrior = priorDelta(deliveryPct, priorDeliveryPct);
   const inStorePctPrior = priorDelta(inStorePct, priorInStorePct);
 
-  const yoyPctMap: Record<string, number | null> = {
-    "Net Sales": netYoy,
-    "Net Sales — Delivery": delYoy,
-    "Net Sales — Own Delivery": ownDelYoy,
-    "Net Sales — Aggregator": aggYoy,
-    "Net Sales — In-store": inStYoy,
-  };
-
   // ---- KPI Summary table (per store) -------------------------------------
   type KpiRowDef = {
     kpi: string;
@@ -337,26 +322,50 @@ export default async function ExecutivePage({
     // Semantic colour: "good" (green) for in-store / own delivery, "bad" (red)
     // for aggregator. Drives the value colour in every store column.
     tone?: "good" | "bad";
-    cell: (b: Breakdown) => string;
-    // Primary numeric behind the cell, used to compute the WoW % shown next to
-    // the previous-week value (combined vs previous-week combined).
-    wowVal?: (b: Breakdown) => number;
+    // Primary numeric behind the row, plus how to render it. Every row defines
+    // both, so the comparison columns can colour themselves by direction even on
+    // rows that do not display a bracketed percentage.
+    val: (b: Breakdown) => number;
+    fmt: (v: number) => string;
+    // Prior-year figure for this row, on the best available basis. Null when the
+    // historical data cannot support the metric.
+    yoyVal: (y: YoyRow) => number | null;
+    // Whether the bracketed % appears in the comparison column. Per the dashboard
+    // standard this is the five Net Sales rows only.
+    showDelta?: boolean;
   };
 
+  // Prior-year order counts, with the summed-channel fallback used whenever
+  // total_orders is absent. Shared by every yoyVal accessor below.
+  const yoyOrderCounts = (y: YoyRow) => {
+    const own = n(y.own_delivery);
+    const agg = n(y.deliveroo) + n(y.just_eat) + n(y.uber_eats);
+    const inStore = n(y.click_collect) + n(y.kiosk) + n(y.till_eat_in) + n(y.till_takeaway);
+    return { own, agg, delivery: own + agg, inStore, total: n(y.total_orders) || own + agg + inStore };
+  };
+
+  // Sales ÷ orders, or null when either side is missing — the AOV rows' basis.
+  const yoyAov = (sales: number, orders: number): number | null =>
+    orders > 0 && sales > 0 ? sales / orders : null;
+
+  const positive = (v: number): number | null => (v > 0 ? v : null);
+
   const kpiRows: KpiRowDef[] = [
-    { kpi: "Net Sales", cell: (b) => gbp(b.netSales), wowVal: (b) => b.netSales },
-    { kpi: "Net Sales — Delivery", cell: (b) => gbp(b.delivery.netSales), wowVal: (b) => b.delivery.netSales },
-    { kpi: "Net Sales — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).netSales), wowVal: (b) => ownDelivery(b.delivery).netSales },
-    { kpi: "Net Sales — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).netSales), wowVal: (b) => aggregator(b.delivery).netSales },
-    { kpi: "Net Sales — In-store", tone: "good", cell: (b) => gbp(b.inStore.netSales), wowVal: (b) => b.inStore.netSales },
-    { kpi: "Total Orders", cell: (b) => int(b.orders) },
-    { kpi: "Customers", cell: (b) => int(b.customers) },
-    { kpi: "AOV (Blended)", cell: (b) => gbp(b.aov) },
-    { kpi: "AOV — Delivery", cell: (b) => gbp(b.delivery.aov) },
-    { kpi: "AOV — Own Delivery", indent: true, tone: "good", cell: (b) => gbp(ownDelivery(b.delivery).aov) },
-    { kpi: "AOV — Aggregator", indent: true, tone: "bad", cell: (b) => gbp(aggregator(b.delivery).aov) },
-    { kpi: "AOV — In-store", tone: "good", cell: (b) => gbp(b.inStore.aov) },
+    { kpi: "Net Sales", fmt: gbp, val: (b) => b.netSales, yoyVal: (y) => n(y.total_sales), showDelta: true },
+    { kpi: "Net Sales — Delivery", fmt: gbp, val: (b) => b.delivery.netSales, yoyVal: (y) => n(y.delivery_sales), showDelta: true },
+    { kpi: "Net Sales — Own Delivery", indent: true, tone: "good", fmt: gbp, val: (b) => ownDelivery(b.delivery).netSales, yoyVal: (y) => n(y.own_delivery_sales), showDelta: true },
+    { kpi: "Net Sales — Aggregator", indent: true, tone: "bad", fmt: gbp, val: (b) => aggregator(b.delivery).netSales, yoyVal: (y) => n(y.aggregate_sales), showDelta: true },
+    { kpi: "Net Sales — In-store", tone: "good", fmt: gbp, val: (b) => b.inStore.netSales, yoyVal: (y) => n(y.in_store_sales), showDelta: true },
+    { kpi: "Total Orders", fmt: int, val: (b) => b.orders, yoyVal: (y) => positive(yoyOrderCounts(y).total) },
+    { kpi: "Customers", fmt: int, val: (b) => b.customers, yoyVal: (y) => positive(n(y.total_customers)) },
+    { kpi: "AOV (Blended)", fmt: gbp, val: (b) => b.aov, yoyVal: (y) => yoyAov(n(y.total_sales), yoyOrderCounts(y).total) },
+    { kpi: "AOV — Delivery", fmt: gbp, val: (b) => b.delivery.aov, yoyVal: (y) => yoyAov(n(y.delivery_sales), yoyOrderCounts(y).delivery) },
+    { kpi: "AOV — Own Delivery", indent: true, tone: "good", fmt: gbp, val: (b) => ownDelivery(b.delivery).aov, yoyVal: (y) => yoyAov(n(y.own_delivery_sales), yoyOrderCounts(y).own) },
+    { kpi: "AOV — Aggregator", indent: true, tone: "bad", fmt: gbp, val: (b) => aggregator(b.delivery).aov, yoyVal: (y) => yoyAov(n(y.aggregate_sales), yoyOrderCounts(y).agg) },
+    { kpi: "AOV — In-store", tone: "good", fmt: gbp, val: (b) => b.inStore.aov, yoyVal: (y) => yoyAov(n(y.in_store_sales), yoyOrderCounts(y).inStore) },
   ];
+
+  const cellOf = (r: KpiRowDef, b: Breakdown) => r.fmt(r.val(b));
 
   // Green for margin-friendly rows (in-store / own delivery), red for aggregator.
   const toneClass = (tone?: "good" | "bad") =>
@@ -366,54 +375,11 @@ export default async function ExecutivePage({
       ? "text-danger"
       : "";
 
-  const getYoyCellValue = (kpiLabel: string, yoy: YoyRow | null): string => {
-    if (!yoy) return "—";
-
-    // Derived channel groups from the new EPOS order-count columns
-    const yoyOwnDel  = n(yoy.own_delivery);
-    const yoyDel     = n(yoy.deliveroo) + n(yoy.just_eat) + n(yoy.uber_eats);
-    const yoyDelAll  = yoyOwnDel + yoyDel;
-    const yoyIns     = n(yoy.click_collect) + n(yoy.kiosk) + n(yoy.till_eat_in) + n(yoy.till_takeaway);
-    const yoyTotOrd  = n(yoy.total_orders) || (yoyDelAll + yoyIns);
-
-    switch (kpiLabel) {
-      // ── Net Sales (already populated) ──────────────────────────────────────
-      case "Net Sales":                return gbp(n(yoy.total_sales));
-      case "Net Sales — Delivery":     return gbp(n(yoy.delivery_sales));
-      case "Net Sales — Own Delivery": return gbp(n(yoy.own_delivery_sales));
-      case "Net Sales — Aggregator":   return gbp(n(yoy.aggregate_sales));
-      case "Net Sales — In-store":     return gbp(n(yoy.in_store_sales));
-
-      // ── Orders & Customers (new EPOS columns) ──────────────────────────────
-      case "Total Orders": return yoyTotOrd > 0 ? int(yoyTotOrd) : "—";
-      case "Customers":    return n(yoy.total_customers) > 0 ? int(n(yoy.total_customers)) : "—";
-
-      // ── AOV (derived from sales ÷ orders) ──────────────────────────────────
-      case "AOV (Blended)":
-        return yoyTotOrd > 0 && n(yoy.total_sales) > 0
-          ? gbp(n(yoy.total_sales) / yoyTotOrd)
-          : "—";
-      case "AOV — Delivery":
-        return yoyDelAll > 0 && n(yoy.delivery_sales) > 0
-          ? gbp(n(yoy.delivery_sales) / yoyDelAll)
-          : "—";
-      case "AOV — Own Delivery":
-        return yoyOwnDel > 0 && n(yoy.own_delivery_sales) > 0
-          ? gbp(n(yoy.own_delivery_sales) / yoyOwnDel)
-          : "—";
-      case "AOV — Aggregator":
-        return yoyDel > 0 && n(yoy.aggregate_sales) > 0
-          ? gbp(n(yoy.aggregate_sales) / yoyDel)
-          : "—";
-      case "AOV — In-store":
-        return yoyIns > 0 && n(yoy.in_store_sales) > 0
-          ? gbp(n(yoy.in_store_sales) / yoyIns)
-          : "—";
-
-      default:
-        return "—";
-    }
-  };
+  // Direction of travel for a comparison column: green when the current value is
+  // above the comparison, red when below, grey when there is nothing to compare.
+  // Returned as a % so the same number can also drive the bracketed delta.
+  const rowDelta = (r: KpiRowDef, base: number | null): number | null =>
+    base !== null && base > 0 ? share(r.val(combined) - base, base) : null;
 
   const summaryColumns: Column<KpiRowDef>[] = [
     {
@@ -427,7 +393,7 @@ export default async function ExecutivePage({
       key: shortStore(s).toLowerCase(),
       header: shortStore(s),
       align: "right" as const,
-      render: (r: KpiRowDef) => <span className={toneClass(r.tone)}>{r.cell(byStore.get(s)!)}</span>,
+      render: (r: KpiRowDef) => <span className={toneClass(r.tone)}>{cellOf(r, byStore.get(s)!)}</span>,
     })),
     // Total column only adds information when more than one store is shown.
     ...(activeStores.length > 1
@@ -437,15 +403,15 @@ export default async function ExecutivePage({
             header: "Total",
             align: "right" as const,
             render: (r: KpiRowDef) => (
-              <span className={`font-semibold ${toneClass(r.tone)}`}>{r.cell(combined)}</span>
+              <span className={`font-semibold ${toneClass(r.tone)}`}>{cellOf(r, combined)}</span>
             ),
           },
         ]
       : []),
     // Comparison column: "Previous Week" in single-week mode, "Previous N Weeks"
-    // in 4/12-week mode. Both render the comparison period's value with its
-    // delta in brackets; the bracketed % only appears on rows that define a
-    // `wowVal` accessor (the five Net Sales rows).
+    // in 4/12-week mode. The value is coloured by direction of travel on every
+    // row; the bracketed % is still restricted to the five Net Sales rows, per
+    // the dashboard standard in CLAUDE.md.
     ...(isMulti
       ? hasPriorPeriod
         ? [
@@ -454,13 +420,13 @@ export default async function ExecutivePage({
               header: `Previous ${periodWeekCount} Weeks`,
               align: "right" as const,
               render: (r: KpiRowDef) => {
-                const pct =
-                  r.wowVal && priorCombined ? priorDelta(r.wowVal(combined), r.wowVal(priorCombined)) : null;
+                const base = priorCombined ? r.val(priorCombined) : null;
+                const pct = rowDelta(r, base);
                 return (
-                  <span className="text-tertiary">
-                    {priorCombined ? r.cell(priorCombined) : "—"}
-                    {pct !== null && (
-                      <span className={`ml-1.5 font-medium ${deltaClass(pct)}`}>({signedPct(pct)})</span>
+                  <span className={pct === null ? "text-tertiary" : deltaClass(pct)}>
+                    {priorCombined ? cellOf(r, priorCombined) : "—"}
+                    {r.showDelta && pct !== null && (
+                      <span className="ml-1 text-xs font-medium">({signedPct(pct)})</span>
                     )}
                   </span>
                 );
@@ -474,20 +440,12 @@ export default async function ExecutivePage({
             header: "Previous Week",
             align: "right" as const,
             render: (r: KpiRowDef) => {
-              const wowPct =
-                hasPrev && r.wowVal
-                  ? (() => {
-                      const prev = r.wowVal(prevCombined);
-                      return prev > 0 ? share(r.wowVal!(combined) - prev, prev) : null;
-                    })()
-                  : null;
+              const pct = hasPrev ? rowDelta(r, r.val(prevCombined)) : null;
               return (
-                <span className="text-tertiary">
-                  {hasPrev ? r.cell(prevCombined) : "—"}
-                  {wowPct !== null && (
-                    <span className={`ml-1.5 font-medium ${deltaClass(wowPct)}`}>
-                      ({signedPct(wowPct)})
-                    </span>
+                <span className={pct === null ? "text-tertiary" : deltaClass(pct)}>
+                  {hasPrev ? cellOf(r, prevCombined) : "—"}
+                  {r.showDelta && pct !== null && (
+                    <span className="ml-1 text-xs font-medium">({signedPct(pct)})</span>
                   )}
                 </span>
               );
@@ -499,14 +457,13 @@ export default async function ExecutivePage({
       header: isMulti ? `Prev Year (${yoyWeek})` : `YoY (${yoyWeek})`,
       align: "right" as const,
       render: (r: KpiRowDef) => {
-        const yoyPct = yoyPctMap[r.kpi] ?? null;
+        const base = yoyRow ? r.yoyVal(yoyRow) : null;
+        const pct = rowDelta(r, base);
         return (
-          <span className="text-text-muted text-sm">
-            {getYoyCellValue(r.kpi, yoyRow)}
-            {yoyPct !== null && (
-              <span className={`ml-1.5 font-medium ${deltaClass(yoyPct)}`}>
-                ({signedPct(yoyPct)})
-              </span>
+          <span className={`text-sm ${pct === null ? "text-text-muted" : deltaClass(pct)}`}>
+            {base !== null ? r.fmt(base) : "—"}
+            {r.showDelta && pct !== null && (
+              <span className="ml-1 text-xs font-medium">({signedPct(pct)})</span>
             )}
           </span>
         );
@@ -525,29 +482,36 @@ export default async function ExecutivePage({
     aov: number;
     pctRevenue: number; // channel net sales ÷ scope total net sales (truncated by pct)
     wow: number | null; // vs previous week's channel net sales (null in multi-week)
-    yoy: number | null; // vs prior year (see channelYoy for the basis)
+    wowBase: number | null; // the comparison period's own net sales, printed beside wow
+    yoy: number | null; // vs prior year (see channelYoyInfo for the basis)
+    yoyBase: number | null; // the prior-year figure the yoy % was measured against
+    yoyBaseIsOrders: boolean; // true when yoyBase is an order count, not net sales
     isTotal?: boolean;
   }
 
   // Per-channel YoY is order-count based — historical net sales exist only at the
   // group (Delivery/In-store TOTAL) and Own Delivery level, not per aggregator or
-  // in-store channel. Mirrors getYoyCellValue's best-available basis.
-  const channelYoy = (
+  // in-store channel. Mirrors getYoyNumber's best-available basis. Returns the
+  // base alongside the % so the table can print the two together.
+  type YoyInfo = { pct: number | null; base: number | null; isOrders: boolean };
+  const NO_YOY: YoyInfo = { pct: null, base: null, isOrders: false };
+
+  const channelYoyInfo = (
     channel: string,
     groupName: "delivery" | "inStore",
     netSales: number,
     orders: number,
     isTotal: boolean,
     yoy: YoyRow | null
-  ): number | null => {
-    if (!yoy) return null;
+  ): YoyInfo => {
+    if (!yoy) return NO_YOY;
     if (isTotal) {
       const base = groupName === "delivery" ? n(yoy.delivery_sales) : n(yoy.in_store_sales);
-      return base > 0 ? share(netSales - base, base) : null;
+      return base > 0 ? { pct: share(netSales - base, base), base, isOrders: false } : NO_YOY;
     }
     if (/own|direct/i.test(channel)) {
       const base = n(yoy.own_delivery_sales);
-      return base > 0 ? share(netSales - base, base) : null;
+      return base > 0 ? { pct: share(netSales - base, base), base, isOrders: false } : NO_YOY;
     }
     const yoyOrders: Record<string, number> = {
       Deliveroo: n(yoy.deliveroo),
@@ -559,7 +523,9 @@ export default async function ExecutivePage({
       "Till (eat-in)": n(yoy.till_eat_in),
     };
     const base = yoyOrders[channel];
-    return base && base > 0 ? share(orders - base, base) : null;
+    return base && base > 0
+      ? { pct: share(orders - base, base), base, isOrders: true }
+      : NO_YOY;
   };
 
   const buildChannelTable = (
@@ -579,16 +545,21 @@ export default async function ExecutivePage({
       const prevNet = isTotal
         ? prevGroup.netSales
         : prevGroup.channels.find((c) => c.channel === channel)?.netSales ?? 0;
+      // Single-week: vs previous week. Multi-week: vs the prior N-week period.
+      // Exactly one of the two flags is ever true, so the disjunction is safe.
+      const hasComparison = (hasPrev || hasPriorPeriod) && prevNet > 0;
+      const yoyInfo = channelYoyInfo(channel, groupName, netSales, orders, isTotal, yoy);
       return {
         channel,
         orders,
         netSales,
         aov,
         pctRevenue: scopeTotal > 0 ? (100 * netSales) / scopeTotal : 0,
-        // Single-week: vs previous week. Multi-week: vs the prior N-week period.
-        // Exactly one of the two flags is ever true, so the disjunction is safe.
-        wow: (hasPrev || hasPriorPeriod) && prevNet > 0 ? share(netSales - prevNet, prevNet) : null,
-        yoy: channelYoy(channel, groupName, netSales, orders, isTotal, yoy),
+        wow: hasComparison ? share(netSales - prevNet, prevNet) : null,
+        wowBase: hasComparison ? prevNet : null,
+        yoy: yoyInfo.pct,
+        yoyBase: yoyInfo.base,
+        yoyBaseIsOrders: yoyInfo.isOrders,
         isTotal,
       };
     };
@@ -628,19 +599,36 @@ export default async function ExecutivePage({
     },
     {
       key: "wow",
-      header: isMulti ? priorLabel : "WoW%",
+      header: isMulti ? priorLabel : "WoW",
       align: "right",
-      render: (r) => (
-        <span className={`font-medium ${deltaClass(r.wow)}`}>{signedPct(r.wow)}</span>
-      ),
+      // Colour covers the whole cell — base figure and percentage together — so
+      // direction reads off the number, not just the bracket.
+      render: (r) =>
+        r.wowBase === null ? (
+          <span className="text-tertiary">—</span>
+        ) : (
+          <span className={`${r.isTotal ? "font-semibold" : ""} ${deltaClass(r.wow)}`}>
+            {gbp(r.wowBase)}
+            <span className="ml-1 text-xs font-medium">({signedPct(r.wow)})</span>
+          </span>
+        ),
     },
     {
       key: "yoy",
-      header: "YoY%",
+      header: "YoY",
       align: "right",
-      render: (r) => (
-        <span className={`font-medium ${deltaClass(r.yoy)}`}>{signedPct(r.yoy)}</span>
-      ),
+      // The base is net sales at group/Own Delivery level and an ORDER COUNT for
+      // every other channel, so it is formatted accordingly rather than forced
+      // into one unit — see channelYoyInfo.
+      render: (r) =>
+        r.yoyBase === null ? (
+          <span className="text-tertiary">—</span>
+        ) : (
+          <span className={`${r.isTotal ? "font-semibold" : ""} ${deltaClass(r.yoy)}`}>
+            {r.yoyBaseIsOrders ? int(r.yoyBase) : gbp(r.yoyBase)}
+            <span className="ml-1 text-xs font-medium">({signedPct(r.yoy)})</span>
+          </span>
+        ),
     },
     {
       key: "aov",
@@ -724,14 +712,60 @@ export default async function ExecutivePage({
     ? (await import("@/lib/vm-analytics/insights")).buildInsights(insightInput)
     : null;
 
-  // Delta badge: week-on-week in single-week mode, prior-period in 4/12-week
-  // mode. `undefined` hides the badge entirely (null would render it greyed).
-  const wow = (wowVal: number | null, priorVal: number | null = null) =>
-    isMulti ? (hasPriorPeriod ? priorVal : undefined) : wowVal;
+  // ---- KPI card comparison block -----------------------------------------
+  // Every card carries the same two-column block in all three modes: the prior
+  // YEAR on the left, the prior PERIOD on the right, each printing the figure it
+  // is measured against above its own signed delta. The right-hand column is the
+  // previous week in single-week mode and the preceding N weeks in 4/12-week
+  // mode, so the % on a card can always be traced back to the two numbers that
+  // produced it.
+  const cmpLabel = isMulti ? `prev ${periodWeekCount}w` : "WoW";
+  const cmpTitle = isMulti ? priorTitle : "Versus the previous week";
+  const yoyTitle = isMulti
+    ? `Same ${periodWeekCount} weeks last year — ${scopeLabel}`
+    : `Same week last year (${yoyWeek}) — ${scopeLabel}`;
 
-  // Spread onto every KpiCard: relabels the delta badge in multi-week mode and
-  // falls back to the component's "WoW" defaults in single-week mode.
-  const deltaBadge = isMulti ? { deltaLabel: priorLabel, deltaTitle: priorTitle } : {};
+  // Picks the right-hand side for the active mode. Each side is gated on its own
+  // availability flag so a missing comparison period renders "—" rather than the
+  // zeros that `prevCombined` / the pct helpers coalesce to.
+  const cmpSide = (
+    weekValue: number,
+    weekPct: number | null,
+    priorValue: number | null,
+    priorPct: number | null
+  ): { value: number | null; pct: number | null } =>
+    isMulti
+      ? { value: hasPriorPeriod ? priorValue : null, pct: hasPriorPeriod ? priorPct : null }
+      : { value: hasPrev ? weekValue : null, pct: hasPrev ? weekPct : null };
+
+  const cmp = (
+    fmt: (v: number) => string,
+    yoyValue: number,
+    yoyPct: number | null,
+    side: { value: number | null; pct: number | null }
+  ) => ({
+    comparisons: [
+      {
+        label: "YoY",
+        value: hasYoy && yoyValue > 0 ? fmt(yoyValue) : "—",
+        pct: yoyPct,
+        title: yoyTitle,
+      },
+      {
+        label: cmpLabel,
+        value: side.value !== null ? fmt(side.value) : "—",
+        pct: side.pct,
+        title: cmpTitle,
+      },
+    ] as const,
+  });
+
+  const priorNet = priorCombined?.netSales ?? null;
+  const priorDelNet = priorCombined?.delivery.netSales ?? null;
+  const priorInNet = priorCombined?.inStore.netSales ?? null;
+  const priorOrders = priorCombined?.orders ?? null;
+  const priorCustomers = priorCombined?.customers ?? null;
+  const priorAov = priorCombined?.aov ?? null;
 
   return (
     <div className="space-y-7">
@@ -748,23 +782,88 @@ export default async function ExecutivePage({
       </div>
 
       <KpiGrid>
-        {/* Single-week shows WoW; 4/12-week shows the prior-period comparison.
-            When neither exists the badge is omitted (undefined hides it). */}
-        <KpiCard label="Net Sales" value={gbp(combined.netSales)} delta={wow(netWow, netPrior)} {...deltaBadge} yoy={netYoy} />
-        <KpiCard label="Net Sales — Delivery" value={gbp(combined.delivery.netSales)} delta={wow(netDelWow, netDelPrior)} {...deltaBadge} yoy={delYoy} />
-        <KpiCard label="Net Sales — In-store" value={gbp(combined.inStore.netSales)} delta={wow(netInWow, netInPrior)} {...deltaBadge} yoy={inStYoy} tone="good" />
-        <KpiCard label="Total Orders" value={int(combined.orders)} delta={wow(ordWow, ordPrior)} {...deltaBadge} yoy={ordYoy} />
+        {/* Left column is always the prior year; the right column is the previous
+            week in single-week mode and the preceding N weeks in 4/12-week mode. */}
+        <KpiCard
+          label="Net Sales"
+          value={gbp(combined.netSales)}
+          {...cmp(gbp, yoyTotalSales, netYoy, cmpSide(prevCombined.netSales, netWow, priorNet, netPrior))}
+        />
+        <KpiCard
+          label="Net Sales — Delivery"
+          value={gbp(combined.delivery.netSales)}
+          {...cmp(
+            gbp,
+            yoyDeliverySales,
+            delYoy,
+            cmpSide(prevCombined.delivery.netSales, netDelWow, priorDelNet, netDelPrior)
+          )}
+        />
+        <KpiCard
+          label="Net Sales — In-store"
+          value={gbp(combined.inStore.netSales)}
+          tone="good"
+          {...cmp(
+            gbp,
+            yoyInStoreSales,
+            inStYoy,
+            cmpSide(prevCombined.inStore.netSales, netInWow, priorInNet, netInPrior)
+          )}
+        />
+        <KpiCard
+          label="Total Orders"
+          value={int(combined.orders)}
+          {...cmp(int, yoyTotalOrdersEff, ordYoy, cmpSide(prevCombined.orders, ordWow, priorOrders, ordPrior))}
+        />
         <KpiCard
           label="AOV (Blended)"
           value={gbp(combined.aov)}
-          delta={wow(aovBlendWow, aovBlendPrior)}
-          {...deltaBadge}
-          yoy={aovBlendYoy}
           hint="net sales ÷ orders"
+          {...cmp(gbp, yoyAovBlend, aovBlendYoy, cmpSide(prevCombined.aov, aovBlendWow, priorAov, aovBlendPrior))}
         />
-        <KpiCard label="Customers" value={int(combined.customers)} delta={wow(custWow, custPrior)} {...deltaBadge} yoy={custYoy} />
-        <KpiCard label="Delivery %" value={pct(deliveryPct)} delta={wow(deliveryPctWow, deliveryPctPrior)} {...deltaBadge} yoy={deliveryPctYoy} hint="of net sales" />
-        <KpiCard label="In-store %" value={pct(inStorePct)} delta={wow(inStorePctWow, inStorePctPrior)} {...deltaBadge} yoy={inStorePctYoy} hint="of net sales" tone="good" />
+        <KpiCard
+          label="Customers"
+          value={int(combined.customers)}
+          {...cmp(
+            int,
+            yoyTotalCustomers,
+            custYoy,
+            cmpSide(prevCombined.customers, custWow, priorCustomers, custPrior)
+          )}
+        />
+        <KpiCard
+          label="Delivery %"
+          value={pct(deliveryPct)}
+          hint="of net sales"
+          {...cmp(
+            pct,
+            yoyDeliveryPct,
+            deliveryPctYoy,
+            cmpSide(
+              prevDeliveryPct,
+              deliveryPctWow,
+              priorCombined ? priorDeliveryPct : null,
+              deliveryPctPrior
+            )
+          )}
+        />
+        <KpiCard
+          label="In-store %"
+          value={pct(inStorePct)}
+          hint="of net sales"
+          tone="good"
+          {...cmp(
+            pct,
+            yoyInStorePct,
+            inStorePctYoy,
+            cmpSide(
+              prevInStorePct,
+              inStorePctWow,
+              priorCombined ? priorInStorePct : null,
+              inStorePctPrior
+            )
+          )}
+        />
       </KpiGrid>
 
       {/* Commentary is weekly/WoW-framed; skip it in multi-week mode. */}
@@ -774,7 +873,9 @@ export default async function ExecutivePage({
         title="Order Mix"
         description="Delivery and in-store channels, each showing its share of total net sales with week-on-week and year-on-year change."
       >
-        <div className="grid gap-4 lg:grid-cols-2">
+        {/* Stacked, not side by side: the WoW/YoY columns now carry a figure as
+            well as a percentage, which needs the full page width to stay legible. */}
+        <div className="grid gap-4">
           <ChartCard
             title={`Delivery Orders — ${int(combined.delivery.orders)} (${pct(
               share(combined.delivery.orders, combined.orders)
