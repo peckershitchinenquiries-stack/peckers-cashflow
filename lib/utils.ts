@@ -376,6 +376,7 @@ export function mapClockEventsToDaily(
     clock_out_at: string | null;
     hours_approved?: boolean | null;
     approved_hours?: number | string | null;
+    auto_clocked_out?: boolean | null;
   }>,
   employeeMap: Map<string, { name: string }>,
 ): Array<{
@@ -386,6 +387,7 @@ export function mapClockEventsToDaily(
   clocked_hours: number;
   hours_approved: boolean;
   approved_hours: number | null;
+  auto_clocked_out: boolean;
 }> {
   const out = [];
   for (const ce of clockEvents) {
@@ -401,6 +403,7 @@ export function mapClockEventsToDaily(
       hours_approved: !!ce.hours_approved,
       approved_hours:
         ce.approved_hours != null ? Number(ce.approved_hours) : null,
+      auto_clocked_out: !!ce.auto_clocked_out,
     });
   }
   return out.sort(
@@ -465,7 +468,18 @@ export function deliveryBreakdown(line: {
   long_deliveries_count?: number | null;
   short_misc_count?: number | null;
   long_misc_count?: number | null;
-}): { total: number; label: string } {
+}): {
+  total: number;
+  label: string;
+  /** Short deliveries on the normal round. */
+  sd: number;
+  /** Long deliveries on the normal round. */
+  ld: number;
+  /** Short miscellaneous — extra short drops beyond the round. */
+  sm: number;
+  /** Long miscellaneous — extra long drops beyond the round. */
+  lm: number;
+} {
   const sd = Number(line.short_deliveries_count) || 0;
   const ld = Number(line.long_deliveries_count) || 0;
   const sm = Number(line.short_misc_count) || 0;
@@ -475,5 +489,5 @@ export function deliveryBreakdown(line: {
   if (ld > 0) parts.push(`${ld} LD`);
   if (sm > 0) parts.push(`${sm} SM`);
   if (lm > 0) parts.push(`${lm} LM`);
-  return { total: sd + ld + sm + lm, label: parts.join(" / ") };
+  return { total: sd + ld + sm + lm, label: parts.join(" / "), sd, ld, sm, lm };
 }

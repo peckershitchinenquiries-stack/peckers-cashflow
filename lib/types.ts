@@ -288,6 +288,10 @@ export type ClockEvent = {
   hours_approved?: boolean | null;
   /** Manager-confirmed hours for the day (may differ from the raw clock_in/out delta). Authoritative once hours_approved is true. */
   approved_hours?: number | null;
+  /** True when the system closed this day because the clock-out was forgotten — see lib/auto-clock-out.ts. */
+  auto_clocked_out?: boolean | null;
+  /** Where the assumed clock-out time came from: 'rota' | 'schedule' | 'store_close' | 'fallback'. */
+  auto_clock_out_source?: string | null;
 };
 
 /**
@@ -307,6 +311,10 @@ export type ManagerClockEvent = {
   clock_out_lat: number | null;
   clock_out_lng: number | null;
   created_at: string;
+  /** True when the system closed this day because the clock-out was forgotten — see lib/auto-clock-out.ts. */
+  auto_clocked_out?: boolean | null;
+  /** Where the assumed clock-out time came from: 'rota' | 'store_close' | 'fallback'. */
+  auto_clock_out_source?: string | null;
 };
 
 /**
@@ -477,6 +485,12 @@ export type ClockDailySummary = {
   hours_approved: boolean;
   /** Manager-confirmed hours (may differ from clocked_hours); null until approved. */
   approved_hours: number | null;
+  /**
+   * True when the clock-out was never made and the system assumed the shift
+   * end time (see lib/auto-clock-out.ts). The hours are a best estimate, so
+   * the approval row flags them for the manager to check.
+   */
+  auto_clocked_out: boolean;
 };
 
 export type LiveDashboardStatus =

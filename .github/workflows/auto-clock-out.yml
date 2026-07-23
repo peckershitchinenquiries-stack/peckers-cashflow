@@ -1,0 +1,56 @@
+name: Auto clock-out
+
+# Closes the days people forgot to clock out of. A missed clock-out used to
+# erase the whole day from payroll (every hours calculation needs both
+# timestamps), so the system now stamps the scheduled shift end as the
+# clock-out and flags the row for the manager to check when approving hours.
+#
+# Runs once a day at 04:30 UTC — late enough that even an overnight shift has
+# passed its grace window, early enough that the day is ready before anyone
+# looks at the rota. Only days BEFORE today (UK) are ever touched, and a real
+# clock-out always wins, so extra runs are harmless.
+#
+# The shift-reminders workflow also calls this sweep on its 5-minute schedule,
+# and the alert scan runs it on every clock-in/out — this job is the belt to
+# those braces, and the one that still works if push notifications are off.
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  # Allow manual runs from the Actions tab (useful for the first backfill).
+  workflow_dispatch:
+
+concurrency:
+  group: auto-clock-out
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required secrets
+        # Requires two repository secrets:
+        #   APP_URL      — e.g. https://peckers.vercel.app (no trailing slash)
+        #   CRON_SECRET  — must match CRON_SECRET in the app's server env
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          missing=0
+          if [ -z "$APP_URL" ]; then
+            echo "::error::Repository secret APP_URL is not set. Add it under Settings → Secrets and variables → Actions."
+            missing=1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Repository secret CRON_SECRET is not set. It must match CRON_SECRET in the app's server env."
+            missing=1
+          fi
+          exit $missing
+
+      - name: Call auto-clock-out endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "${APP_URL%/}/api/cron/auto-clock-out" \
+            -H "Authorization: Bearer ${CRON_SECRET}"

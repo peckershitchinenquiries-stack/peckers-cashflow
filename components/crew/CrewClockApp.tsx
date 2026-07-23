@@ -648,6 +648,14 @@ export function CrewClockApp({
                           Worked {formatTimeOnly(clk.clock_in_at)}–{formatTimeOnly(clk.clock_out_at)}
                         </span>{" "}
                         <span className="text-success font-medium">{worked.toFixed(2)}h</span>
+                        {clk.auto_clocked_out && (
+                          <span
+                            className="block text-[10px] text-warning"
+                            title="You didn't clock out — your scheduled shift end was used. Tell your manager if that's wrong."
+                          >
+                            auto clock-out (shift end used)
+                          </span>
+                        )}
                       </span>
                     ) : (
                       <span className="block text-[11px] text-success mt-0.5">

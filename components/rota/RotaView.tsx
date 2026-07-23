@@ -672,6 +672,15 @@ export function RotaView({
                                       hour: "2-digit",
                                       minute: "2-digit",
                                     })}
+                                    {clk.auto_clocked_out && (
+                                      <span
+                                        className="text-warning"
+                                        title="No clock-out recorded — the scheduled shift end was used."
+                                      >
+                                        {" "}
+                                        (auto)
+                                      </span>
+                                    )}
                                   </>
                                 )}
                               </div>

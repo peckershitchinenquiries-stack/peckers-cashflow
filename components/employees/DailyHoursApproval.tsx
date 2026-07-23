@@ -202,9 +202,19 @@ export function DailyHoursApproval({
         )}
       >
         <div className="flex-1 min-w-[8rem]">
-          <p className="font-medium truncate">{s.employee_name}</p>
+          <p className="font-medium truncate">
+            {s.employee_name}
+            {s.auto_clocked_out && (
+              <span
+                className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-warning/40 bg-warning/10 text-warning font-medium"
+                title="No clock-out was recorded — the scheduled shift end was used. Check the hours before approving."
+              >
+                Auto out
+              </span>
+            )}
+          </p>
           <p className="text-xs text-text-muted">
-            Clocked {s.clocked_hours.toFixed(2)}h
+            {s.auto_clocked_out ? "Assumed" : "Clocked"} {s.clocked_hours.toFixed(2)}h
             {store && <> · {store}</>}
           </p>
         </div>

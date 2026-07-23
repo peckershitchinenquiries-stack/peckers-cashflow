@@ -16,8 +16,8 @@ import {
   toCSV,
   weekLabel,
   parseISODate,
-  deliveryBreakdown,
 } from "@/lib/utils";
+import { DeliveryCell } from "./DeliveryCell";
 import type { CashPayoutWithLines, Store } from "@/lib/types";
 
 export function PayoutHistoryView({
@@ -176,15 +176,18 @@ export function PayoutHistoryView({
                             <th className="px-4 py-2.5 font-medium text-right">Cash hrs</th>
                             <th className="px-4 py-2.5 font-medium text-right">Rate</th>
                             <th className="px-4 py-2.5 font-medium text-right">Cash wage</th>
-                            <th className="px-4 py-2.5 font-medium text-right">Deliveries</th>
+                            <th
+                              className="px-4 py-2.5 font-medium text-right"
+                              title="SD short · LD long · SM short misc · LM long misc"
+                            >
+                              Deliveries
+                            </th>
                             <th className="px-4 py-2.5 font-medium text-right">Delivery £</th>
                             <th className="px-4 py-2.5 font-medium text-right">Total</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {p.lines.map((l, i) => {
-                            const del = deliveryBreakdown(l);
-                            return (
+                          {p.lines.map((l, i) => (
                             <tr key={l.id} className={`${i % 2 === 0 ? "" : "bg-bg/40"} border-t border-border/60`}>
                               <td className="px-4 py-2.5 font-medium">{l.employee_name}</td>
                               <td className="px-4 py-2.5 text-text-muted">{l.role ?? "—"}</td>
@@ -192,22 +195,12 @@ export function PayoutHistoryView({
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{formatGBP(l.cash_wage)}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums">
-                                {del.total > 0 ? (
-                                  <>
-                                    {del.total}
-                                    <span className="block text-[10px] text-text-muted whitespace-nowrap">
-                                      {del.label}
-                                    </span>
-                                  </>
-                                ) : (
-                                  "—"
-                                )}
+                                <DeliveryCell line={l} />
                               </td>
                               <td className="px-4 py-2.5 text-right tabular-nums">{l.delivery_wages > 0 ? formatGBP(l.delivery_wages) : "—"}</td>
                               <td className="px-4 py-2.5 text-right tabular-nums font-semibold">{formatGBP(l.total_payment)}</td>
                             </tr>
-                            );
-                          })}
+                          ))}
                         </tbody>
                       </table>
                     </div>

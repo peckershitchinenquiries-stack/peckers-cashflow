@@ -4,6 +4,12 @@ import * as React from "react";
 import Link from "next/link";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import {
+  ArchiveIcon,
+  ChevronRightIcon,
+  ListIcon,
+  WalletIcon,
+} from "@/components/ui/icons";
 import { formatDDMMYYYY, formatGBP, formatTimeOnly, weekLabel, parseISODate } from "@/lib/utils";
 import type { PrePaymentSummary } from "@/lib/types";
 import type { RunningBalanceRow } from "@/lib/cash-flow";
@@ -44,6 +50,36 @@ function Stat({
       <p className={`text-lg font-semibold tabular-nums ${toneCls}`}>{value}</p>
       {hint && <p className="text-[11px] text-text-muted mt-0.5">{hint}</p>}
     </div>
+  );
+}
+
+/**
+ * A link off to another cash-flow page. Deliberately NOT button-styled: filled
+ * pills sitting in a row read as a selected tab / filter, which is what these
+ * used to look like. The trailing chevron (and the nudge it gets on hover) says
+ * "this takes you somewhere else".
+ */
+function PageLink({
+  href,
+  icon,
+  children,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group inline-flex items-center gap-1.5 h-9 px-2.5 rounded-lg text-sm font-medium text-text-subtle hover:text-gold hover:bg-surface-hover transition-colors"
+    >
+      <span className="text-text-muted group-hover:text-gold transition-colors">{icon}</span>
+      <span className="underline-offset-4 group-hover:underline">{children}</span>
+      <ChevronRightIcon
+        size={14}
+        className="text-text-muted group-hover:text-gold group-hover:translate-x-0.5 transition-all"
+      />
+    </Link>
   );
 }
 
@@ -96,25 +132,22 @@ export function CashFlowDashboard({
                 {v.payoutStatus === "confirmed" && <Badge variant="success">Wages paid</Badge>}
                 {v.payoutStatus === "draft" && <Badge variant="gold">Payout in progress</Badge>}
               </div>
-              <div className="flex items-center gap-2 text-sm flex-wrap">
-                <Link
-                  href={`${basePath}/daily?week=${weekStart}`}
-                  className="btn-base outline-none bg-gold text-black hover:bg-gold-300 h-9 px-3 text-sm"
-                >
+              {/* Links to the other cash-flow pages. Styled as navigation —
+                  identical treatment, leading icon, trailing chevron — so none
+                  of them reads as a selected filter on this page. */}
+              <div className="flex items-center gap-1 text-sm flex-wrap">
+                <PageLink href={`${basePath}/daily?week=${weekStart}`} icon={<ListIcon size={14} />}>
                   Daily entries
-                </Link>
-                <Link
+                </PageLink>
+                <PageLink
                   href={`${basePath}/payout?week=${weekStart}&store=${v.store.id}`}
-                  className="btn-base outline-none bg-surface text-text-primary border border-border hover:bg-surface-hover h-9 px-3 text-sm"
+                  icon={<WalletIcon size={14} />}
                 >
                   Tuesday payout
-                </Link>
-                <Link
-                  href={`${basePath}/history`}
-                  className="btn-base outline-none bg-surface text-text-primary border border-border hover:bg-surface-hover h-9 px-3 text-sm"
-                >
+                </PageLink>
+                <PageLink href={`${basePath}/history`} icon={<ArchiveIcon size={14} />}>
                   History
-                </Link>
+                </PageLink>
               </div>
             </div>
 

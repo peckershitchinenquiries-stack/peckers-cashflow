@@ -37,6 +37,7 @@ import {
   type PushPayload,
 } from "@/lib/push";
 import { parseISODate, timeToMinutes, weekdayIndex } from "@/lib/utils";
+import { autoCloseOpenClocks } from "@/lib/auto-clock-out";
 import type { ReminderType } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -186,9 +187,24 @@ async function handle(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
+
+  // Piggyback the auto clock-out sweep on this schedule so one scheduler entry
+  // covers both. It's independent of push (it needs only the service-role key),
+  // so it runs BEFORE the VAPID check below — a site with no push keys still
+  // gets its forgotten clock-outs closed. See lib/auto-clock-out.ts.
+  let autoClosed = 0;
+  if (isProvisioningConfigured()) {
+    const sweep = await autoCloseOpenClocks(createAdminClient());
+    autoClosed = sweep.closed.length;
+  }
+
   if (!isPushConfigured() || !isProvisioningConfigured()) {
     return NextResponse.json(
-      { ok: false, error: "Push not configured (VAPID keys / service role key)." },
+      {
+        ok: false,
+        error: "Push not configured (VAPID keys / service role key).",
+        autoClosed,
+      },
       { status: 200 },
     );
   }
@@ -341,6 +357,7 @@ async function handle(req: Request) {
     subscribedManagers: managerIds.length,
     sent,
     skipped,
+    autoClosed,
     detail,
   });
 }

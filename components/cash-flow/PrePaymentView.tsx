@@ -23,6 +23,7 @@ import {
   formatTimeOnly,
   deliveryBreakdown,
 } from "@/lib/utils";
+import { DeliveryCell } from "./DeliveryCell";
 import type { CashPayoutWithLines, PrePaymentSummary } from "@/lib/types";
 
 type StoreOpt = { id: string; name: string };
@@ -92,7 +93,59 @@ export function PrePaymentView({
     : summary;
 
   const lines: DisplayLine[] = payout ? payout.lines : summary.lines;
-  const paidCount = payout ? payout.lines.filter((l) => l.is_paid).length : 0;
+
+  // Ticking "paid" writes to the server and then re-renders the whole page, so
+  // the box used to sit on its old value for a second or more. Hold the new
+  // value locally the moment it's clicked (and spin in place of the box while
+  // it saves); the override is dropped once the server agrees, or rolled back
+  // if the write failed.
+  const [optimisticPaid, setOptimisticPaid] = React.useState<Record<string, boolean>>({});
+  const [savingLines, setSavingLines] = React.useState<string[]>([]);
+
+  React.useEffect(() => {
+    setOptimisticPaid((prev) => {
+      if (Object.keys(prev).length === 0) return prev;
+      const next = { ...prev };
+      let changed = false;
+      for (const l of lines) {
+        if (l.id && next[l.id] !== undefined && (l.is_paid ?? false) === next[l.id]) {
+          delete next[l.id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [lines]);
+
+  const isLinePaid = React.useCallback(
+    (l: DisplayLine) => (l.id ? optimisticPaid[l.id] : undefined) ?? l.is_paid ?? false,
+    [optimisticPaid],
+  );
+  const paidCount = payout ? payout.lines.filter(isLinePaid).length : 0;
+
+  // Delivery totals for the footer, shaped like a payout line so the footer
+  // cell foots to a checkable number per drop type (SD / LD / SM / LM).
+  const totals = React.useMemo(
+    () =>
+      lines.reduce(
+        (acc, l) => {
+          const d = deliveryBreakdown(l);
+          return {
+            short_deliveries_count: acc.short_deliveries_count + d.sd,
+            long_deliveries_count: acc.long_deliveries_count + d.ld,
+            short_misc_count: acc.short_misc_count + d.sm,
+            long_misc_count: acc.long_misc_count + d.lm,
+          };
+        },
+        {
+          short_deliveries_count: 0,
+          long_deliveries_count: 0,
+          short_misc_count: 0,
+          long_misc_count: 0,
+        },
+      ),
+    [lines],
+  );
 
   function go(storeId: string, week: string) {
     return `${basePath}/payout?week=${week}&store=${storeId}`;
@@ -112,14 +165,21 @@ export function PrePaymentView({
   }
 
   async function togglePaid(lineId: string, paid: boolean) {
-    setBusy(lineId);
+    setOptimisticPaid((p) => ({ ...p, [lineId]: paid }));
+    setSavingLines((s) => [...s, lineId]);
     try {
       await markLinePaid({ line_id: lineId, paid });
       router.refresh();
     } catch (err) {
+      // Roll the tick back — the server never took it.
+      setOptimisticPaid((p) => {
+        const next = { ...p };
+        delete next[lineId];
+        return next;
+      });
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
-      setBusy(null);
+      setSavingLines((s) => s.filter((id) => id !== lineId));
     }
   }
 
@@ -259,6 +319,10 @@ export function PrePaymentView({
                 ? `${paidCount}/${payout.lines.length} marked paid`
                 : "live forecast — generate the sheet to mark payments"}
             </p>
+            <p className="text-xs text-text-subtle mt-1">
+              Misc = extra drops logged beyond the normal round (with a reason at
+              clock-out). Paid at the same short/long rate.
+            </p>
           </div>
           {!locked && (
             <Button onClick={doGenerate} loading={busy === "generate"} variant={payout ? "secondary" : "primary"}>
@@ -280,7 +344,12 @@ export function PrePaymentView({
                   <th className="px-4 py-3 font-medium">Role</th>
                   <th className="px-4 py-3 font-medium text-right">Cash hrs</th>
                   <th className="px-4 py-3 font-medium text-right">Rate</th>
-                  <th className="px-4 py-3 font-medium text-right">Deliveries</th>
+                  <th
+                    className="px-4 py-3 font-medium text-right"
+                    title="SD short · LD long · SM short misc · LM long misc"
+                  >
+                    Deliveries
+                  </th>
                   <th className="px-4 py-3 font-medium text-right">Delivery £</th>
                   <th className="px-4 py-3 font-medium text-right">Total</th>
                   {payout && <th className="px-4 py-3 font-medium text-center">Paid</th>}
@@ -289,8 +358,8 @@ export function PrePaymentView({
               <tbody>
                 {lines.map((l, i) => {
                   const lineId = l.id ?? null;
-                  const isPaid = l.is_paid ?? false;
-                  const del = deliveryBreakdown(l);
+                  const isPaid = isLinePaid(l);
+                  const saving = !!lineId && savingLines.includes(lineId);
                   return (
                     <tr key={lineId ?? l.employee_name + i} className={`${i % 2 === 0 ? "" : "bg-bg/40"} border-t border-border/60`}>
                       <td className="px-4 py-3 font-medium text-text-primary">{l.employee_name}</td>
@@ -298,32 +367,35 @@ export function PrePaymentView({
                       <td className="px-4 py-3 text-right tabular-nums">{l.cash_hours.toFixed(2)}h</td>
                       <td className="px-4 py-3 text-right tabular-nums">{formatGBP(l.cash_rate)}</td>
                       <td className="px-4 py-3 text-right tabular-nums">
-                        {del.total > 0 ? (
-                          <>
-                            {del.total}
-                            <span className="block text-[10px] text-text-muted whitespace-nowrap">
-                              {del.label}
-                            </span>
-                          </>
-                        ) : (
-                          "—"
-                        )}
+                        <DeliveryCell line={l} />
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums">
                         {l.delivery_wages > 0 ? formatGBP(l.delivery_wages) : "—"}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums font-semibold">{formatGBP(l.total_payment)}</td>
                       {payout && (
-                        <td className="px-4 py-3 text-center">
+                        <td className="px-4 py-3">
                           {lineId && (
-                            <input
-                              type="checkbox"
-                              checked={isPaid}
-                              disabled={locked || busy === lineId}
-                              onChange={(e) => togglePaid(lineId, e.target.checked)}
-                              className="h-4 w-4 accent-gold cursor-pointer disabled:cursor-not-allowed"
-                              aria-label={`Mark ${l.employee_name} paid`}
-                            />
+                            // The tick flips straight away (optimistic), and a
+                            // spinner sits beside it until the save lands.
+                            <span className="flex items-center justify-center gap-1.5">
+                              <input
+                                type="checkbox"
+                                checked={isPaid}
+                                disabled={locked || saving}
+                                onChange={(e) => togglePaid(lineId, e.target.checked)}
+                                className="h-4 w-4 accent-gold cursor-pointer disabled:cursor-not-allowed"
+                                aria-label={`Mark ${l.employee_name} paid`}
+                              />
+                              <span
+                                role="status"
+                                aria-label={saving ? `Saving ${l.employee_name}` : undefined}
+                                className={
+                                  "h-3 w-3 rounded-full border-2 border-gold border-t-transparent " +
+                                  (saving ? "animate-spin" : "invisible")
+                                }
+                              />
+                            </span>
                           )}
                         </td>
                       )}
@@ -333,7 +405,13 @@ export function PrePaymentView({
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-border bg-bg/60 font-semibold">
-                  <td className="px-4 py-3" colSpan={6}>Total</td>
+                  <td className="px-4 py-3" colSpan={4}>Total</td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    <DeliveryCell line={totals} total />
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatGBP(lines.reduce((s, l) => s + l.delivery_wages, 0))}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-gold">
                     {formatGBP(lines.reduce((s, l) => s + l.total_payment, 0))}
                   </td>

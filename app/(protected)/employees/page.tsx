@@ -29,7 +29,7 @@ export default async function EmployeesPage() {
     supabase.from("stores").select("*").order("name"),
     supabase
       .from("clock_events")
-      .select("id, employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours")
+      .select("id, employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours, auto_clocked_out")
       .gte("event_date", eightWeeksBack)
       .not("clock_out_at", "is", null)
       .order("event_date", { ascending: false }),

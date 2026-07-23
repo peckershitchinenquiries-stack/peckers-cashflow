@@ -14,6 +14,7 @@ import {
   percentDelta,
   weekdayIndex,
 } from "@/lib/utils";
+import { autoCloseOpenClocks } from "@/lib/auto-clock-out";
 import { mergeSettings, type AppSettings } from "@/lib/settings";
 import {
   buildPrePaymentSummary,
@@ -734,11 +735,39 @@ async function runScan(supabase: SupabaseClient): Promise<{ ok: true; created: n
 export async function scanForAlerts() {
   await requireAllowed();
   const supabase = createServerSupabase();
+  await sweepForgottenClockOuts();
   const result = await runScan(supabase);
   revalidatePath("/alerts");
   revalidatePath("/manager/alerts");
   revalidatePath("/dashboard");
   return result;
+}
+
+/**
+ * Close any day someone forgot to clock out of, before scanning. Bolted onto
+ * the alert scan on purpose: the scan already runs on every clock-in/out and
+ * from the manual "Scan now", so forgotten clock-outs get recorded even on
+ * sites where the cron (app/api/cron/auto-clock-out) was never wired up.
+ * Best-effort — a failure here must never break clocking or the scan.
+ */
+async function sweepForgottenClockOuts() {
+  try {
+    if (!isProvisioningConfigured()) return;
+    const result = await autoCloseOpenClocks(createAdminClient());
+    if (result.closed.length > 0) {
+      revalidatePath("/live");
+      revalidatePath("/manager/live");
+      revalidatePath("/rota");
+      revalidatePath("/manager/rota");
+      revalidatePath("/employees");
+      revalidatePath("/manager/employees");
+    }
+  } catch (err) {
+    console.error(
+      "[alerts] auto clock-out sweep failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
 }
 
 // =============================================================
@@ -751,6 +780,7 @@ export async function scanForAlertsBackground() {
   try {
     if (!isProvisioningConfigured()) return { ok: false as const };
     const admin = createAdminClient();
+    await sweepForgottenClockOuts();
     await runScan(admin as unknown as SupabaseClient);
     revalidatePath("/alerts");
     revalidatePath("/manager/alerts");
