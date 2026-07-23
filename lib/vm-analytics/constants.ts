@@ -61,9 +61,16 @@ export const normalizeItem = (s: string) =>
 // Drinks and side add-ons excluded from menu-performance views: they attach to
 // orders regardless of menu choice and would skew rankings / exception rules.
 export const EXCLUDED_PRODUCTS = new Set(
-  ["Pepsi Max", "Pepsi", "Fries", "Tango Orange", "Still Water", "Diet Pepsi", "7 Up Lemon and Lime"].map(
-    normalizeItem,
-  ),
+  [
+    "Pepsi Max",
+    "Pepsi",
+    "Fries",
+    "Tango Orange",
+    "Still Water",
+    "Diet Pepsi",
+    "7 Up Lemon and Lime",
+    "Budweiser Bottle",
+  ].map(normalizeItem),
 );
 
 // Also excludes any fries variant (Cheesy Fries, Loaded Fries, …): the exact
