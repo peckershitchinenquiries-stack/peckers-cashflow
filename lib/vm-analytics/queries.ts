@@ -692,5 +692,29 @@ export function sumYoyRows(rows: YoyRow[]): YoyRow {
     new_customers: sum("new_customers"),
     return_customers: sum("return_customers"),
     total_customers: sum("total_customers"),
+    // Per-channel net sales. Summed only when EVERY row in the period carries
+    // the column; otherwise null, so a partially-backfilled period falls back to
+    // the order-count comparison rather than reporting a total that silently
+    // omits the missing weeks.
+    click_collect_sales: sumIfComplete(rows, "click_collect_sales"),
+    kiosk_sales: sumIfComplete(rows, "kiosk_sales"),
+    till_eat_in_sales: sumIfComplete(rows, "till_eat_in_sales"),
+    till_takeaway_sales: sumIfComplete(rows, "till_takeaway_sales"),
+    deliveroo_sales: sumIfComplete(rows, "deliveroo_sales"),
+    just_eat_sales: sumIfComplete(rows, "just_eat_sales"),
+    uber_eats_sales: sumIfComplete(rows, "uber_eats_sales"),
   };
+}
+
+// Sum a nullable column, returning null unless every row supplies a value. A
+// part-summed period would understate the prior year and inflate the YoY %.
+function sumIfComplete(rows: YoyRow[], f: keyof YoyRow): number | null {
+  if (rows.length === 0) return null;
+  let total = 0;
+  for (const r of rows) {
+    const v = r[f];
+    if (v === null || v === undefined) return null;
+    total += numOf(v);
+  }
+  return total;
 }

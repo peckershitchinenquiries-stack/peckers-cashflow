@@ -1,7 +1,7 @@
 import {
   getExec,
   getExecChannels,
-  getProducts,
+  getProductsNet,
   getDayparts,
   getDelivery,
   getLaborCost,
@@ -20,6 +20,58 @@ import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 
 export const dynamic = "force-dynamic";
+
+type RankedItem = { name: string; revenue: number; units: number };
+
+// One row per rank position per store, so the top and least sellers read down
+// the page instead of being stacked inside a single KPI Summary cell.
+interface ItemRankRow {
+  store: string;
+  showStore: boolean; // store name printed once per group
+  top: RankedItem | null;
+  bottom: RankedItem | null;
+}
+
+function buildItemRanks(kpi: KpiTableRow[]): ItemRankRow[] {
+  const rows: ItemRankRow[] = [];
+  for (const k of kpi) {
+    const depth = Math.max(k.top3.length, k.bottom3.length);
+    for (let i = 0; i < depth; i++) {
+      rows.push({
+        store: k.store,
+        showStore: i === 0,
+        top: k.top3[i] ?? null,
+        bottom: k.bottom3[i] ?? null,
+      });
+    }
+  }
+  return rows;
+}
+
+function ItemCell({ item }: { item: RankedItem | null }) {
+  if (!item) return <span className="text-tertiary">—</span>;
+  return (
+    <span>
+      {item.name}{" "}
+      <span className="text-xs text-tertiary">
+        ({gbp(item.revenue)} · {int(item.units)} units)
+      </span>
+    </span>
+  );
+}
+
+const itemRankColumns: Column<ItemRankRow>[] = [
+  {
+    key: "store",
+    header: "Store",
+    render: (r) =>
+      r.showStore ? (
+        <span className={r.store === "TOTAL" ? "font-semibold" : "font-medium"}>{r.store}</span>
+      ) : null,
+  },
+  { key: "top", header: "Most Selling Item", render: (r) => <ItemCell item={r.top} /> },
+  { key: "bottom", header: "Least Selling Item", render: (r) => <ItemCell item={r.bottom} /> },
+];
 
 const kpiColumns: Column<KpiTableRow>[] = [
   {
@@ -59,22 +111,7 @@ const kpiColumns: Column<KpiTableRow>[] = [
   //     ),
   // },
   { key: "delivery", header: "Delivery %", align: "right", render: (r) => pct(r.deliveryPct) },
-  {
-    key: "top3",
-    header: "Top 3 Products",
-    render: (r) => (
-      <div className="space-y-0.5">
-        {r.top3.map((p, i) => (
-          <div key={i} className="text-xs text-secondary">
-            {i + 1}. {p.name}{" "}
-            <span className="text-tertiary">
-              ({gbp(p.revenue)} · {int(p.units)} units)
-            </span>
-          </div>
-        ))}
-      </div>
-    ),
-  },
+  { key: "inStore", header: "In-store %", align: "right", render: (r) => pct(r.inStorePct) },
 ];
 
 const deliveryColumns: Column<DeliveryDependenceRow>[] = [
@@ -159,14 +196,17 @@ export default async function WeeklyExceptionPage({
       await Promise.all([
         getExec(weekIso),
         getExecChannels(weekIso),
-        getProducts(weekIso),
+        // NET item-level sales (vm_v_product_net), matching the Product
+        // Performance dashboard. The view also drops the 'delivery fee' and
+        // 'service charge' pseudo-rows the gross feed carries.
+        getProductsNet(weekIso),
         getDayparts(weekIso),
         getDelivery(weekIso),
         getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
         getMealDeals(weekIso).catch(() => []), // vm_v_meal_deals can time out on cold cache; degrade gracefully
 
         prevWeekIso ? getExec(prevWeekIso) : Promise.resolve([]),
-        prevWeekIso ? getProducts(prevWeekIso) : Promise.resolve([]),
+        prevWeekIso ? getProductsNet(prevWeekIso) : Promise.resolve([]),
       ]);
 
     if (exec.length === 0) {
@@ -232,6 +272,7 @@ export default async function WeeklyExceptionPage({
   }
 
   const { kpi, opportunities, risks, deliveryDependence, labourDataPartial } = report;
+  const itemRanks = buildItemRanks(kpi);
 
   return (
     <div className="space-y-7">
@@ -242,7 +283,7 @@ export default async function WeeklyExceptionPage({
 
       <Section
         title="KPI Summary"
-        description="Headline metrics per store. AOV is split into delivery and in-store. Labour % is scheduled rota wages ÷ net sales."
+        description="Headline metrics per store. AOV is split into delivery and in-store. Delivery % and In-store % are each channel's share of net sales."
       >
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (
@@ -251,6 +292,17 @@ export default async function WeeklyExceptionPage({
             so labour-based figures should be treated as indicative.
           </p>
         )}
+      </Section>
+
+      <Section
+        title="Most and Least Selling Items"
+        description="The three best and three weakest sellers per store, ranked on NET item sales (same source as the Product Performance dashboard). The least-selling ranking excludes items that recorded no sale, loyalty and comped items (£0.00 revenue), hidden items, and drinks and sides — so it reflects the core menu rather than add-ons."
+      >
+        <DataTable
+          columns={itemRankColumns}
+          rows={itemRanks}
+          emptyMessage="No ranked item sales for this week."
+        />
       </Section>
 
       <div className="grid gap-4 lg:grid-cols-2">

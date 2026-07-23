@@ -140,6 +140,9 @@ function aggregateCategories(
   allItemPrevRows: ProductCategoryRow[],
 ): CategoryPerf[] {
   const wow = (cur: number, prev: number) => (prev > 0 ? ((cur - prev) / prev) * 100 : null);
+  // The base is surfaced next to the % in the table, and is null on exactly the
+  // same condition the % is, so the two can never disagree.
+  const prevOf = (prev: number) => (prev > 0 ? prev : null);
 
   const visibleItems = itemRows.filter((r) => !isHiddenProduct(r.item_name));
   const visiblePrevItems = itemPrevRows.filter((r) => !isHiddenProduct(r.item_name));
@@ -169,8 +172,14 @@ function aggregateCategories(
     const curItemS = sumBy(cur, itemKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
     const prevItemS = sumBy(prev, itemKey, (r) => n(r.gross_sales), (r) => n(r.units_sold));
     return {
-      cat: (category: string) => wow(curCatS.get(category)?.revenue ?? 0, prevCatS.get(category)?.revenue ?? 0),
-      item: (key: string) => wow(curItemS.get(key)?.revenue ?? 0, prevItemS.get(key)?.revenue ?? 0),
+      cat: (category: string) => {
+        const prev = prevCatS.get(category)?.revenue ?? 0;
+        return { pct: wow(curCatS.get(category)?.revenue ?? 0, prev), prev: prevOf(prev) };
+      },
+      item: (key: string) => {
+        const prev = prevItemS.get(key)?.revenue ?? 0;
+        return { pct: wow(curItemS.get(key)?.revenue ?? 0, prev), prev: prevOf(prev) };
+      },
     };
   };
   const hitchin = storeWow("Peckers Hitchin");
@@ -197,22 +206,37 @@ function aggregateCategories(
   const cats: CategoryPerf[] = Array.from(curCat.entries()).map(([category, tot]) => {
     const byItem = curItems.get(category) ?? new Map<string, { units: number; revenue: number }>();
     const items: CategoryItem[] = Array.from(byItem.entries())
-      .map(([item, it]) => ({
-        item,
-        units: it.units,
-        revenue: it.revenue,
-        revWow: wow(it.revenue, prevItem.get(`${category}::${item}`)?.revenue ?? 0),
-        hitchinWow: hitchin.item(`${category}::${item}`),
-        stevenageWow: stevenage.item(`${category}::${item}`),
-      }))
+      .map(([item, it]) => {
+        const key = `${category}::${item}`;
+        const prev = prevItem.get(key)?.revenue ?? 0;
+        const hi = hitchin.item(key);
+        const st = stevenage.item(key);
+        return {
+          item,
+          units: it.units,
+          revenue: it.revenue,
+          revWow: wow(it.revenue, prev),
+          revPrev: prevOf(prev),
+          hitchinWow: hi.pct,
+          hitchinPrev: hi.prev,
+          stevenageWow: st.pct,
+          stevenagePrev: st.prev,
+        };
+      })
       .sort((a, b) => b.revenue - a.revenue);
+    const prevRev = prevCat.get(category)?.revenue ?? 0;
+    const hiCat = hitchin.cat(category);
+    const stCat = stevenage.cat(category);
     return {
       category,
       units: tot.units,
       revenue: tot.revenue,
-      revWow: wow(tot.revenue, prevCat.get(category)?.revenue ?? 0),
-      hitchinWow: hitchin.cat(category),
-      stevenageWow: stevenage.cat(category),
+      revWow: wow(tot.revenue, prevRev),
+      revPrev: prevOf(prevRev),
+      hitchinWow: hiCat.pct,
+      hitchinPrev: hiCat.prev,
+      stevenageWow: stCat.pct,
+      stevenagePrev: stCat.prev,
       items,
     };
   });

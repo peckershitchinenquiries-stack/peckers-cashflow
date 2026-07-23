@@ -1,8 +1,26 @@
 // Coerce the numeric-or-string values Supabase returns (numeric columns come
 // back as strings over the REST API) into real numbers.
+//
+// Raw ingest tables store money as TEXT, and the VM Hub exports it formatted —
+// "1,234.56", "£1,234.56". Number() yields NaN on those, which this function
+// used to swallow as 0: a silent, invisible data loss that renders as a genuine
+// "£0.00" rather than an error. Currency symbols, thousands separators and
+// whitespace are therefore stripped before parsing. Anything still unparseable
+// (a real non-number like "N/A") remains 0.
+const NUMERIC_NOISE = /[£$€,\s]/g;
+
 export function n(v: unknown): number {
-  if (v === null || v === undefined || v === "") return 0;
-  const num = typeof v === "number" ? v : Number(v);
+  if (v === null || v === undefined) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const cleaned = v.replace(NUMERIC_NOISE, "");
+    if (cleaned === "" || cleaned === "-") return 0;
+    // Accounting-style negatives: "(1,234.56)" means -1234.56.
+    const signed = /^\((.*)\)$/.test(cleaned) ? `-${cleaned.slice(1, -1)}` : cleaned;
+    const num = Number(signed);
+    return Number.isFinite(num) ? num : 0;
+  }
+  const num = Number(v);
   return Number.isFinite(num) ? num : 0;
 }
 

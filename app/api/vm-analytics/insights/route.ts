@@ -9,6 +9,10 @@ export const dynamic = "force-dynamic";
 // data definition has changed; absent dashboards keep the unversioned key.
 const CACHE_VERSIONS: Partial<Record<InsightInput["dashboard"], string>> = {
   products: "v3",
+  // daypart=v2: hourly Revenue/AOV moved from gross to net (Update 28). Rows
+  // cached before the vm_net_sales_by_hour backfill completed hold "£0.00" and
+  // were still being served long after the data landed.
+  daypart: "v2",
 };
 
 export async function POST(req: Request): Promise<Response> {
