@@ -147,6 +147,8 @@ insert into vm_menu_item_category (item_name, category) values
   ('Mango Pineapple Glazed Southern Fried Buttermilk Tenders', 'Tenders'),
   ('Mango Pineapple Glazed Tenders','Tenders'),
   ('Peanut Sweet Chilli Coriander Tenders', 'Tenders'),
+  ('Peri Peri Grilled Tenders', 'Tenders'),
+  ('2 Peri Peri Grilled Tenders', 'Tenders'),
   ('Southern Fried  Buttermilk Tenders', 'Tenders'),
   ('Southern Fried Buttermilk Tenders', 'Tenders'),
   ('Supercharged Tenders', 'Tenders'),

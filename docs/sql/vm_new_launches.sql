@@ -46,7 +46,10 @@ insert into vm_new_launches (item_name, display_name, launch_date) values
   ('Katsu Curry Tenders',                                      'Katsu Curry Tenders',            null),
   ('2 Katsu Curry Tenders',                                    'Katsu Curry Tenders',            null),
   ('Katsu Curry Wings',                                        'Katsu Curry Wings',              null),
-  ('3 Katsu Curry Wings',                                      'Katsu Curry Wings',              null)
+  ('3 Katsu Curry Wings',                                      'Katsu Curry Wings',              null),
+  -- Peri Peri range --------------------------------------------------------
+  ('Peri Peri Grilled Tenders',                                'Peri Peri Grilled Tenders',      '2026-09-01'),
+  ('2 Peri Peri Grilled Tenders',                              'Peri Peri Grilled Tenders',      '2026-09-01')
 on conflict (item_name) do update
   set display_name = excluded.display_name,
       launch_date  = coalesce(excluded.launch_date, vm_new_launches.launch_date),
@@ -62,4 +65,6 @@ on conflict (item_name) do update
 --     where display_name in ('Og Matcha','Oreo Crumble Matcha','Strawberry Matcha');
 --   update vm_new_launches set launch_date = '2026-05-19'
 --     where display_name like 'Katsu Curry%';
+--   update vm_new_launches set launch_date = '2026-09-01'
+--     where display_name = 'Peri Peri Grilled Tenders';
 -- ----------------------------------------------------------------------------
