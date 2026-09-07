@@ -634,6 +634,8 @@ export function mapClockEventsToDaily(
   event_date: string;
   store_id: string | null;
   clocked_hours: number;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   sessions: ClockSessionSpan[];
   hours_approved: boolean;
   approved_hours: number | null;
@@ -657,6 +659,8 @@ export function mapClockEventsToDaily(
       event_date: ce.event_date,
       store_id: ce.store_id ?? null,
       clocked_hours: roundHoursToMinute(dayWorkedHours(ce)),
+      clock_in_at: ce.clock_in_at,
+      clock_out_at: ce.clock_out_at,
       sessions: (ce.id ? sessionsByEventId?.get(ce.id) : undefined) ?? [],
       hours_approved: !!ce.hours_approved,
       approved_hours:

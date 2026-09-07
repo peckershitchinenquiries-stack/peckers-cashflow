@@ -18,6 +18,7 @@ import {
   cn,
   formatHoursMins,
   formatHoursMinsWords,
+  londonHHMM,
   parseHoursMinsInput,
   parseISODate,
   toISODate,
@@ -82,6 +83,13 @@ type ApprovalRow = {
   store_id: string | null;
   event_date: string;
   clocked_hours: number;
+  /**
+   * The day's clock-in / clock-out, off the day header — earliest in, latest
+   * out. Display only; hours always come from `clocked_hours`, which sums the
+   * shifts rather than spanning the gap between them.
+   */
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   /**
    * The day's individual shifts. Approval lives on the SHIFT (migration 035),
    * so on a split day these are what actually get signed off — the row's own
@@ -173,10 +181,18 @@ function shiftRowsOf(sessions: ClockDailySummary["sessions"] | undefined): Shift
     });
 }
 
+// London wall clock, not the viewer's — a manager reviewing from another
+// timezone must read the same times the store worked.
 function hhmm(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return londonHHMM(d);
+}
+
+/** "09:00–17:00" for the whole day; an unfinished day reads "09:00–…". */
+function dayWindow(r: ApprovalRow): string | null {
+  if (!r.clock_in_at) return null;
+  return `${hhmm(r.clock_in_at)}–${r.clock_out_at ? hhmm(r.clock_out_at) : "…"}`;
 }
 
 const rowKey = (r: ApprovalRow) => `${r.kind}:${r.person_id}:${r.event_date}`;
@@ -194,6 +210,8 @@ function fromEmployee(s: ClockDailySummary): ApprovalRow {
     store_id: s.store_id,
     event_date: s.event_date,
     clocked_hours: s.clocked_hours,
+    clock_in_at: s.clock_in_at,
+    clock_out_at: s.clock_out_at,
     shifts: shiftLabels(s.sessions),
     shiftRows: shiftRowsOf(s.sessions),
     approved: s.hours_approved,
@@ -220,6 +238,8 @@ function fromCover(c: CoverDailyApprovalRow): ApprovalRow {
     store_id: c.store_id,
     event_date: c.work_date,
     clocked_hours: c.clocked_hours,
+    clock_in_at: c.clock_in_at,
+    clock_out_at: c.clock_out_at,
     // Cover drivers are single-shift: multi-shift days are an employee feature.
     shifts: [],
     shiftRows: [],
@@ -250,6 +270,8 @@ function fromManager(m: ManagerDailyApprovalRow): ApprovalRow {
     store_id: m.store_id,
     event_date: m.event_date,
     clocked_hours: m.worked_hours,
+    clock_in_at: m.clock_in_at,
+    clock_out_at: m.clock_out_at,
     shifts: [],
     // Per-shift sign-off exists for managers in the database, but their row is
     // approved on the day's drop total, so there is nothing to break out here.
@@ -854,6 +876,7 @@ export function DailyHoursApproval({
     const key = rowKey(s);
     const busy = busyKey === key;
     const store = showStore ? storeName(s.store_id) : null;
+    const clockWindow = dayWindow(s);
     const adjusted =
       s.approved &&
       s.approved_hours != null &&
@@ -946,6 +969,19 @@ export function DailyHoursApproval({
               <>
                 {s.auto_clocked_out ? "Assumed" : "Clocked"}{" "}
                 <HoursMinsDisplay hours={s.clocked_hours} />
+                {clockWindow && (
+                  <span
+                    className="tabular-nums"
+                    title={
+                      s.shifts.length > 1
+                        ? `First clock-in to last clock-out across ${s.shifts.length} shifts — the gap between them is not worked time.`
+                        : "Clock-in and clock-out times"
+                    }
+                  >
+                    {" · "}
+                    {clockWindow}
+                  </span>
+                )}
               </>
             )}
             {store && <> · {store}</>}

@@ -22,6 +22,8 @@ const day: CoverDriverDaySummary = {
   store_id: "s1",
   work_date: "2026-08-04",
   total_hours: 5,
+  clock_in_at: "2026-08-04T10:00:00Z",
+  clock_out_at: "2026-08-04T15:00:00Z",
   short_deliveries: 4,
   long_deliveries: 4,
   short_base: 2,

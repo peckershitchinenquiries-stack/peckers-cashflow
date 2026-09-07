@@ -58,6 +58,8 @@ export function mapManagerDaysToApproval(
     event_date: d.event_date,
     // Never last-out minus first-in: that spans the gap between two shifts.
     worked_hours: dayWorkedHours(d),
+    clock_in_at: d.clock_in_at,
+    clock_out_at: d.clock_out_at,
     short_deliveries: Number(d.short_deliveries_count) || 0,
     long_deliveries: Number(d.long_deliveries_count) || 0,
     extra_short_deliveries: Number(d.extra_short_deliveries) || 0,

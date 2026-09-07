@@ -420,6 +420,9 @@ export type CoverDriverDaySummary = {
   store_id: string;
   work_date: string;
   total_hours: number;
+  /** Day bounds, for showing the shift window alongside the hours. */
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   /** Base + extra, as paid. Split out below for editing. */
   short_deliveries: number;
   long_deliveries: number;
@@ -451,6 +454,9 @@ export type CoverDailyApprovalRow = {
   store_id: string;
   work_date: string;
   clocked_hours: number;
+  /** Day bounds off the clock event; null on an approval with no clocked day. */
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   approved: boolean;
   /** Hours as signed off, which may differ from clocked if a manager adjusted. */
   approved_hours: number | null;
@@ -805,6 +811,9 @@ export type ManagerDailyApprovalRow = {
   event_date: string;
   /** Monitoring only; shown so the drops can be read against the shift. */
   worked_hours: number;
+  /** Day bounds; null on a deliveries-only day, which has no clock record. */
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   short_deliveries: number;
   long_deliveries: number;
   extra_short_deliveries: number;
@@ -1011,6 +1020,9 @@ export type ClockDailySummary = {
   store_id: string | null;
   /** Hours worked across every shift that day (gaps between shifts excluded). */
   clocked_hours: number;
+  /** Day bounds off the header: earliest clock-in, latest clock-out. */
+  clock_in_at: string | null;
+  clock_out_at: string | null;
   /** The day's individual shifts, earliest first. Empty on pre-029 rows. */
   sessions: ClockSessionSpan[];
   /** Has a manager approved this day for payroll? */
