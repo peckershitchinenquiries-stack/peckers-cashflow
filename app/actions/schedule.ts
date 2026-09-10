@@ -164,7 +164,7 @@ export async function applyScheduleToWeek(input: {
     supabase.from("employee_schedules").select("*").in("employee_id", empIds),
     supabase
       .from("rota_shifts")
-      .select("id, employee_id, shift_date")
+      .select("id, employee_id, shift_date, is_on_leave")
       .in("employee_id", empIds)
       .gte("shift_date", input.week_start)
       .lte("shift_date", weekEnd),
@@ -173,11 +173,9 @@ export async function applyScheduleToWeek(input: {
   const schedByKey = new Map(
     (schedules ?? []).map((s: EmployeeScheduleDay) => [`${s.employee_id}:${s.weekday}`, s]),
   );
+  type ExistingCell = { id: string; employee_id: string; shift_date: string; is_on_leave: boolean };
   const existingByKey = new Map(
-    (existing ?? []).map((s: { id: string; employee_id: string; shift_date: string }) => [
-      `${s.employee_id}:${s.shift_date}`,
-      s.id,
-    ]),
+    ((existing ?? []) as ExistingCell[]).map((s) => [`${s.employee_id}:${s.shift_date}`, s]),
   );
 
   const inserts: Array<Record<string, unknown>> = [];
@@ -204,10 +202,11 @@ export async function applyScheduleToWeek(input: {
         is_day_off: !working,
         scheduled_hours: working ? shiftHours(start, end) : 0,
       };
-      const existingId = existingByKey.get(`${emp.id}:${date}`);
-      if (existingId) {
-        if (input.overwrite) {
-          updates.push({ id: existingId, payload: { ...payload, updated_by: user.id } });
+      const existingCell = existingByKey.get(`${emp.id}:${date}`);
+      if (existingCell) {
+        // Booked leave is a deliberate decision; the usual pattern never overwrites it.
+        if (input.overwrite && !existingCell.is_on_leave) {
+          updates.push({ id: existingCell.id, payload: { ...payload, updated_by: user.id } });
         } else {
           skipped++;
         }

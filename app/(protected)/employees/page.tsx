@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
 import { EmployeesView } from "@/components/employees/EmployeesView";
 import { getAppSettings } from "@/app/actions/settings";
-import { addDays, groupClockEventsByWeek, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
+import { addDays, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
 import { summariseCoverDriverDays } from "@/lib/cover-driver-hours";
 import { mapManagerDaysToApproval } from "@/lib/manager-clock-sessions";
 import { hasRole } from "@/lib/types";
@@ -15,7 +15,7 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-// Daily Approval and the Weekly Log need identity, store and rates — nothing
+// Daily Approval needs identity, store and rates — nothing
 // else. The full profile is loaded by the Employees tab that renders it.
 const APPROVAL_EMPLOYEE_COLUMNS =
   "id, name, position, store_id, employment_status, is_active, hourly_rate, hourly_ni_rate";
@@ -97,7 +97,6 @@ export default async function EmployeesPage() {
   if (clocksRes.error) {
     console.error("[employees] clock_events query failed:", clocksRes.error.message);
   }
-  const clockSummaries = groupClockEventsByWeek(clocksRes.data ?? [], empMap);
   // Shifts keyed by the day they belong to, so an approval row can show the
   // windows that make up its total.
   const sessionsByEvent = new Map<string, NonNullable<typeof sessionsRes.data>>();
@@ -141,7 +140,6 @@ export default async function EmployeesPage() {
         coverDrivers={coverDrivers}
         coverDriverDays={coverDriverDays}
         coverDriverHours={(coverHoursRes.data ?? []) as any[]}
-        clockSummaries={clockSummaries}
         clockDailySummaries={clockDailySummaries}
         managerDaily={managerDaily}
         managers={managerAccounts}

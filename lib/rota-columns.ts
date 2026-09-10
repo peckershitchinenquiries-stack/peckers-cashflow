@@ -5,7 +5,7 @@
 import type { EarlyClockInRequest } from "@/lib/types";
 
 export const ROTA_SHIFT_COLUMNS =
-  "id, employee_id, store_id, shift_date, start_time, end_time, is_day_off, scheduled_hours, shift_type, same_day_edit_reason";
+  "id, employee_id, store_id, shift_date, start_time, end_time, is_day_off, is_on_leave, scheduled_hours, shift_type, same_day_edit_reason";
 
 /** Only what `fourWkAvg` reads — the prior weeks never reach a rota cell. */
 export const ROTA_HISTORY_SHIFT_COLUMNS =

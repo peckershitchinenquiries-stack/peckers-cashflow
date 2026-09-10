@@ -99,6 +99,7 @@ type Props = {
 /** Minimal shape the dashboard needs from a shift (real or template-derived). */
 type EffShift = {
   is_day_off: boolean;
+  is_on_leave?: boolean;
   start_time: string | null;
   end_time: string | null;
 };
@@ -112,6 +113,7 @@ const STATUS_STYLES: Record<LiveDashboardStatus, { label: string; cls: string }>
     cls: "bg-surface-hover text-text-subtle border-border",
   },
   day_off: { label: "Day Off", cls: "bg-danger/10 text-danger border-danger/30" },
+  on_leave: { label: "On Leave", cls: "bg-warning/10 text-warning border-warning/30" },
   tbc: { label: "TBC", cls: "bg-surface-hover text-text-muted border-border" },
   absent: { label: "Absent", cls: "bg-danger/20 text-danger border-danger/60" },
 };
@@ -122,6 +124,7 @@ const ROW_BG: Record<LiveDashboardStatus, string> = {
   late: "bg-warning/10",
   clocked_out: "",
   day_off: "bg-danger/5",
+  on_leave: "bg-warning/5",
   tbc: "",
   absent: "bg-danger/10",
 };
@@ -139,7 +142,7 @@ function computeStatus(
   now: Date,
 ): LiveDashboardStatus {
   if (!shift) return "tbc";
-  if (shift.is_day_off) return "day_off";
+  if (shift.is_day_off) return shift.is_on_leave ? "on_leave" : "day_off";
   if (clock?.clock_out_at) return "clocked_out";
   if (clock?.clock_in_at) return "on_shift";
   if (!shift.start_time) return "tbc";
@@ -793,6 +796,7 @@ export function LiveDashboard({
                               shift?.is_day_off ?? false,
                               shift?.start_time ?? null,
                               shift?.end_time ?? null,
+                              shift?.is_on_leave,
                             )}
                             {fromTemplate && shift && (
                               <span
@@ -917,6 +921,7 @@ export function LiveDashboard({
                                     shift?.is_day_off ?? false,
                                     shift?.start_time ?? null,
                                     shift?.end_time ?? null,
+                                    shift?.is_on_leave,
                                   )}
                                   {shift?.fromTemplate && (
                                     <span
@@ -1101,7 +1106,7 @@ export function LiveDashboard({
       <Card className="text-xs text-text-muted">
         <div className="flex items-center gap-4 flex-wrap">
           <span className="text-text-subtle font-medium">Status key:</span>
-          {(["on_shift", "expected", "late", "clocked_out", "day_off", "absent", "tbc"] as LiveDashboardStatus[]).map(
+          {(["on_shift", "expected", "late", "clocked_out", "day_off", "on_leave", "absent", "tbc"] as LiveDashboardStatus[]).map(
             (s) => (
               <span key={s} className="flex items-center gap-1.5">
                 <span

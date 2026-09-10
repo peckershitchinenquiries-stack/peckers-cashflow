@@ -1499,7 +1499,7 @@ export function DailyHoursApproval({
         Approving a day confirms its hours and rolls them into that employee’s
         weekly total. The <span className="font-medium text-text-primary">bank vs cash</span>{" "}
         split is worked out per week (first 20h = bank) — see the{" "}
-        <span className="font-medium text-text-primary">Weekly Log</span> tab.{" "}
+        <span className="font-medium text-text-primary">Weekly Summary</span> tab.{" "}
         <span className="font-medium text-text-primary">Cover</span> rows are cash
         only and are paid per approved day, with no weekly split.{" "}
         <span className="font-medium text-text-primary">Manager</span> rows appear

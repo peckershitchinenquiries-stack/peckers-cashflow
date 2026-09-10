@@ -222,6 +222,7 @@ export function CrewClockApp({
       const working = real.filter((s) => !s.is_day_off);
       return {
         is_day_off: working.length === 0,
+        is_on_leave: working.length === 0 && real.some((s) => s.is_on_leave),
         // "09:00–13:00, 17:00–21:00" when the day has more than one shift.
         label: working
           .map((s) => formatShiftRange(false, s.start_time, s.end_time))
@@ -234,6 +235,7 @@ export function CrewClockApp({
     if (tmpl && tmpl.is_working && tmpl.start_time)
       return {
         is_day_off: false,
+        is_on_leave: false,
         label: formatShiftRange(false, tmpl.start_time, tmpl.end_time),
         reason: null,
         fromTemplate: true,
@@ -607,7 +609,7 @@ export function CrewClockApp({
             <CardDescription>
               {todayEff
                 ? todayEff.is_day_off
-                  ? "Marked as Day Off — clock in only if you're covering."
+                  ? `Marked as ${todayEff.is_on_leave ? "On Leave" : "Day Off"} — clock in only if you're covering.`
                   : `Scheduled ${todayEff.label}${todayEff.fromTemplate ? " (your default schedule)" : ""}`
                 : "No shift scheduled today. You can still clock in if you're working."}
             </CardDescription>
@@ -993,7 +995,9 @@ export function CrewClockApp({
                 <div className="text-sm text-text-subtle text-right">
                   {eff
                     ? eff.is_day_off
-                      ? <span className="text-danger">Day Off</span>
+                      ? eff.is_on_leave
+                        ? <span className="text-warning">On Leave</span>
+                        : <span className="text-danger">Day Off</span>
                       : <>
                           {eff.label}
                           {eff.reason && (

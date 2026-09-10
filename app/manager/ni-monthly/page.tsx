@@ -33,7 +33,7 @@ export default async function ManagerNiMonthlyPage() {
     <>
       <PageHeader
         title="NI — Monthly Summary"
-        description="National Insurance (PAYE) wages for your store, grouped by calendar month. NI is paid monthly; cash is paid weekly."
+        description="Approved hours worked in each calendar month for your store. NI is capped at the monthly policy figure (20 hrs/week × 52 ÷ 12 = 86 hr 40 min) and the rest is cash. Reporting only — the Tuesday payout still pays the weekly 20-hour rule."
       />
       <NiMonthlyView
         rows={rows}

@@ -316,13 +316,14 @@ export function shiftRangesOverlap(
   return aS < bE && bS < aE;
 }
 
-/** Format start/end as "HH:MM – HH:MM" or "Day Off". */
+/** Format start/end as "HH:MM – HH:MM", "Day Off" or "On Leave". */
 export function formatShiftRange(
   isDayOff: boolean,
   start: string | null,
   end: string | null,
+  isOnLeave = false,
 ): string {
-  if (isDayOff) return "Day Off";
+  if (isDayOff) return isOnLeave ? "On Leave" : "Day Off";
   if (!start || !end) return "—";
   return `${start.slice(0, 5)}–${end.slice(0, 5)}`;
 }

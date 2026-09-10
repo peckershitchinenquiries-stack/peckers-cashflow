@@ -57,6 +57,18 @@ function presetShort(t: ShiftPreset | null): string | null {
   return null;
 }
 
+/** Leave is amber so a booked holiday never reads as a plain red Day Off. */
+function dayOffTone(onLeave: boolean | undefined, past: boolean): string {
+  if (onLeave) {
+    return past
+      ? "bg-warning/5 border-warning/20 text-warning"
+      : "bg-warning/10 border-warning/30 text-warning";
+  }
+  return past
+    ? "bg-danger/5 border-danger/20 text-danger"
+    : "bg-danger/10 border-danger/30 text-danger";
+}
+
 type Props = {
   stores: Store[];
   employees: RotaEmployee[];
@@ -799,7 +811,7 @@ export function RotaView({
                         const missed = isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
                         const cellInner = (
                           <>
-                            {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time) : "—"}
+                            {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave) : "—"}
                             {clk?.clock_in_at && (
                               <div className="text-[9px] text-success mt-0.5">
                                 ✓ in{" "}
@@ -860,7 +872,7 @@ export function RotaView({
                                 className={
                                   "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
                                   (cell?.is_day_off
-                                    ? "bg-danger/5 border-danger/20 text-danger"
+                                    ? dayOffTone(cell.is_on_leave, true)
                                     : cell?.start_time
                                       ? "bg-success/5 border-success/20 text-success"
                                       : "border-dashed border-border text-text-muted")
@@ -882,7 +894,7 @@ export function RotaView({
                                 className={
                                   "w-full h-12 rounded-lg text-xs border transition-colors " +
                                   (cell?.is_day_off
-                                    ? "bg-danger/10 border-danger/30 text-danger"
+                                    ? dayOffTone(cell.is_on_leave, false)
                                     : cell?.start_time
                                       ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
                                       : "border-dashed border-border text-text-muted hover:bg-surface-hover")
@@ -1137,7 +1149,7 @@ export function RotaView({
                             <div className="flex flex-col gap-1">
                               {localShifts.map((s) => (
                                 <div key={s.id}>
-                                  {formatShiftRange(s.is_day_off, s.start_time, s.end_time)}
+                                  {formatShiftRange(s.is_day_off, s.start_time, s.end_time, s.is_on_leave)}
                                   {!s.is_day_off && s.shift_type && (
                                     <span className="block text-[9px] uppercase tracking-wide opacity-70">
                                       {presetShort(s.shift_type)}
@@ -1203,7 +1215,7 @@ export function RotaView({
                               className={
                                 "w-full min-h-12 h-auto py-1 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
                                 (cell?.is_day_off
-                                  ? "bg-danger/5 border-danger/20 text-danger"
+                                  ? dayOffTone(cell.is_on_leave, true)
                                   : cell?.start_time
                                     ? "bg-success/5 border-success/20 text-success"
                                     : "border-dashed border-border text-text-muted")
@@ -1230,7 +1242,7 @@ export function RotaView({
                               className={
                                 "w-full min-h-12 h-auto py-1 rounded-lg text-xs border transition-colors " +
                                 (cell?.is_day_off
-                                  ? "bg-danger/10 border-danger/30 text-danger"
+                                  ? dayOffTone(cell.is_on_leave, false)
                                   : cell?.start_time
                                     ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
                                     : ghost
@@ -1418,7 +1430,7 @@ export function RotaView({
                         const cellInner = (
                           <>
                             {cell ? (
-                              formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time)
+                              formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave)
                             ) : eff && !eff.is_day_off ? (
                               <span className="opacity-70">
                                 {formatShiftRange(false, eff.start_time, eff.end_time)}
@@ -1482,7 +1494,7 @@ export function RotaView({
                                 className={
                                   "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
                                   (cell?.is_day_off
-                                    ? "bg-danger/5 border-danger/20 text-danger"
+                                    ? dayOffTone(cell.is_on_leave, true)
                                     : cell?.start_time
                                       ? "bg-success/5 border-success/20 text-success"
                                       : "border-dashed border-border text-text-muted")
@@ -1504,7 +1516,7 @@ export function RotaView({
                                 className={
                                   "w-full h-12 rounded-lg text-xs border transition-colors " +
                                   (cell?.is_day_off
-                                    ? "bg-danger/10 border-danger/30 text-danger"
+                                    ? dayOffTone(cell.is_on_leave, false)
                                     : cell?.start_time
                                       ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
                                       : "border-dashed border-border text-text-muted hover:bg-surface-hover")

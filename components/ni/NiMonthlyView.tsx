@@ -20,12 +20,17 @@ export type NiRow = {
   /** Present only for persisted manual rows (the manual_ni_records id). */
   id?: string;
   store_id: string | null;
-  /** YYYY-MM month key (month of the week's Monday). */
+  /** YYYY-MM month key (the calendar month the hours were worked in). */
   month: string;
   employee_id: string;
   employee_name: string;
+  /** Approved hours worked at the home store, 1st to last day of the month. */
+  total_hours: number;
+  /** total_hours capped at the monthly policy figure (20h/wk × 52 ÷ 12). */
   ni_hours: number;
   ni_wages: number;
+  cash_hours: number;
+  cash_wages: number;
   /** True for rows added by hand on this page (persisted, print/export only). */
   manual?: boolean;
 };
@@ -47,7 +52,9 @@ function monthLabel(key: string): string {
 }
 
 /**
- * NI (PAYE) wages grouped by calendar month. NI is paid monthly; cash weekly.
+ * NI (PAYE) wages grouped by calendar month, NI capped at the monthly policy
+ * figure with the remainder shown as cash. Reporting only — the weekly 20h rule
+ * in lib/cash-flow.ts still decides what the Tuesday payout actually pays.
  * Admins toggle between stores (each store's figures stay fully separate);
  * managers see only their own store. Exportable as CSV or PDF (print).
  */
@@ -170,8 +177,11 @@ export function NiMonthlyView({
       const emp = m.get(r.month)!;
       const existing = emp.get(r.employee_id);
       if (existing) {
+        existing.total_hours += r.total_hours;
         existing.ni_hours += r.ni_hours;
         existing.ni_wages += r.ni_wages;
+        existing.cash_hours += r.cash_hours;
+        existing.cash_wages += r.cash_wages;
       } else {
         emp.set(r.employee_id, { ...r });
       }
@@ -182,7 +192,16 @@ export function NiMonthlyView({
   const months = Array.from(byMonth.keys()).sort((a, b) => b.localeCompare(a));
 
   function exportCSV() {
-    const headers = ["Month", "Store", "Employee", "NI hours", "NI wages (PAYE)"];
+    const headers = [
+      "Month",
+      "Store",
+      "Employee",
+      "Total hours",
+      "NI hours",
+      "Cash hours",
+      "NI wages (PAYE)",
+      "Cash £",
+    ];
     const out: (string | number)[][] = [];
     for (const mk of months) {
       for (const e of Array.from(byMonth.get(mk)!.values()).sort((a, b) =>
@@ -192,8 +211,11 @@ export function NiMonthlyView({
           monthLabel(mk),
           activeStore?.name ?? "",
           e.employee_name,
+          e.total_hours.toFixed(2),
           e.ni_hours.toFixed(2),
+          e.cash_hours.toFixed(2),
           formatGBPPlain(e.ni_wages),
+          formatGBPPlain(e.cash_wages),
         ]);
       }
     }
@@ -287,19 +309,30 @@ export function NiMonthlyView({
           const emps = Array.from(byMonth.get(mk)!.values()).sort((a, b) =>
             a.employee_name.localeCompare(b.employee_name),
           );
+          const totalHours = emps.reduce((s, e) => s + e.total_hours, 0);
           const hoursTotal = emps.reduce((s, e) => s + e.ni_hours, 0);
+          const cashHoursTotal = emps.reduce((s, e) => s + e.cash_hours, 0);
           const niTotal = emps.reduce((s, e) => s + e.ni_wages, 0);
+          const cashTotal = emps.reduce((s, e) => s + e.cash_wages, 0);
           return (
             <Card key={mk} className="p-0 overflow-hidden">
               <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <h2 className="text-base sm:text-lg font-semibold text-text-primary break-words">
                   {monthLabel(mk)} — {activeStore.name}
                 </h2>
-                <div className="text-left sm:text-right">
-                  <p className="text-xs text-text-muted">NI (PAYE) total</p>
-                  <p className="text-lg font-semibold text-gold tabular-nums">
-                    {formatGBP(niTotal)}
-                  </p>
+                <div className="flex gap-6 sm:gap-8">
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs text-text-muted">NI (PAYE) total</p>
+                    <p className="text-lg font-semibold text-gold tabular-nums">
+                      {formatGBP(niTotal)}
+                    </p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs text-text-muted">Cash total</p>
+                    <p className="text-lg font-semibold text-text-primary tabular-nums">
+                      {formatGBP(cashTotal)}
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -307,8 +340,11 @@ export function NiMonthlyView({
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wider text-text-muted bg-bg/50">
                       <th className="px-4 py-2.5 font-medium">Employee</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Total hours</th>
                       <th className="px-4 py-2.5 font-medium text-right">NI hours</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Cash hours</th>
                       <th className="px-4 py-2.5 font-medium text-right">NI wages</th>
+                      <th className="px-4 py-2.5 font-medium text-right">Cash £</th>
                       <th className="px-4 py-2.5 w-10 print:hidden"></th>
                     </tr>
                   </thead>
@@ -326,11 +362,20 @@ export function NiMonthlyView({
                             </Badge>
                           )}
                         </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums" data-label="Total hours">
+                          <HoursMinsDisplay hours={e.total_hours} />
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums" data-label="NI hours">
                           <HoursMinsDisplay hours={e.ni_hours} />
                         </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums" data-label="Cash hours">
+                          <HoursMinsDisplay hours={e.cash_hours} />
+                        </td>
                         <td className="px-4 py-2.5 text-right tabular-nums" data-label="NI wages">
                           {formatGBP(e.ni_wages)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right tabular-nums" data-label="Cash £">
+                          {formatGBP(e.cash_wages)}
                         </td>
                         <td className="px-2 py-2.5 text-right print:hidden" data-label="">
                           {e.manual && e.id && (
@@ -351,11 +396,20 @@ export function NiMonthlyView({
                   <tfoot>
                     <tr className="border-t-2 border-border bg-bg/60 font-semibold">
                       <td className="px-4 py-2.5" data-label="">Total</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums" data-label="Total hours">
+                        <HoursMinsDisplay hours={totalHours} />
+                      </td>
                       <td className="px-4 py-2.5 text-right tabular-nums" data-label="NI hours">
                         <HoursMinsDisplay hours={hoursTotal} />
                       </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums" data-label="Cash hours">
+                        <HoursMinsDisplay hours={cashHoursTotal} />
+                      </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-gold" data-label="NI wages">
                         {formatGBP(niTotal)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums" data-label="Cash £">
+                        {formatGBP(cashTotal)}
                       </td>
                       <td className="print:hidden"></td>
                     </tr>

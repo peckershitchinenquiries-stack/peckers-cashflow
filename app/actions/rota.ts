@@ -21,6 +21,8 @@ export type RotaShiftInput = {
   start_time?: string | null;
   end_time?: string | null;
   is_day_off?: boolean;
+  /** Only honoured with is_day_off — leave is a labelled Day Off. */
+  is_on_leave?: boolean;
   /** Rota preset. When set, start/end are recomputed server-side from the
    *  configured shift_times + the employee's position (Settings is the source
    *  of truth). Null = custom times or day off. */
@@ -65,6 +67,7 @@ export async function upsertShift(input: RotaShiftInput) {
   }
 
   const isDayOff = !!input.is_day_off;
+  const isOnLeave = isDayOff && !!input.is_on_leave;
   const shiftType: ShiftPreset | null =
     !isDayOff && (input.shift_type === "open_close" || input.shift_type === "evening_close")
       ? input.shift_type
@@ -144,7 +147,8 @@ export async function upsertShift(input: RotaShiftInput) {
     !existing ||
     existing.start_time !== (start ? start + ":00" : null) ||
     existing.end_time !== (end ? end + ":00" : null) ||
-    existing.is_day_off !== isDayOff;
+    existing.is_day_off !== isDayOff ||
+    !!existing.is_on_leave !== isOnLeave;
 
   if (isSameDay && existing && changed && !input.same_day_edit_reason?.trim()) {
     throw new Error(
@@ -166,6 +170,7 @@ export async function upsertShift(input: RotaShiftInput) {
     start_time: start,
     end_time: end,
     is_day_off: isDayOff,
+    is_on_leave: isOnLeave,
     scheduled_hours: hours,
     shift_type: shiftType,
     manager_notes: input.manager_notes?.trim() || null,

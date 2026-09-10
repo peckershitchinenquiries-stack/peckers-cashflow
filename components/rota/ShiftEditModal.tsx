@@ -27,18 +27,19 @@ type Props = {
   onSaved: () => void;
 };
 
-type Mode = ShiftPreset | "day_off" | "custom";
+type Mode = ShiftPreset | "day_off" | "on_leave" | "custom";
 
 const MODES: { key: Mode; label: string }[] = [
   { key: "open_close", label: "Open → Close" },
   { key: "evening_close", label: "Evening → Close" },
   { key: "custom", label: "Custom times" },
   { key: "day_off", label: "Day Off" },
+  { key: "on_leave", label: "On Leave" },
 ];
 
 /** Pick the initial mode for the modal from the existing shift (if any). */
 function initialMode(existing: RotaShift | null): Mode {
-  if (existing?.is_day_off) return "day_off";
+  if (existing?.is_day_off) return existing.is_on_leave ? "on_leave" : "day_off";
   if (existing?.shift_type === "open_close" || existing?.shift_type === "evening_close") {
     return existing.shift_type;
   }
@@ -98,7 +99,7 @@ export function ShiftEditModal({
                       : "hover:bg-surface-hover text-text-primary")
                   }
                 >
-                  <span>{formatShiftRange(s.is_day_off, s.start_time, s.end_time)}</span>
+                  <span>{formatShiftRange(s.is_day_off, s.start_time, s.end_time, s.is_on_leave)}</span>
                   {active && <span className="text-[10px] uppercase tracking-wide">editing</span>}
                 </button>
               );
@@ -177,7 +178,9 @@ function ShiftForm({
   const [reason, setReason] = React.useState(existing?.same_day_edit_reason ?? "");
   const [busy, setBusy] = React.useState(false);
 
-  const isDayOff = mode === "day_off";
+  // Leave is a Day Off with a different label, so it follows every Day Off rule.
+  const isOnLeave = mode === "on_leave";
+  const isDayOff = mode === "day_off" || isOnLeave;
   const isPreset = mode === "open_close" || mode === "evening_close";
 
   // Effective start/end for the chosen mode (presets resolve from settings).
@@ -193,7 +196,8 @@ function ShiftForm({
     !!existing &&
     (eff.start !== (existing.start_time?.slice(0, 5) ?? "") ||
       eff.end !== (existing.end_time?.slice(0, 5) ?? "") ||
-      isDayOff !== existing.is_day_off);
+      isDayOff !== existing.is_day_off ||
+      isOnLeave !== !!existing.is_on_leave);
 
   const calculated = !isDayOff && eff.start && eff.end ? shiftHours(eff.start, eff.end) : 0;
 
@@ -221,6 +225,7 @@ function ShiftForm({
         store_id: storeId,
         shift_date: shiftDate,
         is_day_off: isDayOff,
+        is_on_leave: isOnLeave,
         shift_type: isPreset ? (mode as ShiftPreset) : null,
         start_time: isDayOff ? null : eff.start,
         end_time: isDayOff ? null : eff.end,
@@ -269,10 +274,13 @@ function ShiftForm({
               onClick={() => setMode(m.key)}
               className={
                 "h-11 rounded-xl border text-sm font-medium transition-colors " +
+                (m.key === "custom" ? "col-span-2 " : "") +
                 (active
                   ? m.key === "day_off"
                     ? "bg-danger/15 border-danger/50 text-danger"
-                    : "bg-gold text-black border-gold"
+                    : m.key === "on_leave"
+                      ? "bg-warning/15 border-warning/50 text-warning"
+                      : "bg-gold text-black border-gold"
                   : "bg-surface border-border text-text-primary hover:bg-surface-hover")
               }
             >

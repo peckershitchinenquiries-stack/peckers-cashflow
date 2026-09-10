@@ -3,7 +3,7 @@ import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { hasRole, resolveActiveStoreId } from "@/lib/types";
 import { EmployeesView } from "@/components/employees/EmployeesView";
 import { getAppSettings } from "@/app/actions/settings";
-import { addDays, groupClockEventsByWeek, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
+import { addDays, mapClockEventsToDaily, startOfISOWeek, toISODate, todayISO } from "@/lib/utils";
 import { summariseCoverDriverDays } from "@/lib/cover-driver-hours";
 import { mapManagerDaysToApproval } from "@/lib/manager-clock-sessions";
 import type {
@@ -19,7 +19,7 @@ type EntryEmployee = Pick<Employee, "id" | "name" | "position" | "store_id">;
 
 export const dynamic = "force-dynamic";
 
-// Daily Approval and the Weekly Log need identity, store and rates — nothing
+// Daily Approval needs identity, store and rates — nothing
 // else. The full profile is loaded by the Employees tab that renders it.
 const APPROVAL_EMPLOYEE_COLUMNS =
   "id, name, position, store_id, employment_status, is_active, hourly_rate, hourly_ni_rate";
@@ -54,7 +54,7 @@ export default async function ManagerEmployeesPage() {
       .order("name"),
     // The whole estate's staff. Two things need it. The missed-entry picker
     // must reach someone based at the other store who covered a shift here, and
-    // the approval/weekly rows must be able to NAME and RATE them — a clock row
+    // the approval rows must be able to NAME and RATE them — a clock row
     // is filed under the store the shift happened at, so a visitor's day lands
     // on this screen while they are absent from the roster above. Display stays
     // scoped to storeId; only the identity lookup is estate-wide.
@@ -123,7 +123,7 @@ export default async function ManagerEmployeesPage() {
   const estateEmployees = (entryEmpRes.data ?? []) as unknown as EmployeeSummary[];
   // Keyed over the ESTATE, not this store's roster. A miss here doesn't just
   // blank the name — it also loses `is_driver`, so the row renders with no
-  // delivery inputs, and the rates, so the Weekly Log splits at zero.
+  // delivery inputs.
   const empMap = new Map(
     estateEmployees.map((e) => ({
       id: e.id,
@@ -139,7 +139,6 @@ export default async function ManagerEmployeesPage() {
   if (clocksRes.error) {
     console.error("[manager/employees] clock_events query failed:", clocksRes.error.message);
   }
-  const clockSummaries = groupClockEventsByWeek(clocksRes.data ?? [], empMap);
   // Shifts keyed by the day they belong to, so an approval row can show the
   // windows that make up its total.
   const sessionsByEvent = new Map<string, NonNullable<typeof sessionsRes.data>>();
@@ -194,7 +193,6 @@ export default async function ManagerEmployeesPage() {
         coverDrivers={coverDrivers}
         coverDriverDays={coverDriverDays}
         coverDriverHours={(coverHoursRes.data ?? []) as any[]}
-        clockSummaries={clockSummaries}
         clockDailySummaries={clockDailySummaries}
         managerDaily={managerDaily}
         managers={managerAccounts}
@@ -207,7 +205,6 @@ export default async function ManagerEmployeesPage() {
         defaultStoreId={storeId || null}
         minWageBands={settings.min_wage_bands}
         lockToStore
-        canManualLog={false}
         canEditContactEmail={false}
       />
     </>

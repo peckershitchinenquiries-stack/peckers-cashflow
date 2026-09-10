@@ -327,6 +327,7 @@ export type CoverDriverShift = {
   start_time: string | null;
   end_time: string | null;
   is_day_off: boolean;
+  is_on_leave: boolean;
   scheduled_hours: number;
   notes: string | null;
   created_at: string;
@@ -495,6 +496,8 @@ export type RotaShift = {
   start_time: string | null;
   end_time: string | null;
   is_day_off: boolean;
+  /** A Day Off that is booked leave (migration 056). Always implies is_day_off. */
+  is_on_leave: boolean;
   scheduled_hours: number;
   shift_type: ShiftPreset | null;
   manager_notes: string | null;
@@ -846,6 +849,7 @@ export type ManagerShift = {
   start_time: string | null;
   end_time: string | null;
   is_day_off: boolean;
+  is_on_leave: boolean;
   scheduled_hours: number;
   notes: string | null;
   created_at: string;
@@ -1073,6 +1077,7 @@ export type LiveDashboardStatus =
   | "expected"
   | "clocked_out"
   | "day_off"
+  | "on_leave"
   | "tbc"
   | "late"
   | "absent";

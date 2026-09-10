@@ -21,7 +21,7 @@ type Props = {
   onSaved: () => void;
 };
 
-type Mode = "working" | "day_off";
+type Mode = "working" | "day_off" | "on_leave";
 
 export function ManagerShiftEditModal({
   manager,
@@ -34,7 +34,9 @@ export function ManagerShiftEditModal({
 }: Props) {
   const toast = useToast();
 
-  const [mode, setMode] = React.useState<Mode>(existing?.is_day_off ? "day_off" : "working");
+  const [mode, setMode] = React.useState<Mode>(
+    existing?.is_day_off ? (existing.is_on_leave ? "on_leave" : "day_off") : "working",
+  );
   const [start, setStart] = React.useState(
     existing?.start_time?.slice(0, 5) ?? prefill?.start ?? "",
   );
@@ -44,7 +46,8 @@ export function ManagerShiftEditModal({
   const [notes, setNotes] = React.useState(existing?.notes ?? "");
   const [busy, setBusy] = React.useState(false);
 
-  const isDayOff = mode === "day_off";
+  const isOnLeave = mode === "on_leave";
+  const isDayOff = mode === "day_off" || isOnLeave;
   const calculated = !isDayOff && start && end ? shiftHours(start, end) : 0;
   const canSave = isDayOff || (!!start && !!end);
 
@@ -56,6 +59,7 @@ export function ManagerShiftEditModal({
         store_id: storeId,
         shift_date: shiftDate,
         is_day_off: isDayOff,
+        is_on_leave: isOnLeave,
         start_time: isDayOff ? null : start,
         end_time: isDayOff ? null : end,
         notes: notes || null,
@@ -108,11 +112,12 @@ export function ManagerShiftEditModal({
     >
       <div className="flex flex-col gap-4">
         {/* Mode selector */}
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           {(
             [
               { key: "working", label: "Working" },
               { key: "day_off", label: "Day Off" },
+              { key: "on_leave", label: "On Leave" },
             ] as { key: Mode; label: string }[]
           ).map((m) => {
             const active = mode === m.key;
@@ -126,7 +131,9 @@ export function ManagerShiftEditModal({
                   (active
                     ? m.key === "day_off"
                       ? "bg-danger/15 border-danger/50 text-danger"
-                      : "bg-gold text-black border-gold"
+                      : m.key === "on_leave"
+                        ? "bg-warning/15 border-warning/50 text-warning"
+                        : "bg-gold text-black border-gold"
                     : "bg-surface border-border text-text-primary hover:bg-surface-hover")
                 }
               >

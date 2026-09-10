@@ -95,6 +95,7 @@ function WeekBlock({
         // A day is only "off" when EVERY published row says so — a working
         // shift alongside a stray day-off row still means they're in.
         kind: working.length === 0 ? ("off" as const) : ("shift" as const),
+        onLeave: working.length === 0 && dayShifts.some((s) => s.is_on_leave),
         shifts: working,
         reason: dayShifts.map((s) => s.same_day_edit_reason).find(Boolean) ?? null,
         hours: working.reduce((sum, s) => sum + shiftHours(s.start_time, s.end_time), 0),
@@ -154,7 +155,11 @@ function WeekBlock({
               </div>
               <div className="text-sm text-text-subtle text-right">
                 {d.kind === "off" ? (
-                  <span className="text-danger">Day Off</span>
+                  d.onLeave ? (
+                    <span className="text-warning">On Leave</span>
+                  ) : (
+                    <span className="text-danger">Day Off</span>
+                  )
                 ) : d.kind === "shift" ? (
                   <>
                     {d.shifts.map((s, idx) => (

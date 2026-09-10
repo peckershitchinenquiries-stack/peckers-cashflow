@@ -21,6 +21,7 @@ import type {
 /** The expected shift for a cover driver on one date, whatever its source. */
 export type CoverDriverEffShift = {
   is_day_off: boolean;
+  is_on_leave?: boolean;
   start_time: string | null;
   end_time: string | null;
   scheduled_hours: number | null;
@@ -43,6 +44,7 @@ export function resolveCoverDriverShift(
   if (shift) {
     return {
       is_day_off: shift.is_day_off,
+      is_on_leave: shift.is_on_leave,
       start_time: shift.start_time,
       end_time: shift.end_time,
       scheduled_hours: Number(shift.scheduled_hours) || null,

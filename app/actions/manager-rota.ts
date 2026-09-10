@@ -25,6 +25,8 @@ export type ManagerShiftInput = {
   start_time?: string | null;
   end_time?: string | null;
   is_day_off?: boolean;
+  /** Only honoured with is_day_off — leave is a labelled Day Off. */
+  is_on_leave?: boolean;
   notes?: string | null;
 };
 
@@ -45,6 +47,7 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
   }
 
   const isDayOff = !!input.is_day_off;
+  const isOnLeave = isDayOff && !!input.is_on_leave;
   const start = isDayOff ? null : input.start_time?.slice(0, 5) || null;
   const end = isDayOff ? null : input.end_time?.slice(0, 5) || null;
 
@@ -69,6 +72,7 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
     start_time: start,
     end_time: end,
     is_day_off: isDayOff,
+    is_on_leave: isOnLeave,
     scheduled_hours: hours,
     notes: input.notes?.trim() || null,
     updated_by: user.id,
