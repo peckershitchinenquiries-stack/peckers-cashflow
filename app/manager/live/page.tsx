@@ -138,7 +138,7 @@ export default async function ManagerLivePage() {
         title="Live Dashboard"
         description="Real-time staffing for your store today. Refreshes every 30 seconds."
       />
-      <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="mb-4 md:mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ManagerClockCard
           managerName={user.allowed?.name ?? "Manager"}
           store={myStore}
@@ -150,7 +150,7 @@ export default async function ManagerLivePage() {
           <ManagerQuickEntry storeId={storeId} today={today} existing={todayEntry} />
         )}
       </div>
-      <div className="mb-6">
+      <div className="mb-4 md:mb-6">
         <ClockReminderOptIn
           saveSubscription={saveManagerPushSubscription}
           deleteSubscription={deleteManagerPushSubscription}

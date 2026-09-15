@@ -351,8 +351,8 @@ export function LiveDashboard({
   const weekday = WEEKDAY_LONG[(today.getDay() + 6) % 7];
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-2 text-sm text-text-muted">
+    <div className="flex flex-col gap-4 md:gap-6">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs sm:text-sm text-text-muted">
         <span>{weekday}, {formatDDMMYYYY(today)}</span>
         <span>·</span>
         <span className="flex items-center gap-1.5">
@@ -361,7 +361,7 @@ export function LiveDashboard({
         </span>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-7 md:gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
             (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
@@ -512,41 +512,47 @@ export function LiveDashboard({
           const actualGrandTotal = actualTotal + managerActualTotal + coverActualTotal;
 
           return (
-            <Card key={store.id} className="p-0 overflow-hidden">
-              <div className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-border">
+            <Card key={store.id} className="live-store-card p-0 overflow-hidden">
+              <div className="px-0 md:px-5 pt-0 md:pt-5 pb-0 md:pb-3 md:border-b md:border-border">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-base sm:text-lg font-semibold tracking-wide break-words">
                       {store.name}
                     </h2>
-                    <p className="text-xs text-text-muted mt-1">
+                    <p className="text-xs text-text-muted mt-0.5 sm:mt-1">
                       {sorted.length} scheduled · {onShiftCount} on shift now
                     </p>
                   </div>
                   {(canAddClockIn || canAddManagerClockIn) && (
-                    <div className="flex flex-col items-stretch gap-2 sm:shrink-0">
+                    <div className="flex flex-row sm:flex-col items-stretch gap-2 sm:shrink-0">
                       {canAddClockIn && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="w-full sm:w-auto justify-center"
+                          className="flex-1 sm:flex-none sm:w-auto justify-center whitespace-nowrap"
                           iconLeft={<PlusIcon size={14} />}
                           onClick={() => setAdding({ mode: "employee", storeId: store.id })}
                           title="Record a clock-in for someone who forgot"
                         >
-                          Add employee clock-in
+                          <span className={canAddManagerClockIn ? "sm:hidden" : "hidden"}>
+                            Employee
+                          </span>
+                          <span className={canAddManagerClockIn ? "hidden sm:inline" : ""}>
+                            Add employee clock-in
+                          </span>
                         </Button>
                       )}
                       {canAddManagerClockIn && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="w-full sm:w-auto justify-center"
+                          className="flex-1 sm:flex-none sm:w-auto justify-center whitespace-nowrap"
                           iconLeft={<PlusIcon size={14} />}
                           onClick={() => setAdding({ mode: "manager", storeId: store.id })}
                           title="Record a clock-in for a manager who forgot"
                         >
-                          Add manager clock-in
+                          <span className="sm:hidden">Manager</span>
+                          <span className="hidden sm:inline">Add manager clock-in</span>
                         </Button>
                       )}
                     </div>
@@ -555,7 +561,7 @@ export function LiveDashboard({
 
                 {/* Manager attendance — clock in/out for monitoring (fixed salary) */}
                 {storeManagers.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-border bg-surface-hover/50 p-3">
+                  <div className="mt-3 rounded-lg border border-border bg-surface md:bg-surface-hover/50 p-3">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted mb-2">
                       Manager attendance
                     </div>
@@ -657,7 +663,7 @@ export function LiveDashboard({
 
                 {/* Daily wage summary — expected (from the schedule) vs actual (clocked so far) */}
                 <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
+                  <div className="rounded-lg border border-border bg-surface md:bg-surface-hover px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted">
                       Expected wage today
                     </div>
@@ -671,7 +677,7 @@ export function LiveDashboard({
                       </div>
                     )}
                   </div>
-                  <div className="rounded-lg border border-border bg-surface-hover px-3 py-2">
+                  <div className="rounded-lg border border-border bg-surface md:bg-surface-hover px-3 py-2">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted">
                       Actual wage so far
                     </div>
@@ -689,7 +695,7 @@ export function LiveDashboard({
 
                 {/* Home staff & managers working at the other store today */}
                 {(awayStaff.length > 0 || awayManagers.length > 0) && (
-                  <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 p-3">
+                  <div className="mt-3 rounded-lg border border-gold/30 bg-gold/5 px-3 py-2.5 md:p-3">
                     <div className="text-[10px] uppercase tracking-wider text-gold/90 mb-1.5">
                       Working at another store today
                     </div>
@@ -727,7 +733,7 @@ export function LiveDashboard({
               </div>
 
               <div className="overflow-x-auto">
-                <table className="table-stack w-full text-sm md:min-w-[720px]">
+                <table className="table-stack stack-grid w-full text-sm md:min-w-[720px]">
                   <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                     <tr>
                       <th className="text-left px-3 py-2">Employee</th>
@@ -766,6 +772,7 @@ export function LiveDashboard({
                       return (
                         <tr
                           key={emp.id}
+                          data-status={status}
                           className={
                             "border-t border-border " + (ROW_BG[status] ?? "")
                           }
@@ -858,8 +865,8 @@ export function LiveDashboard({
                   Most stores use them at weekends only, so an empty block every
                   weekday would be noise. */}
               {hasCover && (
-                <div className="border-t-2 border-gold/30">
-                  <div className="px-3 py-2 bg-gold/5 text-[10px] uppercase tracking-wider text-gold/90 flex items-center justify-between gap-2">
+                <div className="mt-4 md:mt-0 md:border-t-2 md:border-gold/30">
+                  <div className="px-1 md:px-3 py-0 md:py-2 md:bg-gold/5 text-[10px] uppercase tracking-wider text-gold/90 flex items-center justify-between gap-2">
                     <span>Cover drivers · {storeCoverRows.length}</span>
                     {canAddClockIn && (
                       <button
@@ -872,7 +879,7 @@ export function LiveDashboard({
                     )}
                   </div>
                   <div className="overflow-x-auto">
-                    <table className="table-stack w-full text-sm md:min-w-[720px]">
+                    <table className="table-stack stack-grid w-full text-sm md:min-w-[720px]">
                       <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                         <tr>
                           <th className="text-left px-3 py-2">Employee</th>
@@ -893,6 +900,7 @@ export function LiveDashboard({
                             return (
                               <tr
                                 key={driver.id}
+                                data-status={status}
                                 className={
                                   "border-t border-border " + (ROW_BG[status] ?? "")
                                 }
@@ -1088,8 +1096,8 @@ export function LiveDashboard({
         />
       )}
 
-      <Card className="text-xs text-text-muted">
-        <div className="flex items-center gap-4 flex-wrap">
+      <Card className="p-3 md:p-5 text-xs text-text-muted">
+        <div className="flex items-center gap-x-3 gap-y-1.5 md:gap-4 flex-wrap">
           <span className="text-text-subtle font-medium">Status key:</span>
           {(["on_shift", "expected", "late", "clocked_out", "day_off", "on_leave", "absent", "tbc"] as LiveDashboardStatus[]).map(
             (s) => (
