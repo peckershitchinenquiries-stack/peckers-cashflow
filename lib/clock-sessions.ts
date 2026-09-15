@@ -323,8 +323,8 @@ export async function findOpenSession(
  * not the day header, because the header's clock_in_at survives a shift being
  * deleted and a day can exist with no shifts on it at all.
  *
- * Used by the early clock-in gate: the second shift of a day is never asked for
- * an OTP, since the person is already on site and the morning verified them.
+ * Used by the early clock-in gate: only the first shift of a day is held to the
+ * booked rota start.
  */
 export async function hasSessionOnDate(
   supabase: SupabaseClient,

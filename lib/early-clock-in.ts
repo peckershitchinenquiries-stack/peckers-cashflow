@@ -1,37 +1,29 @@
 // =============================================================
 // Early clock-in — the ONE rule, shared by the client pre-check and the server
-// gate (migration 043).
+// gate (Update 180).
 //
-// An employee booked at 17:00 who clocks in at 16:30 is paid for the extra half
-// hour. Rather than block that (managers do sometimes ask someone to start
-// early), the clock-in is refused until they enter a code the manager reads out.
+// Clock-in is strict to the booked rota shift: nobody may start before their
+// booked start time, and there is no override from the employee's side. A
+// manager who genuinely wants someone to start early records that start with a
+// manual clock entry. Clocking OUT is never restricted.
 //
-// CrewClockApp evaluates the rule from props it already holds, so an ON-TIME
-// clock-in still makes exactly one server call and gains no round-trip. That
-// client check is a routing optimisation only — performClockIn evaluates the
-// same rule server-side and refuses independently, or the gate would be
-// bypassable by calling the action directly.
+// CrewClockApp evaluates the rule from props it already holds, so an early press
+// is refused without a server round-trip. That client check is UX only —
+// performClockIn evaluates the same rule server-side and refuses independently,
+// or the gate would be bypassable by calling the action directly.
 //
 // Deliberately pure: no Node, no Supabase, nothing that cannot reach a client
-// bundle. generateOtp lives in app/actions/early-clock-in.ts instead, because it
-// needs node:crypto (same split as credentials.ts / password-reset.ts).
+// bundle.
 // =============================================================
 
 import { timeToMinutes } from "@/lib/utils";
 
 /**
  * How many minutes before the booked start still count as on time. Zero today —
- * clocking in at or after the scheduled minute never asks for a code. Named so
- * it can be widened without hunting for the comparison.
+ * clocking in at or after the scheduled minute is allowed. Named so it can be
+ * widened without hunting for the comparison.
  */
 export const EARLY_CLOCK_IN_GRACE_MINUTES = 0;
-
-/** How long a code stays live. Also bounds how stale the request-time geofence
- *  verdict can be, since consuming the code takes no location of its own. */
-export const EARLY_OTP_TTL_MS = 20 * 60_000;
-
-/** Wrong codes before the request locks and the manager must issue a new one. */
-export const EARLY_OTP_MAX_ATTEMPTS = 5;
 
 /**
  * The booked start to measure earliness against, in minutes, or null when there
@@ -40,7 +32,7 @@ export const EARLY_OTP_MAX_ATTEMPTS = 5;
  * Only a BOOKING counts. `employee_schedules` is availability — a recurring
  * pattern that never creates a shift (see CLAUDE.md) — so a day with no
  * `rota_shifts` row, a day off, or a booking with no start time all clock in
- * exactly as they do today.
+ * freely.
  */
 export function bookableStartMinutes(
   shift: { is_day_off?: boolean | null; start_time: string | null } | null,
@@ -60,12 +52,16 @@ export function isEarlyClockIn(args: {
   hasSessionToday: boolean;
 }): boolean {
   if (args.scheduledStartMinutes == null) return false;
-  // Second and later shifts are never gated: they are already on site, and the
-  // morning's clock-in verified them.
+  // Second and later shifts are never gated: the first one already started at
+  // or after the booked time (or was entered by a manager).
   if (args.hasSessionToday) return false;
   return args.nowMinutes < args.scheduledStartMinutes - EARLY_CLOCK_IN_GRACE_MINUTES;
 }
 
-export function minutesEarly(nowMinutes: number, startMinutes: number): number {
-  return Math.max(0, startMinutes - nowMinutes);
+/** The refusal shown to the employee, identical on the client and the server. */
+export function earlyClockInMessage(scheduledStartMinutes: number): string {
+  const h = Math.floor(scheduledStartMinutes / 60);
+  const m = scheduledStartMinutes % 60;
+  const hhmm = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  return `Your shift starts at ${hhmm}. You can't clock in before your scheduled start time.`;
 }

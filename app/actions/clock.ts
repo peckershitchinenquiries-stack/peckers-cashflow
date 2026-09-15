@@ -30,9 +30,8 @@ import {
   type DeliveryInput,
 } from "@/lib/clock-sessions";
 // The clock-IN routine and the helpers it shares with the manager-entry path
-// live in lib/ so app/actions/early-clock-in.ts can reach them: every export of
-// a "use server" module is a client-callable endpoint, and performClockIn takes
-// a context that can skip the geofence.
+// live in lib/: every export of a "use server" module is a client-callable
+// endpoint, and these are internal building blocks.
 import {
   applyAutoShiftForClockIn,
   asResult,
@@ -42,27 +41,13 @@ import {
   requireAllowed,
   revalidateClockPaths,
   stampAutoShiftWindow,
-  type ClockInContext,
+  type ClockInFix,
 } from "@/lib/clock-core";
 import { hasRole, resolveActiveStoreId, type ActionResult } from "@/lib/types";
 
-type ClockInInput = {
-  latitude: number;
-  longitude: number;
-  accuracy?: number | null;
-  /** Age of the fix in ms — see ReportedFix. Stale positions are refused. */
-  fix_age_ms: number | null;
-};
-
-/**
- * The exported signature is deliberately unchanged: it wraps the input in the
- * `geo` context, which is the only kind a client may ever ask for. The
- * pre-authorised kind is reachable only from the server, after an OTP has been
- * verified (app/actions/early-clock-in.ts).
- */
-export async function clockIn(input: ClockInInput): Promise<ActionResult> {
-  const ctx: ClockInContext = { kind: "geo", ...input };
-  return asResult(() => performClockIn(ctx));
+/** Refused before the booked rota start — see lib/early-clock-in.ts. */
+export async function clockIn(input: ClockInFix): Promise<ActionResult> {
+  return asResult(() => performClockIn(input));
 }
 
 type ClockOutInput = {

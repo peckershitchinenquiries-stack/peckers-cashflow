@@ -2,19 +2,9 @@
 // The shared employee clock-IN routine, and the helpers every clock write path
 // uses.
 //
-// This lives in lib/ rather than app/actions/clock.ts for one reason: it is
-// reached from two server actions (the ordinary geofenced clock-in, and the
-// OTP-authorised early clock-in in app/actions/early-clock-in.ts), and every
-// export of a "use server" module is a client-callable endpoint. Exporting
-// performClockIn from there would hand the browser a way to pass
-// { kind: "preauthorised", storeId } and clock in at any store with no geofence
-// at all.
-//
-// The context union is the ONLY thing that branches. Everything after the store
-// is resolved — the open-session guard, the rota link, the header upsert, the
-// session, recomputeDayHeader, approval revocation, audit, revalidation — runs
-// once and identically, so an OTP clock-in produces a byte-for-byte ordinary
-// clock record.
+// This lives in lib/ rather than app/actions/clock.ts because every export of a
+// "use server" module is a client-callable endpoint, and these are internal
+// building blocks shared with the manager-entry path — not endpoints.
 // =============================================================
 
 import { revalidatePath } from "next/cache";
@@ -41,15 +31,15 @@ import {
   recomputeDayHeader,
 } from "@/lib/clock-sessions";
 import { employeeNiRate, rollupApprovedWeek } from "@/lib/employee-hours-rollup";
-import { bookableStartMinutes, isEarlyClockIn } from "@/lib/early-clock-in";
+import {
+  bookableStartMinutes,
+  earlyClockInMessage,
+  isEarlyClockIn,
+} from "@/lib/early-clock-in";
 import type { ActionResult } from "@/lib/types";
 
 /** Marker note for shifts the system created from a clock-in (no rota entry). */
 export const AUTO_SHIFT_NOTE = "Auto-created from clock-in";
-
-/** Shown when someone tries to start before their booked shift without a code. */
-export const EARLY_CLOCK_IN_BLOCKED_MESSAGE =
-  "You're starting early — ask your manager for an OTP to clock in.";
 
 /**
  * Boundary for user-triggered clock actions: converts a thrown error into a
@@ -322,51 +312,12 @@ export function londonNowMinutes(now: Date = new Date()): number {
 }
 
 /**
- * Withdraw any live OTP request the employee is holding. Called when they clock
- * in through the ordinary path instead — they gave up on the phone call and
- * waited for their start time, and leaving the code live would keep them on the
- * manager's Live board as still waiting.
+ * Refuse a clock-in made before the employee's booked start (Update 180).
  *
- * Service-role: early_clock_in_requests is staff-only under RLS (migration
- * 043), and the actor here is the employee. Best-effort — a cleanup failure
- * must not block a clock-in that has already been written.
- */
-export async function cancelPendingEarlyClockInRequests(input: {
-  employeeId: string;
-  reason: string;
-}): Promise<void> {
-  if (!isProvisioningConfigured()) return;
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("early_clock_in_requests")
-      .update({ status: "cancelled" })
-      .eq("employee_id", input.employeeId)
-      .eq("status", "pending")
-      .select("id");
-    if ((data ?? []).length === 0) return;
-    await writeAudit({
-      action: "early_clock_in_otp_cancelled",
-      entity: "early_clock_in_request",
-      entity_id: data![0].id,
-      changes: { employee_id: input.employeeId, reason: input.reason },
-    });
-  } catch (err) {
-    console.error(
-      "[clock] could not clear a pending early clock-in request:",
-      err instanceof Error ? err.message : err,
-    );
-  }
-}
-
-/**
- * Refuse a clock-in made before the employee's booked start.
- *
- * The crew screen already routes an early press to requestEarlyClockInOtp, so
- * this is rarely what the employee sees. It exists because a gate enforced only
- * in the client is not a gate — without it the whole feature is bypassed by
- * calling clockIn() directly. Both sides evaluate isEarlyClockIn so they cannot
- * disagree about a verdict a manager would have to explain.
+ * The crew screen refuses an early press itself, so this is rarely what the
+ * employee sees. It exists because a gate enforced only in the client is not a
+ * gate — without it the rule is bypassed by calling clockIn() directly. Both
+ * sides evaluate isEarlyClockIn so they cannot disagree.
  */
 async function assertNotEarlyClockIn(
   supabase: ReturnType<typeof createServerSupabase>,
@@ -381,33 +332,17 @@ async function assertNotEarlyClockIn(
     scheduledStartMinutes,
     hasSessionToday: await hasSessionOnDate(supabase, employeeId, eventDate),
   });
-  if (early) throw new Error(EARLY_CLOCK_IN_BLOCKED_MESSAGE);
+  if (early) throw new Error(earlyClockInMessage(scheduledStartMinutes));
 }
 
-/**
- * How this clock-in proved where the employee is standing.
- *
- * `geo` is the ordinary path: a fresh fix, judged now. `preauthorised` is the
- * OTP path, where the fix was judged at REQUEST time — a phone call to the
- * manager outlives MAX_FIX_AGE_MS, so re-checking here would refuse a position
- * the geofence has already accepted (migration 043 explains the split).
- */
-export type ClockInContext =
-  | {
-      kind: "geo";
-      latitude: number;
-      longitude: number;
-      accuracy?: number | null;
-      /** Age of the fix in ms — see ReportedFix. Stale positions are refused. */
-      fix_age_ms: number | null;
-    }
-  | {
-      kind: "preauthorised";
-      storeId: string;
-      latitude: number;
-      longitude: number;
-      requestId: string;
-    };
+/** The position the clock-in is judged against, captured at the button press. */
+export type ClockInFix = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  /** Age of the fix in ms — see ReportedFix. Stale positions are refused. */
+  fix_age_ms: number | null;
+};
 
 export type ClockInOutcome = {
   clockEventId: string;
@@ -415,7 +350,7 @@ export type ClockInOutcome = {
   storeId: string;
 };
 
-export async function performClockIn(ctx: ClockInContext): Promise<ClockInOutcome> {
+export async function performClockIn(ctx: ClockInFix): Promise<ClockInOutcome> {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
 
@@ -425,28 +360,21 @@ export async function performClockIn(ctx: ClockInContext): Promise<ClockInOutcom
     throw new Error("Your account is not active.");
   }
 
-  // Staff can work at any store, not only their home one. On the geo path the
-  // store is detected from where they're standing — that store is where the
-  // day's work (and wages) are attributed — which also verifies they're in
-  // range and that the fix is recent enough to prove where they are NOW. On the
-  // pre-authorised path that verdict was already reached and persisted on the
-  // OTP request, so it is trusted rather than re-taken.
-  let workedStoreId: string;
-  if (ctx.kind === "geo") {
-    const detected = await detectStoreForLocation(
-      supabase,
-      {
-        lat: ctx.latitude,
-        lng: ctx.longitude,
-        accuracy: ctx.accuracy,
-        ageMs: ctx.fix_age_ms,
-      },
-      { actorEmail: user.email, employeeId: employee.id, action: "clock_in" },
-    );
-    workedStoreId = detected.id;
-  } else {
-    workedStoreId = ctx.storeId;
-  }
+  // Staff can work at any store, not only their home one. The store is detected
+  // from where they're standing — that store is where the day's work (and
+  // wages) are attributed — which also verifies they're in range and that the
+  // fix is recent enough to prove where they are NOW.
+  const detected = await detectStoreForLocation(
+    supabase,
+    {
+      lat: ctx.latitude,
+      lng: ctx.longitude,
+      accuracy: ctx.accuracy,
+      ageMs: ctx.fix_age_ms,
+    },
+    { actorEmail: user.email, employeeId: employee.id, action: "clock_in" },
+  );
+  const workedStoreId = detected.id;
 
   const today = todayISO();
 
@@ -470,9 +398,7 @@ export async function performClockIn(ctx: ClockInContext): Promise<ClockInOutcom
   // shift simply gets attached so the Live board can compare planned vs actual.
   const shift = await findShiftForClockIn(supabase, employee.id, today);
 
-  if (ctx.kind === "geo") {
-    await assertNotEarlyClockIn(supabase, employee.id, today, shift);
-  }
+  await assertNotEarlyClockIn(supabase, employee.id, today, shift);
 
   const { data: existing } = await supabase
     .from("clock_events")
@@ -568,21 +494,8 @@ export async function performClockIn(ctx: ClockInContext): Promise<ClockInOutcom
     changes: {
       date: today,
       location: [ctx.latitude, ctx.longitude],
-      ...(ctx.kind === "preauthorised"
-        ? { early_clock_in_request_id: ctx.requestId }
-        : {}),
     },
   });
-
-  // They clocked in on time after all, so any code the manager issued is spent.
-  // After the write, never before: cancelling a live request and then failing to
-  // record the shift would leave them with neither.
-  if (ctx.kind === "geo") {
-    await cancelPendingEarlyClockInRequests({
-      employeeId: employee.id,
-      reason: "Clocked in through the normal path",
-    });
-  }
 
   // Auto-scan so late/variance alerts surface without a manual "Scan now".
   // Best-effort: never let a scan failure block the clock-in.

@@ -21,11 +21,9 @@ import type {
 } from "@/lib/types";
 import {
   COVER_SCHEDULE_COLUMNS,
-  EARLY_CLOCK_IN_COLUMNS,
   LIVE_CLOCK_SESSION_COLUMNS,
   LIVE_EMPLOYEE_COLUMNS,
   SCHEDULE_COLUMNS,
-  mapEarlyClockInRows,
 } from "@/lib/rota-columns";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +48,6 @@ export default async function LivePage() {
     coverClocksRes,
     coverShiftsRes,
     coverSchedulesRes,
-    earlyClockInsRes,
   ] = await Promise.all([
     supabase.from("stores").select("*").order("name"),
     supabase.from("employees").select(LIVE_EMPLOYEE_COLUMNS).neq("employment_status", "left"),
@@ -78,14 +75,6 @@ export default async function LivePage() {
     supabase.from("cover_driver_clock_events").select("*").eq("event_date", today),
     supabase.from("cover_driver_shifts").select("*").eq("shift_date", today),
     supabase.from("cover_driver_schedules").select(COVER_SCHEDULE_COLUMNS),
-    // All stores — an admin watches the whole estate, so rows are labelled with
-    // the store rather than filtered to one.
-    supabase
-      .from("early_clock_in_requests")
-      .select(EARLY_CLOCK_IN_COLUMNS)
-      .eq("event_date", today)
-      .in("status", ["pending", "used"])
-      .order("requested_at", { ascending: false }),
   ]);
 
   return (
@@ -109,7 +98,6 @@ export default async function LivePage() {
         coverDriverClocks={(coverClocksRes.data ?? []) as CoverDriverClockEvent[]}
         coverDriverShifts={(coverShiftsRes.data ?? []) as CoverDriverShift[]}
         coverDriverSchedules={(coverSchedulesRes.data ?? []) as CoverDriverScheduleDay[]}
-        earlyClockIns={mapEarlyClockInRows(earlyClockInsRes.data)}
         // One button per store card, each recording against its own store —
         // an admin watches the whole estate, so both stores are theirs to fix.
         canAddClockIn={user.allowed?.role === "admin"}
