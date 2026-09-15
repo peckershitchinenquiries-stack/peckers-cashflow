@@ -911,7 +911,7 @@ export default async function ExecutivePage({
       >
         {/* Stacked, not side by side: the WoW/YoY columns now carry a figure as
             well as a percentage, which needs the full page width to stay legible. */}
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <ChartCard
             title={`Delivery Orders — ${int(combined.delivery.orders)} (${pct(
               share(combined.delivery.orders, combined.orders)
@@ -973,7 +973,7 @@ export default async function ExecutivePage({
 
       {activeStores.length > 1 && (
         <Section title="Visual Breakdown">
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <ChartCard title="Net Sales by Store">
               <BarChartCard
                 data={netSalesByStore}
