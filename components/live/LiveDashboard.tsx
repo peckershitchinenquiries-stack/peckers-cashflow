@@ -361,7 +361,7 @@ export function LiveDashboard({
         </span>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-7 md:gap-5">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
             (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
@@ -512,8 +512,8 @@ export function LiveDashboard({
           const actualGrandTotal = actualTotal + managerActualTotal + coverActualTotal;
 
           return (
-            <Card key={store.id} className="live-store-card p-0 overflow-hidden">
-              <div className="px-0 md:px-5 pt-0 md:pt-5 pb-0 md:pb-3 md:border-b md:border-border">
+            <Card key={store.id} className="p-0 overflow-hidden">
+              <div className="px-3 md:px-5 pt-3 md:pt-5 pb-3 border-b border-border">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="min-w-0">
                     <h2 className="text-base sm:text-lg font-semibold tracking-wide break-words">
@@ -865,8 +865,8 @@ export function LiveDashboard({
                   Most stores use them at weekends only, so an empty block every
                   weekday would be noise. */}
               {hasCover && (
-                <div className="mt-4 md:mt-0 md:border-t-2 md:border-gold/30">
-                  <div className="px-1 md:px-3 py-0 md:py-2 md:bg-gold/5 text-[10px] uppercase tracking-wider text-gold/90 flex items-center justify-between gap-2">
+                <div className="border-t-2 border-gold/30">
+                  <div className="px-3 py-2 bg-gold/5 text-[10px] uppercase tracking-wider text-gold/90 flex items-center justify-between gap-2">
                     <span>Cover drivers · {storeCoverRows.length}</span>
                     {canAddClockIn && (
                       <button

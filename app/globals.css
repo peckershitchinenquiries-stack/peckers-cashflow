@@ -317,19 +317,11 @@
 
   /* `.stack-grid` (Live board): a compact card per row instead of one line per
      field — name + status on top, role beneath, then the rest three across. */
-  /* Live board: the store card drops its box so the per-person cards sit
-     directly on the page instead of a card inside a card. */
-  .live-store-card {
-    background: transparent;
-    border: 0;
-    border-radius: 0;
-    overflow: visible;
-  }
   .table-stack.stack-grid tbody {
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    padding: 0.625rem 0 0;
+    padding: 0.75rem;
   }
   .table-stack.stack-grid tr {
     display: grid;
