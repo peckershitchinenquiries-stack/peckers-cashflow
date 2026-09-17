@@ -120,21 +120,24 @@ export function DateRangePicker({ start, end, onApply }: Props) {
   const today = new Date();
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div ref={wrapRef} className="relative min-w-0">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-2 h-11 px-3 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors text-left"
+        className="flex items-center gap-2 h-11 px-3 rounded-xl border border-border bg-surface hover:bg-surface-hover transition-colors text-left max-sm:w-full max-sm:px-2.5"
         aria-haspopup="dialog"
         aria-expanded={open}
       >
         <CalendarIcon size={16} className="text-text-muted shrink-0" />
-        <span className="leading-tight">
+        <span className="leading-tight min-w-0 flex-1">
           <span className="block text-[10px] text-text-muted uppercase tracking-wider">
             Date range
           </span>
-          <span className="block text-sm font-medium text-text-primary">
+          <span className="block text-sm font-medium text-text-primary truncate max-sm:hidden">
             {formatDDMMYYYY(selStart)} – {formatDDMMYYYY(selEnd)}
+          </span>
+          <span className="sm:hidden block text-sm font-medium text-text-primary truncate tabular-nums">
+            {formatDDMMYYYY(selStart).slice(0, 5)} – {formatDDMMYYYY(selEnd).slice(0, 5)}
           </span>
         </span>
         <ChevronRightIcon
@@ -146,7 +149,7 @@ export function DateRangePicker({ start, end, onApply }: Props) {
       {open && (
         <div
           role="dialog"
-          className="absolute right-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3"
+          className="absolute right-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3 max-sm:fixed max-sm:inset-x-3 max-sm:top-20 max-sm:z-50 max-sm:mt-0 max-sm:w-auto max-sm:max-w-none"
         >
           {/* Presets */}
           <div className="flex flex-wrap gap-1.5 mb-3">

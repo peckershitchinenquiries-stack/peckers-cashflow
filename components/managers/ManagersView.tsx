@@ -204,6 +204,7 @@ export function ManagersView({
           onClick={() => setShowAdd(true)}
           iconLeft={<PlusIcon size={16} />}
           disabled={!provisioningReady || stores.length === 0}
+          className="max-sm:order-first max-sm:w-full"
         >
           Add Manager
         </Button>
@@ -227,7 +228,83 @@ export function ManagersView({
           />
         </Card>
       ) : (
-        <Card className="p-0 overflow-hidden">
+        <>
+        <ul className="md:hidden flex flex-col gap-3">
+          {managers.map((m) => (
+            <li key={m.id} className="rounded-2xl border border-border bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold text-text-primary truncate">{m.name || "—"}</p>
+                  <p className="font-mono text-xs text-text-muted truncate mt-0.5">
+                    {m.username || m.email}
+                  </p>
+                </div>
+                <Badge variant="neutral" className="shrink-0">{storeName(m.store_id)}</Badge>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <button
+                  onClick={() => openWage(m)}
+                  className="text-left rounded-xl border border-border bg-bg/40 px-3 py-2 active:bg-surface-hover"
+                >
+                  <span className="block text-[10px] uppercase tracking-wider text-text-muted">Pay</span>
+                  <span className="block text-sm font-medium tabular-nums text-text-primary">
+                    {m.fixed_daily_wage != null ? (
+                      <>
+                        {formatGBP(m.fixed_daily_wage)}
+                        <span className="text-text-muted font-normal"> /day</span>
+                      </>
+                    ) : (
+                      <span className="text-text-muted">Set pay</span>
+                    )}
+                  </span>
+                  {(m.short_delivery_rate != null || m.long_delivery_rate != null) && (
+                    <span className="block text-[11px] text-text-muted tabular-nums">
+                      {formatGBP(m.short_delivery_rate ?? 0)} SD · {formatGBP(m.long_delivery_rate ?? 0)} LD
+                    </span>
+                  )}
+                  {(m.extra_short_delivery_rate != null || m.extra_long_delivery_rate != null) && (
+                    <span className="block text-[11px] text-gold tabular-nums">
+                      {formatGBP(m.extra_short_delivery_rate ?? m.short_delivery_rate ?? 0)} MS ·{" "}
+                      {formatGBP(m.extra_long_delivery_rate ?? m.long_delivery_rate ?? 0)} ML
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => openEmail(m)}
+                  className="text-left rounded-xl border border-border bg-bg/40 px-3 py-2 min-w-0 active:bg-surface-hover"
+                >
+                  <span className="block text-[10px] uppercase tracking-wider text-text-muted">Reset email</span>
+                  <span className="block text-sm truncate text-text-primary">
+                    {m.contact_email || <span className="text-warning">Add email</span>}
+                  </span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 mt-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => reset(m)}
+                  loading={actingId === m.id}
+                  className="flex-1"
+                >
+                  Reset password
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => remove(m)}
+                  aria-label="Delete"
+                  className="text-text-muted hover:text-danger border border-border"
+                >
+                  <TrashIcon size={16} />
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <Card className="hidden md:block p-0 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
@@ -328,6 +405,7 @@ export function ManagersView({
             </table>
           </div>
         </Card>
+        </>
       )}
 
       {showAdd && (
@@ -423,7 +501,7 @@ export function ManagersView({
               <p className="text-xs uppercase tracking-wider text-text-muted mb-2">
                 Normal round
               </p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Input
                   type="number"
                   min="0"
@@ -451,7 +529,7 @@ export function ManagersView({
               <p className="text-xs uppercase tracking-wider text-text-muted mb-2">
                 Misc — extras beyond the round
               </p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Input
                   type="number"
                   min="0"

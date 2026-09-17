@@ -18,7 +18,33 @@ export function GeofenceFailuresList({ entries }: { entries: GeofenceFailure[] }
       {entries.length === 0 ? (
         <p className="text-sm text-text-muted">No failed attempts recorded.</p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+        <ul className="md:hidden flex flex-col divide-y divide-border -mx-1">
+          {entries.map((f) => (
+            <li key={f.id} className="px-1 py-2.5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-text-primary break-all">{f.actor_email}</p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {f.action === "clock_in" ? "Clock In" : "Clock Out"} ·{" "}
+                    {f.nearest_store_name ?? "—"} · {formatDDMMYYYY(f.occurred_at)}{" "}
+                    {formatTimeOnly(f.occurred_at)}
+                  </p>
+                </div>
+                <div className="text-right shrink-0 tabular-nums">
+                  <p className="text-sm font-medium text-danger">
+                    {Math.round(f.distance_m)}m
+                    <span className="text-text-muted font-normal"> / {f.radius_m}m</span>
+                  </p>
+                  <p className="text-[11px] text-text-muted">
+                    {f.accuracy_m != null ? `GPS ±${Math.round(f.accuracy_m)}m` : "GPS —"}
+                  </p>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm min-w-[720px]">
             <thead className="text-xs uppercase tracking-wider text-text-muted">
               <tr>
@@ -57,6 +83,7 @@ export function GeofenceFailuresList({ entries }: { entries: GeofenceFailure[] }
             </tbody>
           </table>
         </div>
+        </>
       )}
     </Card>
   );

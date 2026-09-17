@@ -204,7 +204,7 @@ export function DailyCashView({
     <div className="flex flex-col gap-5">
       {/* Week navigation + store selector */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between sm:justify-start gap-2">
           <Link href={`${basePath}/daily?week=${prevWeek}`}>
             <Button variant="secondary" size="icon" aria-label="Previous week">
               <ChevronLeftIcon size={16} />
@@ -353,8 +353,8 @@ export function DailyCashView({
         </Card>
 
         {/* Weekly log */}
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <Card className="p-0 max-md:p-0 overflow-hidden">
+          <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-row items-center justify-between gap-3">
             <div>
               <h3 className="text-base font-semibold text-text-primary">This Week&apos;s Cash Log</h3>
               <p className="text-sm text-text-muted mt-0.5">

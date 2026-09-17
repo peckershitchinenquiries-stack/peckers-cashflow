@@ -86,7 +86,7 @@ export function CashFlowSettingsCard({ initial }: { initial: AppSettings }) {
           />
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end max-sm:[&>button]:w-full">
           <Button onClick={save} loading={busy}>Save cash flow settings</Button>
         </div>
       </div>

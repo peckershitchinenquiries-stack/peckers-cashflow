@@ -261,7 +261,7 @@ export function CoverDriverClockApp({
   return (
     <div className="flex flex-col gap-5">
       {/* ---------- Primary clock card ---------- */}
-      <Card className="border-gold/30">
+      <Card className="border-gold/30 max-sm:p-4">
         <CardHeader>
           <div>
             <CardTitle>Today &mdash; {formatDDMMYYYY(new Date())}</CardTitle>
@@ -279,7 +279,7 @@ export function CoverDriverClockApp({
         ) : (
           <div className="flex flex-col gap-4">
             {/* Location status */}
-            <div className="rounded-xl border border-border p-4 bg-surface-hover/40">
+            <div className="rounded-xl border border-border p-4 max-sm:p-3 bg-surface-hover/40">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0">
                   <div className="text-sm font-medium flex items-center gap-2">
@@ -500,8 +500,8 @@ export function CoverDriverClockApp({
       </Card>
 
       {/* ---------- This week's cover shifts ---------- */}
-      <Card className="p-0 overflow-hidden">
-        <CardHeader className="px-5 pt-5 mb-0">
+      <Card className="p-0 max-md:p-0 overflow-hidden">
+        <CardHeader className="px-5 pt-5 mb-0 max-sm:px-4 max-sm:pt-4">
           <CardTitle>Your week</CardTitle>
           <CardDescription>
             {formatDDMMYYYY(weekStart)} – {formatDDMMYYYY(addDays(weekStart, 6))}. Days you
@@ -521,7 +521,7 @@ export function CoverDriverClockApp({
               <div
                 key={dateIso}
                 className={
-                  "px-5 py-3 border-b border-border last:border-0 flex items-center justify-between " +
+                  "px-5 max-sm:px-4 py-3 border-b border-border last:border-0 flex items-center justify-between " +
                   (isToday ? "bg-gold/5" : "")
                 }
               >

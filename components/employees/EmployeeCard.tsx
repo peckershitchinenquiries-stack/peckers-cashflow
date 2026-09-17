@@ -12,6 +12,7 @@ import {
   PencilIcon,
   PhoneIcon,
   ClockIcon,
+  ChevronRightIcon,
 } from "@/components/ui/icons";
 import type { Employee, Store } from "@/lib/types";
 import { parsePositions } from "@/lib/types";
@@ -65,7 +66,43 @@ export function EmployeeCard({
   const cashRate = employee.hourly_cash_rate ? Number(employee.hourly_cash_rate) : null;
 
   return (
-    <Card className="flex flex-col">
+    <>
+    {/* Phones: a name-only row keeps a long roster scannable; tap opens the full profile. */}
+    <Card className="sm:hidden flex items-center gap-2 !p-0">
+      <button
+        type="button"
+        className="min-w-0 flex-1 flex items-center gap-2 text-left px-4 py-3"
+        onClick={onView}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-medium text-text-primary truncate">
+            {employee.name}
+          </span>
+          {store && (
+            <span className="block text-xs text-text-muted truncate">{store.name}</span>
+          )}
+        </span>
+        {employee.employment_status !== "active" && (
+          <Badge variant={employee.employment_status === "inactive" ? "warning" : "danger"}>
+            {employee.employment_status === "inactive" ? "Inactive" : "Left"}
+          </Badge>
+        )}
+        {underMinWage && <span className="h-2 w-2 rounded-full bg-danger shrink-0" aria-label="Below min wage" />}
+        <ChevronRightIcon size={16} className="text-text-muted shrink-0" />
+      </button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggleArchive}
+        loading={busy}
+        aria-label={employee.is_active ? "Archive" : "Restore"}
+        title={employee.is_active ? "Archive" : "Restore"}
+        className="text-text-muted hover:text-text-primary shrink-0 mr-2 h-10 w-10"
+      >
+        <ArchiveIcon size={16} />
+      </Button>
+    </Card>
+    <Card className="flex flex-col max-sm:hidden">
       <div className="flex items-start justify-between gap-3">
         {/* Clickable info area — opens detail popup */}
         <button
@@ -163,5 +200,6 @@ export function EmployeeCard({
         )}
       </button>
     </Card>
+    </>
   );
 }

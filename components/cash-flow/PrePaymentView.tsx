@@ -167,6 +167,8 @@ export function PrePaymentView({
   // if the write failed.
   const [optimisticPaid, setOptimisticPaid] = React.useState<Record<string, boolean>>({});
   const [savingLines, setSavingLines] = React.useState<string[]>([]);
+  // Phone payee cards start collapsed to name + total; tap to open hours, drops and Mark paid.
+  const [openLines, setOpenLines] = React.useState<string[]>([]);
 
   React.useEffect(() => {
     setOptimisticPaid((prev) => {
@@ -420,7 +422,7 @@ export function PrePaymentView({
       )}
 
       {/* Pre-payment summary */}
-      <Card>
+      <Card className="max-sm:p-4">
         <CardHeader
           action={
             confirmed ? (
@@ -436,7 +438,7 @@ export function PrePaymentView({
           </CardDescription>
         </CardHeader>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto -mx-1 sm:mx-0">
           <table className="w-full text-sm">
             <tbody>
               <SummaryRow label="Opening balance (carried forward)" value={formatGBP(fin.opening_balance)} />
@@ -571,7 +573,7 @@ export function PrePaymentView({
       </Card>
 
       {/* Wage breakdown */}
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 max-md:p-0 overflow-hidden">
         <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-text-primary">Tuesday Wage Breakdown</h3>
@@ -598,7 +600,7 @@ export function PrePaymentView({
             the one click that pulls it in, rather than letting the sheet be
             confirmed on figures nobody has seen. */}
         {drift && (
-          <div className="mx-5 mt-4 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
+          <div className="mx-3 sm:mx-5 mt-4 rounded-lg border border-warning/50 bg-warning/10 px-4 py-3">
             <p className="text-sm font-medium text-warning">
               This sheet is out of date — work was approved after it was generated.
             </p>
@@ -653,7 +655,165 @@ export function PrePaymentView({
             No employees have cash wages or deliveries to pay for {payWeekLabel}.
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Phones: one card per payee. The stacked table ran to eight label
+              rows a person and buried the paid tick in the last one. */}
+          <ul className="md:hidden flex flex-col gap-2 p-3">
+            {lines.map((l, i) => {
+              const lineId = l.id ?? null;
+              const isPaid = isLinePaid(l);
+              const saving = !!lineId && savingLines.includes(lineId);
+              const openKey = lineId ?? l.employee_name + i;
+              const isOpen = openLines.includes(openKey);
+              return (
+                <li
+                  key={lineId ?? l.employee_name + i}
+                  className={
+                    "rounded-xl border px-3 py-2.5 transition-colors " +
+                    (payout && isPaid ? "border-success/40 bg-success/5" : "border-border bg-bg/40")
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOpenLines((prev) =>
+                        prev.includes(openKey) ? prev.filter((k) => k !== openKey) : [...prev, openKey],
+                      )
+                    }
+                    aria-expanded={isOpen}
+                    className="w-full flex items-center justify-between gap-3 text-left"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-text-primary flex flex-wrap items-center gap-1.5">
+                        <span className="break-words">{l.employee_name}</span>
+                        {l.cover_driver_id && (
+                          <span className="text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-gold/40 bg-gold/10 text-gold font-medium">
+                            Cover
+                          </span>
+                        )}
+                        {l.manager_id && (
+                          <span className="text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-gold/40 bg-gold/10 text-gold font-medium">
+                            Manager
+                          </span>
+                        )}
+                      </p>
+                      {isOpen && <p className="text-xs text-text-muted mt-0.5">{l.role ?? "—"}</p>}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right">
+                        <p
+                          className={
+                            "text-lg font-semibold tabular-nums leading-tight " +
+                            (payout && isPaid ? "text-success" : "text-text-primary")
+                          }
+                        >
+                          {formatGBP(l.total_payment)}
+                        </p>
+                        <p
+                          className={
+                            "text-[10px] uppercase tracking-wider " +
+                            (payout && isPaid ? "text-success" : "text-text-muted")
+                          }
+                        >
+                          {payout && isPaid ? "Paid" : "Total"}
+                        </p>
+                      </div>
+                      <ChevronRightIcon
+                        size={16}
+                        className={"text-text-muted transition-transform " + (isOpen ? "rotate-90" : "")}
+                      />
+                    </div>
+                  </button>
+
+                  {isOpen && (
+                  <>
+                  <div className="grid grid-cols-2 gap-2 mt-2.5 text-xs">
+                    <div className="rounded-lg bg-surface border border-border/70 px-2.5 py-1.5">
+                      <p className="text-[10px] uppercase tracking-wider text-text-muted mb-1">Cash hours</p>
+                      <HoursMinsDisplay hours={l.cash_hours} />
+                      <p className="text-[11px] text-text-muted tabular-nums mt-1">@ {formatGBP(l.cash_rate)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface border border-border/70 px-2.5 py-1.5 tabular-nums">
+                      <p className="text-[10px] uppercase tracking-wider text-text-muted mb-0.5">Deliveries</p>
+                      <div className="text-sm text-text-primary">
+                        <DeliveryCell line={l} stacked />
+                      </div>
+                      {l.delivery_wages > 0 && (
+                        <p className="text-[11px] text-text-muted mt-0.5">{formatGBP(l.delivery_wages)}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {payout && lineId && (
+                    <label
+                      className={
+                        "mt-2.5 flex items-center justify-center gap-2 h-10 rounded-lg border text-sm font-medium select-none " +
+                        (locked || saving ? "cursor-not-allowed opacity-70 " : "cursor-pointer ") +
+                        (isPaid
+                          ? "border-success/40 bg-success/10 text-success"
+                          : "border-border bg-surface text-text-primary")
+                      }
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isPaid}
+                        disabled={locked || saving}
+                        onChange={(e) => togglePaid(lineId, e.target.checked)}
+                        className="h-4 w-4 accent-gold"
+                        aria-label={`Mark ${l.employee_name} paid`}
+                      />
+                      {isPaid ? "Paid" : "Mark as paid"}
+                      {saving && (
+                        <span
+                          role="status"
+                          aria-label={`Saving ${l.employee_name}`}
+                          className="h-3 w-3 rounded-full border-2 border-gold border-t-transparent animate-spin"
+                        />
+                      )}
+                    </label>
+                  )}
+                  </>
+                  )}
+                </li>
+              );
+            })}
+            <li className="rounded-xl border border-gold/30 bg-gold/5 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold text-text-primary">Week total</p>
+                <p className="text-lg font-semibold tabular-nums text-gold">
+                  {formatGBP(lines.reduce((s, l) => s + l.total_payment, 0))}
+                </p>
+              </div>
+              <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-text-muted tabular-nums">
+                <span>Delivery £</span>
+                <span className="text-right text-text-primary">
+                  {formatGBP(lines.reduce((s, l) => s + l.delivery_wages, 0))}
+                </span>
+                <span>Drops</span>
+                <span className="text-right">
+                  {totals.short_deliveries_count} SD · {totals.long_deliveries_count} LD ·{" "}
+                  <span className={totals.short_misc_count > 0 ? "text-gold font-medium" : ""}>
+                    {totals.short_misc_count} SM
+                  </span>{" "}
+                  ·{" "}
+                  <span className={totals.long_misc_count > 0 ? "text-gold font-medium" : ""}>
+                    {totals.long_misc_count} LM
+                  </span>
+                </span>
+                <span>VM deliveries</span>
+                <span className="text-right text-text-primary">
+                  {vmDeliveryOrders == null ? "—" : vmDeliveryOrders}
+                </span>
+                <span>Approved</span>
+                <span className="text-right text-text-primary">{approvedDeliveries}</span>
+                <span>Miscellaneous</span>
+                <span className={"text-right " + (miscDeliveries > 0 ? "text-gold" : "text-text-primary")}>
+                  {miscDeliveries}
+                </span>
+              </div>
+            </li>
+          </ul>
+          <div className="hidden md:block overflow-x-auto">
             <table className="table-stack w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-text-muted bg-bg/50">
@@ -795,6 +955,7 @@ export function PrePaymentView({
               </tfoot>
             </table>
           </div>
+          </>
         )}
 
         {/* Confirmation footer */}
@@ -951,13 +1112,13 @@ function SummaryRow({
   const toneCls = tone === "good" ? "text-success" : tone === "bad" ? "text-danger" : "text-text-primary";
   return (
     <tr className={`border-t border-border/60 ${highlight ? "bg-danger/5" : ""}`}>
-      <td className={`px-4 py-2.5 ${strong ? "font-semibold text-text-primary" : "text-text-subtle"}`}>
+      <td className={`px-1 sm:px-4 py-2.5 ${strong ? "font-semibold text-text-primary" : "text-text-subtle"}`}>
         {label}
         {hint && <span className="block text-[11px] text-warning mt-0.5">{hint}</span>}
       </td>
-      <td className={`px-4 py-2.5 text-right tabular-nums ${strong ? "font-semibold" : ""} ${toneCls}`}>
+      <td className={`px-1 sm:px-4 py-2.5 text-right tabular-nums whitespace-nowrap ${strong ? "font-semibold" : ""} ${toneCls}`}>
         {action ? (
-          <span className="inline-flex items-center justify-end gap-3">
+          <span className="inline-flex flex-col-reverse items-end sm:flex-row sm:items-center justify-end gap-1.5 sm:gap-3">
             {action}
             {value}
           </span>

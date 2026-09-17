@@ -158,7 +158,7 @@ export function WeeklyView({
             </p>
             <p className="text-lg font-semibold mt-1">{weekLabel(weekStart)}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto [&>button:nth-child(2)]:flex-1 sm:[&>button:nth-child(2)]:flex-none">
             <Button
               variant="secondary"
               size="icon"

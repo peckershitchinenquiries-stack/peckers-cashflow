@@ -170,6 +170,23 @@ export function RotaView({
     prefill: { start: string; end: string } | null;
   } | null>(null);
 
+  // Phones show one day at a time; default to today when it's in range.
+  const [mobileDayIso, setMobileDayIso] = React.useState(() => {
+    const t = todayISO();
+    return t >= rangeStartIso && t <= rangeEndIso ? t : rangeStartIso;
+  });
+  React.useEffect(() => {
+    const t = todayISO();
+    setMobileDayIso(t >= rangeStartIso && t <= rangeEndIso ? t : rangeStartIso);
+  }, [rangeStartIso, rangeEndIso]);
+  const mobileDay = React.useMemo(() => parseISODate(mobileDayIso), [mobileDayIso]);
+  const dayStripRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    dayStripRef.current
+      ?.querySelector<HTMLElement>("[data-selected='true']")
+      ?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [mobileDayIso]);
+
   const isSuperAdmin = userRole === "admin";
   const activeStore = stores.find((s) => s.id === activeStoreId);
   // Every day in the selected range (kept as `weekDays` for the rest of the
@@ -609,10 +626,428 @@ export function RotaView({
   );
   const visitingCount = rotaEmployees.filter((e) => e.store_id !== activeStoreId).length;
 
+  // One manager's cell for one day — shared by the desktop grid and the phone day list.
+  function managerDayCell(mgr: AllowedUser, d: Date): React.ReactNode {
+    const dateIso = toISODate(d);
+    const cell = managerShiftByKey.get(`${mgr.id}:${dateIso}`);
+    // Covering ANOTHER store this day — read-only here, so this
+    // store's view shows where the manager has gone.
+    if (cell && cell.store_id !== activeStoreId) {
+      const awayStore = storeById.get(cell.store_id);
+      return (
+        <div
+          className="w-full h-12 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
+          title={`Covering ${awayStore?.name ?? "another store"} this day`}
+        >
+          <span className="font-medium truncate max-w-full">
+            @ {awayStore?.name?.split(" ")[0] ?? "Away"}
+          </span>
+          {!cell.is_day_off && cell.start_time && (
+            <span className="opacity-80 truncate max-w-full">
+              {formatShiftRange(false, cell.start_time, cell.end_time)}
+            </span>
+          )}
+        </div>
+      );
+    }
+    const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
+    const isPast = dateIso < todayISO();
+    const prevShift = managerShiftByKey.get(
+      `${mgr.id}:${toISODate(addDays(d, -1))}`,
+    );
+    const prefill =
+      !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
+        ? {
+            start: prevShift.start_time.slice(0, 5),
+            end: (prevShift.end_time ?? "").slice(0, 5),
+          }
+        : null;
+    // "Came or not" — a past scheduled (non-day-off) shift
+    // with no clock-in is a no-show.
+    const missed = isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
+    const cellInner = (
+      <>
+        {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave) : "—"}
+        {clk?.clock_in_at && (
+          <div className="text-[9px] text-success mt-0.5">
+            ✓ in{" "}
+            {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            {clk.clock_out_at && (
+              <>
+                {" "}
+                · out{" "}
+                {new Date(clk.clock_out_at).toLocaleTimeString("en-GB", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+                {clk.auto_clocked_out && (
+                  <span
+                    className="text-warning"
+                    title="No clock-out recorded — the scheduled shift end was used."
+                  >
+                    {" "}
+                    (auto)
+                  </span>
+                )}
+              </>
+            )}
+            {/* Attendance, not the schedule: the times above
+                span the whole day, so a split day needs its
+                real total spelling out. */}
+            {Number(clk.session_count) > 1 && (
+              <span
+                className="block text-gold"
+                title={`${clk.session_count} separate shifts worked this day, ${formatHoursMinsWords(Number(clk.worked_hours ?? 0))} in total excluding the gap between them.`}
+              >
+                {clk.session_count} shifts worked
+                {clk.worked_hours != null && (
+                  <> · {formatHoursMinsWords(Number(clk.worked_hours))}</>
+                )}
+              </span>
+            )}
+          </div>
+        )}
+        {missed && (
+          <div className="text-[9px] text-danger mt-0.5">✗ not clocked in</div>
+        )}
+      </>
+    );
+    return isPast ? (
+      <div
+        className={
+          "w-full h-12 max-md:h-auto max-md:min-h-12 max-md:py-2 rounded-lg text-xs max-md:text-sm border flex flex-col items-center justify-center cursor-default opacity-70 " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, true)
+            : cell?.start_time
+              ? "bg-success/5 border-success/20 text-success"
+              : "border-dashed border-border text-text-muted")
+        }
+        title="Past day — view only (locked for editing)"
+      >
+        {cellInner}
+      </div>
+    ) : (
+      <button
+        onClick={() =>
+          setEditingManagerShift({
+            manager: mgr,
+            date: dateIso,
+            existing: cell ?? null,
+            prefill,
+          })
+        }
+        className={
+          "w-full h-12 max-md:h-auto max-md:min-h-12 max-md:py-2 rounded-lg text-xs max-md:text-sm border transition-colors " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, false)
+            : cell?.start_time
+              ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+              : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+        }
+      >
+        {cellInner}
+      </button>
+    );
+  }
+
+  // One employee's cell for one day — shared by the desktop grid and the phone day list.
+  function employeeDayCell(emp: RotaEmployee, d: Date): React.ReactNode {
+    const dateIso = toISODate(d);
+    const dayAll = shiftByKey.get(`${emp.id}:${dateIso}`) ?? [];
+    // A day can now hold several shifts; split them by which
+    // store they belong to (a shift can sit at another store).
+    const localShifts = dayAll.filter((s) => s.store_id === activeStoreId);
+    const awayShifts = dayAll.filter((s) => s.store_id !== activeStoreId);
+    // Scheduled at ANOTHER store this day (and nothing here) —
+    // read-only, so a home manager can see where their staff are
+    // covering. If they ALSO have a shift here, the local cell
+    // below takes priority and the away shift is not shown.
+    if (localShifts.length === 0 && awayShifts.length > 0) {
+      const awayStore = storeById.get(awayShifts[0].store_id);
+      return (
+        <div
+          className="w-full min-h-12 h-auto py-1 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
+          title={`Working at ${awayStore?.name ?? "another store"} this day`}
+        >
+          <span className="font-medium truncate max-w-full">
+            @ {awayStore?.name?.split(" ")[0] ?? "Away"}
+          </span>
+          {awayShifts.map(
+            (s) =>
+              !s.is_day_off &&
+              s.start_time && (
+                <span key={s.id} className="opacity-80 truncate max-w-full">
+                  {formatShiftRange(false, s.start_time, s.end_time)}
+                </span>
+              ),
+          )}
+        </div>
+      );
+    }
+    // Kept for the ghost/ prefill logic below, which only cares
+    // about "is there at least one shift already" — the cell
+    // itself renders every one of `localShifts`, not just this.
+    const cell = localShifts[0] ?? null;
+    const clk = clockByKey.get(`${emp.id}:${dateIso}`);
+    // Past days are read-only — managers & admins can view but
+    // not edit yesterday or earlier; only today onwards.
+    const isPast = dateIso < todayISO();
+    // Ghost hint: the employee's recurring schedule for this
+    // weekday, shown faintly in empty cells as a suggestion.
+    const tmpl = scheduleByEmpDay.get(
+      `${emp.id}:${weekdayIndex(d)}`,
+    );
+    const ghost =
+      !cell && tmpl && tmpl.is_working && tmpl.start_time
+        ? `${tmpl.start_time.slice(0, 5)}–${(tmpl.end_time ?? "").slice(0, 5)}`
+        : null;
+    // Previous day's FIRST shift — used to pre-fill a new shift.
+    const prevShift = (
+      shiftByKey.get(`${emp.id}:${toISODate(addDays(d, -1))}`) ?? []
+    )[0];
+    const prefill =
+      !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
+        ? {
+            start: prevShift.start_time.slice(0, 5),
+            end: (prevShift.end_time ?? "").slice(0, 5),
+          }
+        : null;
+    // Ghost defaults are only actionable on editable days.
+    const showGhost = ghost && !isPast;
+    const cellInner = (
+      <>
+        {localShifts.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            {localShifts.map((s) => (
+              <div key={s.id}>
+                {formatShiftRange(s.is_day_off, s.start_time, s.end_time, s.is_on_leave)}
+                {!s.is_day_off && s.shift_type && (
+                  <span className="block text-[9px] uppercase tracking-wide opacity-70">
+                    {presetShort(s.shift_type)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : showGhost ? (
+          <span className="opacity-60">
+            {ghost}
+            <span className="block text-[9px] uppercase tracking-wide">
+              default
+            </span>
+          </span>
+        ) : (
+          "—"
+        )}
+        {clk?.clock_in_at && (
+          <div className="text-[9px] text-text-muted mt-0.5">
+            in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+            {/* Labelled as WORKED, on its own line: the row
+                above is the scheduled shift, and the two are
+                different things on a split day. */}
+            {Number(clk.session_count) > 1 && (
+              <span
+                className="block text-gold"
+                title={`Attendance, not the schedule: ${clk.session_count} separate shifts worked this day, ${formatHoursMinsWords(Number(clk.worked_hours ?? 0))} in total excluding the gap between them.`}
+              >
+                {clk.session_count} shifts worked
+                {clk.worked_hours != null && (
+                  <> · {formatHoursMinsWords(Number(clk.worked_hours))}</>
+                )}
+              </span>
+            )}
+            {clk.manual_entry && (
+              <span
+                className="text-warning"
+                title={
+                  clk.manual_entry_reason
+                    ? `Entered by a manager — ${clk.manual_entry_reason}`
+                    : "Entered by a manager (no location check)"
+                }
+              >
+                {" "}
+                (manual)
+              </span>
+            )}
+          </div>
+        )}
+      </>
+    );
+    return isPast ? (
+      <div
+        className={
+          "w-full min-h-12 h-auto py-1 max-md:py-2 rounded-lg text-xs max-md:text-sm border flex flex-col items-center justify-center cursor-default opacity-70 " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, true)
+            : cell?.start_time
+              ? "bg-success/5 border-success/20 text-success"
+              : "border-dashed border-border text-text-muted")
+        }
+        title={
+          cell?.same_day_edit_reason
+            ? `Reason: ${cell.same_day_edit_reason}`
+            : "Past day — view only (locked for editing)"
+        }
+      >
+        {cellInner}
+      </div>
+    ) : (
+      <button
+        onClick={() =>
+          setEditingShift({
+            employee: emp,
+            date: dateIso,
+            existing: cell ?? null,
+            prefill,
+            dayShifts: localShifts,
+          })
+        }
+        className={
+          "w-full min-h-12 h-auto py-1 max-md:py-2 rounded-lg text-xs max-md:text-sm border transition-colors " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, false)
+            : cell?.start_time
+              ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+              : ghost
+                ? "border-dashed border-gold/30 text-text-muted hover:bg-gold/5"
+                : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+        }
+        title={
+          cell?.same_day_edit_reason
+            ? `Reason: ${cell.same_day_edit_reason}`
+            : localShifts.length > 1
+              ? `${localShifts.length} shifts — click to manage`
+              : ghost
+                ? "Default from recurring schedule — click to add this shift"
+                : undefined
+        }
+      >
+        {cellInner}
+      </button>
+    );
+  }
+
+  // One cover driver's booking for one day — shared by the desktop grid and the phone day list.
+  function coverDayCell(driver: CoverDriver, d: Date): React.ReactNode {
+    const dateIso = toISODate(d);
+    const cell = coverShiftByKey.get(`${driver.id}:${dateIso}`) ?? null;
+    const tmpl = coverScheduleByKey.get(
+      `${driver.id}:${weekdayOf(dateIso)}`,
+    );
+    const eff = resolveCoverDriverShift(cell, tmpl);
+    const clk = coverClockByKey.get(`${driver.id}:${dateIso}`);
+    const isPast = dateIso < todayISO();
+    // Their usual availability pre-fills a new booking, so
+    // the common case is two clicks: open, save.
+    const prefill =
+      !cell && tmpl?.is_working && tmpl.start_time
+        ? {
+            start: tmpl.start_time.slice(0, 5),
+            end: (tmpl.end_time ?? "").slice(0, 5),
+          }
+        : null;
+    const missed =
+      isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
+
+    const cellInner = (
+      <>
+        {cell ? (
+          formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave)
+        ) : eff && !eff.is_day_off ? (
+          <span className="opacity-70">
+            {formatShiftRange(false, eff.start_time, eff.end_time)}
+            <span className="block text-[9px] uppercase tracking-wide">
+              usual
+            </span>
+          </span>
+        ) : (
+          "—"
+        )}
+        {clk?.clock_in_at && (
+          <div className="text-[9px] text-success mt-0.5">
+            ✓ in{" "}
+            {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            {clk.clock_out_at && (
+              <>
+                {" "}
+                · out{" "}
+                {new Date(clk.clock_out_at).toLocaleTimeString("en-GB", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </>
+            )}
+            {clk.manual_entry && (
+              <span
+                className="text-warning"
+                title={
+                  clk.manual_entry_reason
+                    ? `Entered by a manager — ${clk.manual_entry_reason}`
+                    : "Entered by a manager (no location check)"
+                }
+              >
+                {" "}
+                (manual)
+              </span>
+            )}
+          </div>
+        )}
+        {missed && (
+          <div className="text-[9px] text-danger mt-0.5">
+            ✗ not clocked in
+          </div>
+        )}
+      </>
+    );
+
+    return isPast ? (
+      <div
+        className={
+          "w-full h-12 max-md:h-auto max-md:min-h-12 max-md:py-2 rounded-lg text-xs max-md:text-sm border flex flex-col items-center justify-center cursor-default opacity-70 " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, true)
+            : cell?.start_time
+              ? "bg-success/5 border-success/20 text-success"
+              : "border-dashed border-border text-text-muted")
+        }
+        title="Past day — view only (locked for editing)"
+      >
+        {cellInner}
+      </div>
+    ) : (
+      <button
+        onClick={() =>
+          setEditingCoverShift({
+            driver,
+            date: dateIso,
+            existing: cell,
+            prefill,
+          })
+        }
+        className={
+          "w-full h-12 max-md:h-auto max-md:min-h-12 max-md:py-2 rounded-lg text-xs max-md:text-sm border transition-colors " +
+          (cell?.is_day_off
+            ? dayOffTone(cell.is_on_leave, false)
+            : cell?.start_time
+              ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
+              : "border-dashed border-border text-text-muted hover:bg-surface-hover")
+        }
+      >
+        {cellInner}
+      </button>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 md:gap-6">
       {/* Store tabs & week nav */}
-      <Card>
+      <Card className="max-sm:p-4">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex gap-2 flex-wrap items-center">
             {stores.map((store) => (
@@ -641,15 +1076,17 @@ export function RotaView({
               Apply default schedules
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)_auto]">
             <Button
               variant="outline"
               size="sm"
               onClick={() => shiftRange(-1)}
               iconLeft={<ChevronLeftIcon size={14} />}
               title={`Back ${rangeDayCount} day${rangeDayCount === 1 ? "" : "s"}`}
+              aria-label="Previous"
+              className="max-sm:h-11"
             >
-              Prev
+              <span className="max-sm:hidden">Prev</span>
             </Button>
             <DateRangePicker
               start={rangeStartIso}
@@ -662,12 +1099,73 @@ export function RotaView({
               onClick={() => shiftRange(1)}
               iconRight={<ChevronRightIcon size={14} />}
               title={`Forward ${rangeDayCount} day${rangeDayCount === 1 ? "" : "s"}`}
+              aria-label="Next"
+              className="max-sm:h-11"
             >
-              Next
+              <span className="max-sm:hidden">Next</span>
             </Button>
-            <Button variant="ghost" size="sm" onClick={goToday}>
+            <Button variant="ghost" size="sm" onClick={goToday} className="max-sm:hidden">
               Today
             </Button>
+          </div>
+        </div>
+
+        {/* Phones: pick the day to show. The grid below needs ~1200px, so a
+            phone reads the rota one day at a time instead. */}
+        <div className="md:hidden mt-4 pt-3 border-t border-border">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-xs text-text-muted">
+              Showing{" "}
+              <span className="font-medium text-text-primary">
+                {mobileDay.toLocaleDateString("en-GB", {
+                  weekday: "long",
+                  day: "numeric",
+                  month: "short",
+                })}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const t = todayISO();
+                if (t >= rangeStartIso && t <= rangeEndIso) setMobileDayIso(t);
+                else goToday();
+              }}
+              className="h-8 px-2.5 rounded-lg text-xs font-medium text-gold hover:bg-gold/10"
+            >
+              Today
+            </button>
+          </div>
+          <div
+            ref={dayStripRef}
+            className="flex gap-1 overflow-x-auto scrollbar-none snap-x"
+          >
+            {weekDays.map((d) => {
+              const iso = toISODate(d);
+              const selected = iso === mobileDayIso;
+              const isToday = iso === todayISO();
+              return (
+                <button
+                  key={iso}
+                  type="button"
+                  data-selected={selected}
+                  onClick={() => setMobileDayIso(iso)}
+                  className={
+                    "snap-center flex-1 min-w-[2.5rem] h-14 rounded-xl border flex flex-col items-center justify-center transition-colors " +
+                    (selected
+                      ? "bg-gold text-black border-gold"
+                      : isToday
+                        ? "border-gold/50 text-text-primary bg-gold/5"
+                        : "border-border text-text-primary bg-surface")
+                  }
+                >
+                  <span className={"text-[10px] uppercase tracking-wide " + (selected ? "text-black/70" : "text-text-muted")}>
+                    {WEEKDAY_SHORT[(d.getDay() + 6) % 7]}
+                  </span>
+                  <span className="text-base font-semibold tabular-nums leading-tight">{d.getDate()}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </Card>
@@ -675,8 +1173,8 @@ export function RotaView({
       {/* Manager rota — managers are on a fixed daily wage, not hourly, so this
           is scheduling + attendance only (no wage/hours-avg columns). */}
       {managers.length > 0 && (
-        <Card className="overflow-hidden p-0">
-          <CardHeader className="px-4 sm:px-5 pt-5 flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <Card className="overflow-hidden p-0 max-md:p-0">
+          <CardHeader className="px-4 sm:px-5 pt-5 flex-col sm:flex-row sm:items-start sm:justify-between gap-3 max-md:pt-4">
             <div>
               <CardTitle>{activeStore?.name ?? "—"} Manager Rota</CardTitle>
               <CardDescription>
@@ -706,7 +1204,40 @@ export function RotaView({
             )}
           </CardHeader>
 
-          <div className="overflow-x-auto">
+          <ul className="md:hidden divide-y divide-border border-t border-border">
+            {activeManagers.length === 0 && (
+              <li className="px-4 py-6 text-sm text-center text-text-muted">
+                No managers assigned to this store yet. Add one on the Managers page.
+              </li>
+            )}
+            {activeManagers.map((mgr) => {
+              const total = weekManagerTotalHours(mgr.id);
+              const drops =
+                (managerDeliveriesByMgr.live.get(mgr.id) ?? 0) +
+                (managerDeliveriesByMgr.extra.get(mgr.id) ?? 0);
+              return (
+                <li key={mgr.id} className="px-4 py-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-medium text-text-primary min-w-0 truncate">
+                      {mgr.name || mgr.username || "Manager"}
+                      {mgr.store_id !== activeStoreId && (
+                        <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
+                          visiting
+                        </span>
+                      )}
+                    </p>
+                    <p className="shrink-0 text-[11px] text-text-muted tabular-nums">
+                      {formatHoursMinsWords(total)}
+                      {drops > 0 && <span className="text-gold"> · {drops} drops</span>}
+                    </p>
+                  </div>
+                  {managerDayCell(mgr, mobileDay)}
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm min-w-[900px]">
               <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                 <tr>
@@ -764,145 +1295,15 @@ export function RotaView({
                       </td>
                       {weekDays.map((d) => {
                         const dateIso = toISODate(d);
-                        const cell = managerShiftByKey.get(`${mgr.id}:${dateIso}`);
-                        const isToday = dateIso === todayISO();
-                        // Covering ANOTHER store this day — read-only here, so this
-                        // store's view shows where the manager has gone.
-                        if (cell && cell.store_id !== activeStoreId) {
-                          const awayStore = storeById.get(cell.store_id);
-                          return (
-                            <td
-                              key={dateIso}
-                              className={
-                                "px-1 py-1 text-center align-middle " +
-                                (isToday ? "bg-gold/5" : "")
-                              }
-                            >
-                              <div
-                                className="w-full h-12 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
-                                title={`Covering ${awayStore?.name ?? "another store"} this day`}
-                              >
-                                <span className="font-medium truncate max-w-full">
-                                  @ {awayStore?.name?.split(" ")[0] ?? "Away"}
-                                </span>
-                                {!cell.is_day_off && cell.start_time && (
-                                  <span className="opacity-80 truncate max-w-full">
-                                    {formatShiftRange(false, cell.start_time, cell.end_time)}
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                          );
-                        }
-                        const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
-                        const isPast = dateIso < todayISO();
-                        const prevShift = managerShiftByKey.get(
-                          `${mgr.id}:${toISODate(addDays(d, -1))}`,
-                        );
-                        const prefill =
-                          !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
-                            ? {
-                                start: prevShift.start_time.slice(0, 5),
-                                end: (prevShift.end_time ?? "").slice(0, 5),
-                              }
-                            : null;
-                        // "Came or not" — a past scheduled (non-day-off) shift
-                        // with no clock-in is a no-show.
-                        const missed = isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
-                        const cellInner = (
-                          <>
-                            {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave) : "—"}
-                            {clk?.clock_in_at && (
-                              <div className="text-[9px] text-success mt-0.5">
-                                ✓ in{" "}
-                                {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                                {clk.clock_out_at && (
-                                  <>
-                                    {" "}
-                                    · out{" "}
-                                    {new Date(clk.clock_out_at).toLocaleTimeString("en-GB", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })}
-                                    {clk.auto_clocked_out && (
-                                      <span
-                                        className="text-warning"
-                                        title="No clock-out recorded — the scheduled shift end was used."
-                                      >
-                                        {" "}
-                                        (auto)
-                                      </span>
-                                    )}
-                                  </>
-                                )}
-                                {/* Attendance, not the schedule: the times above
-                                    span the whole day, so a split day needs its
-                                    real total spelling out. */}
-                                {Number(clk.session_count) > 1 && (
-                                  <span
-                                    className="block text-gold"
-                                    title={`${clk.session_count} separate shifts worked this day, ${formatHoursMinsWords(Number(clk.worked_hours ?? 0))} in total excluding the gap between them.`}
-                                  >
-                                    {clk.session_count} shifts worked
-                                    {clk.worked_hours != null && (
-                                      <> · {formatHoursMinsWords(Number(clk.worked_hours))}</>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            {missed && (
-                              <div className="text-[9px] text-danger mt-0.5">✗ not clocked in</div>
-                            )}
-                          </>
-                        );
                         return (
                           <td
                             key={dateIso}
                             className={
                               "px-1 py-1 text-center align-middle " +
-                              (isToday ? "bg-gold/5" : "")
+                              (dateIso === todayISO() ? "bg-gold/5" : "")
                             }
                           >
-                            {isPast ? (
-                              <div
-                                className={
-                                  "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
-                                  (cell?.is_day_off
-                                    ? dayOffTone(cell.is_on_leave, true)
-                                    : cell?.start_time
-                                      ? "bg-success/5 border-success/20 text-success"
-                                      : "border-dashed border-border text-text-muted")
-                                }
-                                title="Past day — view only (locked for editing)"
-                              >
-                                {cellInner}
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  setEditingManagerShift({
-                                    manager: mgr,
-                                    date: dateIso,
-                                    existing: cell ?? null,
-                                    prefill,
-                                  })
-                                }
-                                className={
-                                  "w-full h-12 rounded-lg text-xs border transition-colors " +
-                                  (cell?.is_day_off
-                                    ? dayOffTone(cell.is_on_leave, false)
-                                    : cell?.start_time
-                                      ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
-                                      : "border-dashed border-border text-text-muted hover:bg-surface-hover")
-                                }
-                              >
-                                {cellInner}
-                              </button>
-                            )}
+                            {managerDayCell(mgr, d)}
                           </td>
                         );
                       })}
@@ -943,8 +1344,8 @@ export function RotaView({
       )}
 
       {/* Rota grid */}
-      <Card className="overflow-hidden p-0">
-        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3">
+      <Card className="overflow-hidden p-0 max-md:p-0">
+        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3 max-md:px-4 max-md:pt-4 max-sm:flex-col">
           <div>
             <CardTitle>{activeStore?.name ?? "—"} Rota</CardTitle>
             <CardDescription>
@@ -957,7 +1358,7 @@ export function RotaView({
           </div>
           {eligibleVisitors.length > 0 && (
             <select
-              className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-w-[260px]"
+              className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-w-[260px] max-sm:w-full max-sm:max-w-none"
               value=""
               onChange={(e) => {
                 if (e.target.value) setAddedVisitorIds((p) => [...p, e.target.value]);
@@ -974,7 +1375,100 @@ export function RotaView({
           )}
         </CardHeader>
 
-        <div className="overflow-x-auto">
+        <ul className="md:hidden divide-y divide-border border-t border-border">
+          {rotaEmployees.length === 0 && (
+            <li className="px-4 py-6 text-sm text-center text-text-muted">
+              No staff on this store&apos;s rota yet. Assign staff to this store in
+              Employees, or add someone from the other store above.
+            </li>
+          )}
+          {rotaEmployees.map((emp) => {
+            const total = weekTotalHours(emp.id);
+            const cashHrs = weekCashHours(emp);
+            const avg = fourWkAvg.get(emp.id) ?? 0;
+            const wages = weekWages(emp);
+            const variance = avg > 0 ? ((total - avg) / avg) * 100 : 0;
+            const flagVariance = avg > 0 && Math.abs(variance) > 20;
+            const isDriver = hasRole(emp.position, "Driver");
+            const delivery = deliveryByDriver.get(emp.id);
+            const wage = wageComplianceForEmployee(emp, minWageBands);
+            const underMinWage = wage ? !wage.compliant : false;
+            const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
+            const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
+            return (
+              <li key={emp.id} className="px-4 py-3 flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium text-text-primary truncate">
+                      {emp.name}
+                      {emp.store_id !== activeStoreId && (
+                        <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
+                          visiting
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[11px] text-text-muted truncate">
+                      {emp.position ?? "—"} ·{" "}
+                      <span className={underMinWage ? "text-danger font-medium" : ""}>
+                        NI £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
+                        {underMinWage && " ⚠ below min"}
+                      </span>
+                      {emp.hourly_cash_rate ? ` · Cash £${Number(emp.hourly_cash_rate).toFixed(2)}` : ""}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-sm font-semibold tabular-nums text-text-primary">
+                      {formatGBP(wages.total)}
+                    </p>
+                    {wages.cash > 0 && (
+                      <p className="text-[10px] text-success tabular-nums">Cash {formatGBP(wages.cash)}</p>
+                    )}
+                  </div>
+                </div>
+
+                {employeeDayCell(emp, mobileDay)}
+
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted tabular-nums">
+                  <span>
+                    Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
+                  </span>
+                  {cashHrs > 0 && (
+                    <span className="text-gold">Cash {formatHoursMinsWords(cashHrs)}</span>
+                  )}
+                  <span className={flagVariance ? "text-warning" : ""}>
+                    4-wk avg {formatHoursMinsWords(avg)}
+                    {flagVariance && ` (${variance > 0 ? "+" : ""}${variance.toFixed(0)}%)`}
+                  </span>
+                  {isDriver && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditingDelivery({
+                          driver: emp,
+                          existing: delivery ?? null,
+                          weekDays: weekDays.map((d) => toISODate(d)),
+                          events: clocks.filter(
+                            (c) =>
+                              c.employee_id === emp.id &&
+                              weekDays.some((d) => toISODate(d) === c.event_date),
+                          ),
+                        })
+                      }
+                      className="ml-auto h-7 px-2 rounded-md border border-border text-text-subtle hover:text-text-primary"
+                    >
+                      Drops{" "}
+                      <span className="text-success">Live {liveDeliv}</span>
+                      {liveExtra > 0 && <span className="text-gold"> +{liveExtra}</span>}
+                      {delivery?.manager_avg_4wk != null && <> · Avg {delivery.manager_avg_4wk}</>}
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm min-w-[1200px]">
             <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
               <tr>
@@ -1073,195 +1567,15 @@ export function RotaView({
                     </td>
                     {weekDays.map((d) => {
                       const dateIso = toISODate(d);
-                      const dayAll = shiftByKey.get(`${emp.id}:${dateIso}`) ?? [];
-                      // A day can now hold several shifts; split them by which
-                      // store they belong to (a shift can sit at another store).
-                      const localShifts = dayAll.filter((s) => s.store_id === activeStoreId);
-                      const awayShifts = dayAll.filter((s) => s.store_id !== activeStoreId);
-                      const isToday = dateIso === todayISO();
-                      // Scheduled at ANOTHER store this day (and nothing here) —
-                      // read-only, so a home manager can see where their staff are
-                      // covering. If they ALSO have a shift here, the local cell
-                      // below takes priority and the away shift is not shown.
-                      if (localShifts.length === 0 && awayShifts.length > 0) {
-                        const awayStore = storeById.get(awayShifts[0].store_id);
-                        return (
-                          <td
-                            key={dateIso}
-                            className={
-                              "px-1 py-1 text-center align-middle " +
-                              (isToday ? "bg-gold/5" : "")
-                            }
-                          >
-                            <div
-                              className="w-full min-h-12 h-auto py-1 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
-                              title={`Working at ${awayStore?.name ?? "another store"} this day`}
-                            >
-                              <span className="font-medium truncate max-w-full">
-                                @ {awayStore?.name?.split(" ")[0] ?? "Away"}
-                              </span>
-                              {awayShifts.map(
-                                (s) =>
-                                  !s.is_day_off &&
-                                  s.start_time && (
-                                    <span key={s.id} className="opacity-80 truncate max-w-full">
-                                      {formatShiftRange(false, s.start_time, s.end_time)}
-                                    </span>
-                                  ),
-                              )}
-                            </div>
-                          </td>
-                        );
-                      }
-                      // Kept for the ghost/ prefill logic below, which only cares
-                      // about "is there at least one shift already" — the cell
-                      // itself renders every one of `localShifts`, not just this.
-                      const cell = localShifts[0] ?? null;
-                      const clk = clockByKey.get(`${emp.id}:${dateIso}`);
-                      // Past days are read-only — managers & admins can view but
-                      // not edit yesterday or earlier; only today onwards.
-                      const isPast = dateIso < todayISO();
-                      // Ghost hint: the employee's recurring schedule for this
-                      // weekday, shown faintly in empty cells as a suggestion.
-                      const tmpl = scheduleByEmpDay.get(
-                        `${emp.id}:${weekdayIndex(d)}`,
-                      );
-                      const ghost =
-                        !cell && tmpl && tmpl.is_working && tmpl.start_time
-                          ? `${tmpl.start_time.slice(0, 5)}–${(tmpl.end_time ?? "").slice(0, 5)}`
-                          : null;
-                      // Previous day's FIRST shift — used to pre-fill a new shift.
-                      const prevShift = (
-                        shiftByKey.get(`${emp.id}:${toISODate(addDays(d, -1))}`) ?? []
-                      )[0];
-                      const prefill =
-                        !cell && prevShift && !prevShift.is_day_off && prevShift.start_time
-                          ? {
-                              start: prevShift.start_time.slice(0, 5),
-                              end: (prevShift.end_time ?? "").slice(0, 5),
-                            }
-                          : null;
-                      // Ghost defaults are only actionable on editable days.
-                      const showGhost = ghost && !isPast;
-                      const cellInner = (
-                        <>
-                          {localShifts.length > 0 ? (
-                            <div className="flex flex-col gap-1">
-                              {localShifts.map((s) => (
-                                <div key={s.id}>
-                                  {formatShiftRange(s.is_day_off, s.start_time, s.end_time, s.is_on_leave)}
-                                  {!s.is_day_off && s.shift_type && (
-                                    <span className="block text-[9px] uppercase tracking-wide opacity-70">
-                                      {presetShort(s.shift_type)}
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          ) : showGhost ? (
-                            <span className="opacity-60">
-                              {ghost}
-                              <span className="block text-[9px] uppercase tracking-wide">
-                                default
-                              </span>
-                            </span>
-                          ) : (
-                            "—"
-                          )}
-                          {clk?.clock_in_at && (
-                            <div className="text-[9px] text-text-muted mt-0.5">
-                              in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
-                              {/* Labelled as WORKED, on its own line: the row
-                                  above is the scheduled shift, and the two are
-                                  different things on a split day. */}
-                              {Number(clk.session_count) > 1 && (
-                                <span
-                                  className="block text-gold"
-                                  title={`Attendance, not the schedule: ${clk.session_count} separate shifts worked this day, ${formatHoursMinsWords(Number(clk.worked_hours ?? 0))} in total excluding the gap between them.`}
-                                >
-                                  {clk.session_count} shifts worked
-                                  {clk.worked_hours != null && (
-                                    <> · {formatHoursMinsWords(Number(clk.worked_hours))}</>
-                                  )}
-                                </span>
-                              )}
-                              {clk.manual_entry && (
-                                <span
-                                  className="text-warning"
-                                  title={
-                                    clk.manual_entry_reason
-                                      ? `Entered by a manager — ${clk.manual_entry_reason}`
-                                      : "Entered by a manager (no location check)"
-                                  }
-                                >
-                                  {" "}
-                                  (manual)
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </>
-                      );
                       return (
                         <td
                           key={dateIso}
                           className={
                             "px-1 py-1 text-center align-middle " +
-                            (isToday ? "bg-gold/5" : "")
+                            (dateIso === todayISO() ? "bg-gold/5" : "")
                           }
                         >
-                          {isPast ? (
-                            <div
-                              className={
-                                "w-full min-h-12 h-auto py-1 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
-                                (cell?.is_day_off
-                                  ? dayOffTone(cell.is_on_leave, true)
-                                  : cell?.start_time
-                                    ? "bg-success/5 border-success/20 text-success"
-                                    : "border-dashed border-border text-text-muted")
-                              }
-                              title={
-                                cell?.same_day_edit_reason
-                                  ? `Reason: ${cell.same_day_edit_reason}`
-                                  : "Past day — view only (locked for editing)"
-                              }
-                            >
-                              {cellInner}
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() =>
-                                setEditingShift({
-                                  employee: emp,
-                                  date: dateIso,
-                                  existing: cell ?? null,
-                                  prefill,
-                                  dayShifts: localShifts,
-                                })
-                              }
-                              className={
-                                "w-full min-h-12 h-auto py-1 rounded-lg text-xs border transition-colors " +
-                                (cell?.is_day_off
-                                  ? dayOffTone(cell.is_on_leave, false)
-                                  : cell?.start_time
-                                    ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
-                                    : ghost
-                                      ? "border-dashed border-gold/30 text-text-muted hover:bg-gold/5"
-                                      : "border-dashed border-border text-text-muted hover:bg-surface-hover")
-                              }
-                              title={
-                                cell?.same_day_edit_reason
-                                  ? `Reason: ${cell.same_day_edit_reason}`
-                                  : localShifts.length > 1
-                                    ? `${localShifts.length} shifts — click to manage`
-                                    : ghost
-                                      ? "Default from recurring schedule — click to add this shift"
-                                      : undefined
-                              }
-                            >
-                              {cellInner}
-                            </button>
-                          )}
+                          {employeeDayCell(emp, d)}
                         </td>
                       );
                     })}
@@ -1350,8 +1664,8 @@ export function RotaView({
           drivers. Cells stay blank on days they aren't booked, which is most
           weekdays: cover drivers are mainly a weekend resource. */}
       {activeCoverDrivers.length > 0 && (
-        <Card className="overflow-hidden p-0">
-          <CardHeader className="px-5 pt-5">
+        <Card className="overflow-hidden p-0 max-md:p-0">
+          <CardHeader className="px-5 pt-5 max-md:px-4 max-md:pt-4">
             <div>
               <CardTitle>{activeStore?.name ?? "—"} Cover Driver Rota</CardTitle>
               <CardDescription>
@@ -1362,7 +1676,42 @@ export function RotaView({
             </div>
           </CardHeader>
 
-          <div className="overflow-x-auto">
+          <ul className="md:hidden divide-y divide-border border-t border-border">
+            {activeCoverDrivers.map((driver) => {
+              const total = rangeCoverTotalHours(driver.id);
+              const rate = Number(driver.hourly_cash_rate) || 0;
+              const liveDeliv = coverDeliveriesByDriver.live.get(driver.id) ?? 0;
+              const liveExtra = coverDeliveriesByDriver.extra.get(driver.id) ?? 0;
+              return (
+                <li key={driver.id} className="px-4 py-3 flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-text-primary truncate">{driver.name}</p>
+                      <p className="text-[11px] text-text-muted">
+                        {formatGBP(driver.hourly_cash_rate)}/h cash
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-sm font-semibold tabular-nums text-success">
+                      {formatGBP(total * rate)}
+                    </p>
+                  </div>
+                  {coverDayCell(driver, mobileDay)}
+                  <p className="text-[11px] text-text-muted tabular-nums">
+                    Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
+                    {(liveDeliv > 0 || liveExtra > 0) && (
+                      <>
+                        {" · "}
+                        <span className="text-success">{liveDeliv} drops</span>
+                        {liveExtra > 0 && <span className="text-gold"> (+{liveExtra} extra)</span>}
+                      </>
+                    )}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm min-w-[900px]">
               <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                 <tr>
@@ -1407,124 +1756,15 @@ export function RotaView({
                       </td>
                       {weekDays.map((d) => {
                         const dateIso = toISODate(d);
-                        const cell = coverShiftByKey.get(`${driver.id}:${dateIso}`) ?? null;
-                        const tmpl = coverScheduleByKey.get(
-                          `${driver.id}:${weekdayOf(dateIso)}`,
-                        );
-                        const eff = resolveCoverDriverShift(cell, tmpl);
-                        const clk = coverClockByKey.get(`${driver.id}:${dateIso}`);
-                        const isToday = dateIso === todayISO();
-                        const isPast = dateIso < todayISO();
-                        // Their usual availability pre-fills a new booking, so
-                        // the common case is two clicks: open, save.
-                        const prefill =
-                          !cell && tmpl?.is_working && tmpl.start_time
-                            ? {
-                                start: tmpl.start_time.slice(0, 5),
-                                end: (tmpl.end_time ?? "").slice(0, 5),
-                              }
-                            : null;
-                        const missed =
-                          isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
-
-                        const cellInner = (
-                          <>
-                            {cell ? (
-                              formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave)
-                            ) : eff && !eff.is_day_off ? (
-                              <span className="opacity-70">
-                                {formatShiftRange(false, eff.start_time, eff.end_time)}
-                                <span className="block text-[9px] uppercase tracking-wide">
-                                  usual
-                                </span>
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                            {clk?.clock_in_at && (
-                              <div className="text-[9px] text-success mt-0.5">
-                                ✓ in{" "}
-                                {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                                {clk.clock_out_at && (
-                                  <>
-                                    {" "}
-                                    · out{" "}
-                                    {new Date(clk.clock_out_at).toLocaleTimeString("en-GB", {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })}
-                                  </>
-                                )}
-                                {clk.manual_entry && (
-                                  <span
-                                    className="text-warning"
-                                    title={
-                                      clk.manual_entry_reason
-                                        ? `Entered by a manager — ${clk.manual_entry_reason}`
-                                        : "Entered by a manager (no location check)"
-                                    }
-                                  >
-                                    {" "}
-                                    (manual)
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            {missed && (
-                              <div className="text-[9px] text-danger mt-0.5">
-                                ✗ not clocked in
-                              </div>
-                            )}
-                          </>
-                        );
-
                         return (
                           <td
                             key={dateIso}
                             className={
                               "px-1 py-1 text-center align-middle " +
-                              (isToday ? "bg-gold/5" : "")
+                              (dateIso === todayISO() ? "bg-gold/5" : "")
                             }
                           >
-                            {isPast ? (
-                              <div
-                                className={
-                                  "w-full h-12 rounded-lg text-xs border flex flex-col items-center justify-center cursor-default opacity-70 " +
-                                  (cell?.is_day_off
-                                    ? dayOffTone(cell.is_on_leave, true)
-                                    : cell?.start_time
-                                      ? "bg-success/5 border-success/20 text-success"
-                                      : "border-dashed border-border text-text-muted")
-                                }
-                                title="Past day — view only (locked for editing)"
-                              >
-                                {cellInner}
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  setEditingCoverShift({
-                                    driver,
-                                    date: dateIso,
-                                    existing: cell,
-                                    prefill,
-                                  })
-                                }
-                                className={
-                                  "w-full h-12 rounded-lg text-xs border transition-colors " +
-                                  (cell?.is_day_off
-                                    ? dayOffTone(cell.is_on_leave, false)
-                                    : cell?.start_time
-                                      ? "bg-success/10 border-success/30 text-success hover:bg-success/15"
-                                      : "border-dashed border-border text-text-muted hover:bg-surface-hover")
-                                }
-                              >
-                                {cellInner}
-                              </button>
-                            )}
+                            {coverDayCell(driver, d)}
                           </td>
                         );
                       })}

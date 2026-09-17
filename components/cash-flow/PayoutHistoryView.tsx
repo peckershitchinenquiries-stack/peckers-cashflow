@@ -278,7 +278,7 @@ export function PayoutHistoryView({
             const open = expanded === p.id;
             const lines = linesById.get(p.id);
             return (
-              <Card key={p.id} className="p-0 overflow-hidden">
+              <Card key={p.id} className="p-0 max-md:p-0 overflow-hidden">
                 <button
                   onClick={() => toggleExpand(p.id)}
                   className="w-full px-4 sm:px-5 py-4 flex items-center justify-between gap-3 text-left hover:bg-surface-hover transition-colors"

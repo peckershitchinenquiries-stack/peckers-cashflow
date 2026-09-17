@@ -367,7 +367,7 @@ function ShiftForm({
         />
       )}
 
-      <div className="flex justify-end gap-2 pt-2">
+      <div className="flex justify-end gap-2 pt-2 max-sm:[&>button]:flex-1">
         {existing && (
           <Button variant="danger" onClick={remove} disabled={busy}>
             Clear

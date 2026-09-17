@@ -565,6 +565,9 @@ export function EmployeesView({
               >
                 {showArchived ? "Hide archived/left" : "Show archived/left"}
               </button>
+              <a href="#cover-drivers" className="sm:hidden text-xs text-gold hover:underline">
+                Cover drivers ↓
+              </a>
             </div>
             <Button
               onClick={() => setShowAdd(true)}
@@ -603,7 +606,7 @@ export function EmployeesView({
               />
             </Card>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-sm:gap-2">
               {filtered.map((emp) => (
                 <EmployeeCard
                   key={emp.id}
@@ -619,6 +622,7 @@ export function EmployeesView({
             </div>
           )}
 
+          <div id="cover-drivers" className="scroll-mt-20">
           <CoverDriversCard
             drivers={visibleCoverDrivers}
             days={visibleCoverDays}
@@ -630,6 +634,7 @@ export function EmployeesView({
             showStoreColumn={!lockToStore && storeFilter === "all"}
             onChanged={refresh}
           />
+          </div>
 
           <Card>
             <CardHeader>

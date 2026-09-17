@@ -45,6 +45,7 @@ import {
   ManualClockEntryModal,
   type ManualEntryCandidate,
 } from "@/components/clock/ManualClockEntryModal";
+import { LivePersonCard } from "@/components/live/LivePersonCard";
 
 type Props = {
   stores: Store[];
@@ -98,6 +99,18 @@ type EffShift = {
   start_time: string | null;
   end_time: string | null;
 };
+
+type MobileFilter = "all" | "working" | "due" | "done" | "off";
+const ALL_STATUSES: LiveDashboardStatus[] = [
+  "on_shift", "expected", "late", "clocked_out", "day_off", "on_leave", "tbc", "absent",
+];
+const MOBILE_FILTERS: { id: MobileFilter; label: string; statuses: LiveDashboardStatus[] }[] = [
+  { id: "all", label: "All", statuses: ALL_STATUSES },
+  { id: "working", label: "On shift", statuses: ["on_shift"] },
+  { id: "due", label: "Due / Late", statuses: ["expected", "late", "absent"] },
+  { id: "done", label: "Clocked out", statuses: ["clocked_out"] },
+  { id: "off", label: "Off", statuses: ["day_off", "on_leave", "tbc"] },
+];
 
 const STATUS_STYLES: Record<LiveDashboardStatus, { label: string; cls: string }> = {
   on_shift: { label: "On Shift", cls: "bg-success/15 text-success border-success/40" },
@@ -195,6 +208,14 @@ export function LiveDashboard({
     storeId: string;
   } | null>(null);
   const [now, setNow] = React.useState<Date>(() => new Date());
+  // Phone-only finder: the board runs to dozens of cards, so narrow it by name or status.
+  const [mobileQuery, setMobileQuery] = React.useState("");
+  const [mobileFilter, setMobileFilter] = React.useState<MobileFilter>("all");
+  const mobileNeedle = mobileQuery.trim().toLowerCase();
+  const mobileFiltering = mobileNeedle !== "" || mobileFilter !== "all";
+  const showOnMobile = (name: string, status: LiveDashboardStatus) =>
+    (mobileNeedle === "" || name.toLowerCase().includes(mobileNeedle)) &&
+    MOBILE_FILTERS.find((f) => f.id === mobileFilter)!.statuses.includes(status);
 
   // Local clock ticks every 30s so the "updated HH:MM" label and time-based
   // statuses (late/absent) stay fresh without hitting the server.
@@ -361,6 +382,47 @@ export function LiveDashboard({
         </span>
       </div>
 
+      <div className="md:hidden sticky top-[calc(3.5rem+1px+env(safe-area-inset-top))] z-20 -mx-4 px-4 py-2 bg-bg/95 backdrop-blur border-b border-border flex flex-col gap-2">
+        <div className="relative">
+          <input
+            type="search"
+            value={mobileQuery}
+            onChange={(e) => setMobileQuery(e.target.value)}
+            placeholder="Find a person…"
+            aria-label="Find a person"
+            className="w-full h-11 rounded-xl border border-border bg-surface px-3 text-base text-text-primary placeholder:text-text-muted focus:border-gold focus:outline-none"
+          />
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto [scrollbar-width:none] -mx-1 px-1">
+          {MOBILE_FILTERS.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setMobileFilter(f.id)}
+              aria-pressed={mobileFilter === f.id}
+              className={
+                "shrink-0 h-8 px-3 rounded-full border text-xs font-medium transition-colors " +
+                (mobileFilter === f.id
+                  ? "border-gold/50 bg-gold/15 text-gold"
+                  : "border-border bg-surface text-text-subtle")
+              }
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        {visibleStores.length > 1 && (
+          <div className="flex gap-3 text-xs">
+            <span className="text-text-muted">Jump to:</span>
+            {visibleStores.map((st) => (
+              <a key={st.id} href={`#live-store-${st.id}`} className="text-gold">
+                {st.name}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
@@ -434,6 +496,8 @@ export function LiveDashboard({
               clock,
               sessions,
               status,
+              expHours,
+              actHours,
               expectedWage: expHours * rate,
               actualWage: actHours * rate,
             };
@@ -484,6 +548,8 @@ export function LiveDashboard({
                 shift,
                 clock,
                 status,
+                expHours,
+                actHours,
                 deliveries: shortD + longD,
                 // Expected pay values hours only — deliveries aren't known until
                 // they're done, so counting them here would inflate the forecast.
@@ -512,7 +578,14 @@ export function LiveDashboard({
           const actualGrandTotal = actualTotal + managerActualTotal + coverActualTotal;
 
           return (
-            <Card key={store.id} className="p-0 overflow-hidden">
+            // A plain div, not <Card>: `cn` is a bare join with no
+            // tailwind-merge, so Card's own `p-5` outranks a passed `p-0` and
+            // left a 20px moat around every section of the board.
+            <div
+              key={store.id}
+              id={`live-store-${store.id}`}
+              className="rounded-2xl bg-surface border border-border overflow-hidden transition-colors max-md:scroll-mt-32"
+            >
               <div className="px-3 md:px-5 pt-3 md:pt-5 pb-3 border-b border-border">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="min-w-0">
@@ -561,7 +634,7 @@ export function LiveDashboard({
 
                 {/* Manager attendance — clock in/out for monitoring (fixed salary) */}
                 {storeManagers.length > 0 && (
-                  <div className="mt-3 rounded-lg border border-border bg-surface md:bg-surface-hover/50 p-3">
+                  <div className="mt-3 rounded-lg border border-border bg-surface md:bg-surface-hover/50 px-2.5 py-2 md:p-3">
                     <div className="text-[10px] uppercase tracking-wider text-text-muted mb-2">
                       Manager attendance
                     </div>
@@ -661,36 +734,48 @@ export function LiveDashboard({
                   </div>
                 )}
 
-                {/* Daily wage summary — expected (from the schedule) vs actual (clocked so far) */}
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="rounded-lg border border-border bg-surface md:bg-surface-hover px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wider text-text-muted">
-                      Expected wage today
-                    </div>
-                    <div className="text-base font-semibold tabular-nums text-text-primary">
-                      {formatGBP(expectedGrandTotal)}
-                    </div>
-                    {isSuperAdmin && (storeManagers.length > 0 || hasCover) && (
-                      <div className="text-[10px] text-text-muted mt-0.5">
-                        {formatGBP(expectedTotal)} staff + {formatGBP(managerExpectedTotal)} mgrs
-                        {hasCover && <> + {formatGBP(coverExpectedTotal)} cover</>}
+                {/* Daily wage bill — actual clocked so far against the day's
+                    expected total, with a bar so the gap reads at a glance. */}
+                <div className="mt-3 rounded-lg border border-border bg-surface md:bg-surface-hover px-3 py-2.5">
+                  <div className="flex items-end justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                        Wage so far
                       </div>
-                    )}
-                  </div>
-                  <div className="rounded-lg border border-border bg-surface md:bg-surface-hover px-3 py-2">
-                    <div className="text-[10px] uppercase tracking-wider text-text-muted">
-                      Actual wage so far
-                    </div>
-                    <div className="text-base font-semibold tabular-nums text-gold">
-                      {formatGBP(actualGrandTotal)}
-                    </div>
-                    {isSuperAdmin && (storeManagers.length > 0 || hasCover) && (
-                      <div className="text-[10px] text-text-muted mt-0.5">
-                        {formatGBP(actualTotal)} staff + {formatGBP(managerActualTotal)} mgrs
-                        {hasCover && <> + {formatGBP(coverActualTotal)} cover</>}
+                      <div className="text-lg font-semibold tabular-nums text-gold leading-tight">
+                        {formatGBP(actualGrandTotal)}
                       </div>
-                    )}
+                    </div>
+                    <div className="text-right min-w-0">
+                      <div className="text-[10px] uppercase tracking-wider text-text-muted">
+                        Expected today
+                      </div>
+                      <div className="text-base font-semibold tabular-nums text-text-primary leading-tight">
+                        {formatGBP(expectedGrandTotal)}
+                      </div>
+                    </div>
                   </div>
+                  <div className="mt-2 h-1.5 rounded-full bg-border overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gold transition-all"
+                      style={{
+                        width: `${
+                          expectedGrandTotal > 0
+                            ? Math.min(100, (actualGrandTotal / expectedGrandTotal) * 100)
+                            : actualGrandTotal > 0
+                              ? 100
+                              : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                  {isSuperAdmin && (storeManagers.length > 0 || hasCover) && (
+                    <div className="mt-1.5 text-[10px] text-text-muted tabular-nums">
+                      {formatGBP(actualTotal)} staff + {formatGBP(managerActualTotal)} mgrs
+                      {hasCover && <> + {formatGBP(coverActualTotal)} cover</>} of{" "}
+                      {formatGBP(expectedGrandTotal)} expected
+                    </div>
+                  )}
                 </div>
 
                 {/* Home staff & managers working at the other store today */}
@@ -732,8 +817,60 @@ export function LiveDashboard({
                 )}
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="table-stack stack-grid w-full text-sm md:min-w-[720px]">
+              <div className="md:hidden flex flex-col gap-2 px-1.5 py-2">
+                {sorted.length === 0 && (
+                  <p className="px-2 py-6 text-center text-text-muted text-sm">
+                    No staff scheduled today. <span className="text-warning">TBC</span>
+                  </p>
+                )}
+                {sorted.length > 0 &&
+                  mobileFiltering &&
+                  !wageRows.some((r) => showOnMobile(r.emp.name, r.status)) && (
+                    <p className="px-2 py-4 text-center text-text-muted text-sm">
+                      No employees match.
+                    </p>
+                  )}
+                {wageRows.filter((r) => showOnMobile(r.emp.name, r.status)).map((r) => (
+                  <LivePersonCard
+                    key={r.emp.id}
+                    name={r.emp.name}
+                    role={r.emp.position ?? "Team member"}
+                    status={r.status}
+                    statusLabel={STATUS_STYLES[r.status].label}
+                    shiftLabel={formatShiftRange(
+                      r.shift?.is_day_off ?? false,
+                      r.shift?.start_time ?? null,
+                      r.shift?.end_time ?? null,
+                      r.shift?.is_on_leave,
+                    )}
+                    shiftNote={r.fromTemplate && r.shift ? "default" : null}
+                    clockInAt={r.clock?.clock_in_at ?? null}
+                    clockOutAt={r.clock?.clock_out_at ?? null}
+                    expectedHours={r.expHours}
+                    workedHours={r.actHours}
+                    expectedWage={r.expectedWage}
+                    actualWage={r.actualWage}
+                    deliveries={
+                      hasRole(r.emp.position, "Driver")
+                        ? (Number(r.clock?.short_deliveries_count) || 0) +
+                          (Number(r.clock?.long_deliveries_count) || 0)
+                        : null
+                    }
+                    shiftCount={r.sessions?.length ?? 0}
+                    shiftsLabel={(r.sessions ?? [])
+                      .map(
+                        (x) =>
+                          `${formatTimeOnly(x.clock_in_at)}–${x.clock_out_at ? formatTimeOnly(x.clock_out_at) : "now"}`,
+                      )
+                      .join(", ")}
+                    manualEntry={r.clock?.manual_entry ?? false}
+                    manualReason={r.clock?.manual_entry_reason ?? null}
+                  />
+                ))}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm md:min-w-[720px]">
                   <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                     <tr>
                       <th className="text-left px-3 py-2">Employee</th>
@@ -777,13 +914,13 @@ export function LiveDashboard({
                             "border-t border-border " + (ROW_BG[status] ?? "")
                           }
                         >
-                          <td className="px-3 py-2 font-medium text-text-primary" data-label="">
+                          <td className="px-3 py-2 font-medium text-text-primary">
                             {emp.name}
                           </td>
-                          <td className="px-2 py-2 text-text-subtle" data-label="Role">
+                          <td className="px-2 py-2 text-text-subtle">
                             {emp.position ?? "—"}
                           </td>
-                          <td className="px-2 py-2 text-text-subtle" data-label="Shift">
+                          <td className="px-2 py-2 text-text-subtle">
                             {formatShiftRange(
                               shift?.is_day_off ?? false,
                               shift?.start_time ?? null,
@@ -799,7 +936,7 @@ export function LiveDashboard({
                               </span>
                             )}
                           </td>
-                          <td className="px-2 py-2 text-center text-xs" data-label="In">
+                          <td className="px-2 py-2 text-center text-xs">
                             <span title={shiftCount > 1 ? shiftsLabel : undefined}>
                               {formatTimeOnly(clock?.clock_in_at)}
                             </span>
@@ -824,12 +961,12 @@ export function LiveDashboard({
                               </span>
                             )}
                           </td>
-                          <td className="px-2 py-2 text-center text-xs" data-label="Out">
+                          <td className="px-2 py-2 text-center text-xs">
                             <span title={shiftCount > 1 ? shiftsLabel : undefined}>
                               {formatTimeOnly(clock?.clock_out_at)}
                             </span>
                           </td>
-                          <td className="px-2 py-2 text-center" data-label="Status">
+                          <td className="px-2 py-2 text-center">
                             <span
                               className={
                                 "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border " +
@@ -839,13 +976,13 @@ export function LiveDashboard({
                               {style.label}
                             </span>
                           </td>
-                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-subtle" data-label="Expected £">
+                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-subtle">
                             {expectedWage > 0 ? formatGBP(expectedWage) : "—"}
                           </td>
-                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-primary" data-label="Actual £">
+                          <td className="px-2 py-2 text-right text-xs tabular-nums text-text-primary">
                             {actualWage > 0 ? formatGBP(actualWage) : "—"}
                           </td>
-                          <td className="px-2 py-2 text-center text-xs text-text-subtle" data-label="Deliveries">
+                          <td className="px-2 py-2 text-center text-xs text-text-subtle">
                             {hasRole(emp.position, "Driver")
                               ? clock?.short_deliveries_count == null &&
                                 clock?.long_deliveries_count == null
@@ -878,8 +1015,42 @@ export function LiveDashboard({
                       </button>
                     )}
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="table-stack stack-grid w-full text-sm md:min-w-[720px]">
+                  <div className="md:hidden flex flex-col gap-2 px-1.5 py-2">
+                    {mobileFiltering &&
+                      !storeCoverRows.some((r) => showOnMobile(r.driver.name, r.status)) && (
+                        <p className="px-2 py-3 text-center text-text-muted text-sm">
+                          No cover drivers match.
+                        </p>
+                      )}
+                    {storeCoverRows.filter((r) => showOnMobile(r.driver.name, r.status)).map((r) => (
+                      <LivePersonCard
+                        key={r.driver.id}
+                        name={r.driver.name}
+                        role="Cover Driver"
+                        status={r.status}
+                        statusLabel={STATUS_STYLES[r.status].label}
+                        shiftLabel={formatShiftRange(
+                          r.shift?.is_day_off ?? false,
+                          r.shift?.start_time ?? null,
+                          r.shift?.end_time ?? null,
+                          r.shift?.is_on_leave,
+                        )}
+                        shiftNote={r.shift?.fromTemplate ? "usual" : null}
+                        clockInAt={r.clock?.clock_in_at ?? null}
+                        clockOutAt={r.clock?.clock_out_at ?? null}
+                        expectedHours={r.expHours}
+                        workedHours={r.actHours}
+                        expectedWage={r.expectedWage}
+                        actualWage={r.actualWage}
+                        deliveries={r.deliveries}
+                        manualEntry={r.clock?.manual_entry ?? false}
+                        manualReason={r.clock?.manual_entry_reason ?? null}
+                      />
+                    ))}
+                  </div>
+
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="w-full text-sm md:min-w-[720px]">
                       <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
                         <tr>
                           <th className="text-left px-3 py-2">Employee</th>
@@ -905,11 +1076,11 @@ export function LiveDashboard({
                                   "border-t border-border " + (ROW_BG[status] ?? "")
                                 }
                               >
-                                <td className="px-3 py-2 font-medium text-text-primary" data-label="">
+                                <td className="px-3 py-2 font-medium text-text-primary">
                                   {driver.name}
                                 </td>
-                                <td className="px-2 py-2 text-text-subtle" data-label="Role">Cover Driver</td>
-                                <td className="px-2 py-2 text-text-subtle" data-label="Shift">
+                                <td className="px-2 py-2 text-text-subtle">Cover Driver</td>
+                                <td className="px-2 py-2 text-text-subtle">
                                   {formatShiftRange(
                                     shift?.is_day_off ?? false,
                                     shift?.start_time ?? null,
@@ -925,7 +1096,7 @@ export function LiveDashboard({
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-2 py-2 text-center text-xs" data-label="In">
+                                <td className="px-2 py-2 text-center text-xs">
                                   {formatTimeOnly(clock?.clock_in_at)}
                                   {clock?.manual_entry && (
                                     <span
@@ -940,10 +1111,10 @@ export function LiveDashboard({
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-2 py-2 text-center text-xs" data-label="Out">
+                                <td className="px-2 py-2 text-center text-xs">
                                   {formatTimeOnly(clock?.clock_out_at)}
                                 </td>
-                                <td className="px-2 py-2 text-center" data-label="Status">
+                                <td className="px-2 py-2 text-center">
                                   <span
                                     className={
                                       "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border " +
@@ -953,13 +1124,13 @@ export function LiveDashboard({
                                     {style.label}
                                   </span>
                                 </td>
-                                <td className="px-2 py-2 text-right text-xs tabular-nums text-text-subtle" data-label="Expected £">
+                                <td className="px-2 py-2 text-right text-xs tabular-nums text-text-subtle">
                                   {expectedWage > 0 ? formatGBP(expectedWage) : "—"}
                                 </td>
-                                <td className="px-2 py-2 text-right text-xs tabular-nums text-text-primary" data-label="Actual £">
+                                <td className="px-2 py-2 text-right text-xs tabular-nums text-text-primary">
                                   {actualWage > 0 ? formatGBP(actualWage) : "—"}
                                 </td>
-                                <td className="px-2 py-2 text-center text-xs text-text-subtle" data-label="Deliveries">
+                                <td className="px-2 py-2 text-center text-xs text-text-subtle">
                                   {clock?.short_deliveries_count == null &&
                                   clock?.long_deliveries_count == null
                                     ? "—"
@@ -974,7 +1145,7 @@ export function LiveDashboard({
                   </div>
                 </div>
               )}
-            </Card>
+            </div>
           );
         })}
       </div>

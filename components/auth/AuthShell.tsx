@@ -33,7 +33,7 @@ export function AuthShell({
           <Logo tagline="Management software" variant="auth" />
         </div>
 
-        <div className="rounded-2xl bg-surface border border-border p-7 shadow-2xl shadow-black/40">
+        <div className="rounded-2xl bg-surface border border-border p-7 max-sm:p-5 shadow-2xl shadow-black/40">
           <span className="inline-block text-[10px] font-medium uppercase tracking-[0.18em] text-gold bg-gold/10 border border-gold/30 rounded-full px-2.5 py-1">
             {badge}
           </span>

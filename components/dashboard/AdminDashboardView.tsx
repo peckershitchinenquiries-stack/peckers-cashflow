@@ -53,7 +53,7 @@ export function AdminDashboardView({
   return (
     <div className="flex flex-col gap-5">
       {/* Store toggle — each store's figures are kept fully separate */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="grid grid-cols-2 sm:flex gap-2 sm:flex-wrap">
         {storeData.map(({ store }) => (
           <button
             key={store.id}

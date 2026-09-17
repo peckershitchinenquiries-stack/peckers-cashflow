@@ -143,9 +143,9 @@ export function PastWeekHours({
   const maxPickableIso = toISODate(addDays(parseISODate(maxWeekStartIso), 6));
 
   return (
-    <Card className="p-0 overflow-hidden">
+    <Card className="p-0 max-md:p-0 overflow-hidden">
       <CardHeader
-        className="px-5 pt-5 mb-0"
+        className="px-5 pt-5 mb-0 max-sm:px-4 max-sm:pt-4"
         action={
           <div className="text-right shrink-0">
             <div className="text-[10px] uppercase tracking-wider text-text-muted">
@@ -169,7 +169,7 @@ export function PastWeekHours({
       </CardHeader>
 
       {/* Week picker */}
-      <div className="px-5 pb-4 flex items-center gap-2 flex-wrap">
+      <div className="px-5 max-sm:px-4 pb-4 flex items-center gap-2 flex-wrap">
         <Button
           size="sm"
           variant="outline"
@@ -216,7 +216,7 @@ export function PastWeekHours({
               return (
                 <div
                   key={d.iso}
-                  className="px-5 py-3 border-b border-border last:border-0 flex items-start justify-between gap-3"
+                  className="px-5 max-sm:px-4 py-3 border-b border-border last:border-0 flex items-start justify-between gap-3"
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-medium">
@@ -285,7 +285,7 @@ export function PastWeekHours({
             })}
           </div>
 
-          <div className="px-5 py-3 border-t border-border bg-surface-hover/50 flex items-center justify-between">
+          <div className="px-5 max-sm:px-4 py-3 border-t border-border bg-surface-hover/50 flex items-center justify-between">
             <span className="text-sm font-medium">Week total</span>
             <Badge variant="gold">
               <HoursMinsDisplay hours={totalHours} size="sm" />
@@ -293,7 +293,7 @@ export function PastWeekHours({
           </div>
 
           {totalHours === 0 && (
-            <p className="px-5 pb-4 text-xs text-text-muted">
+            <p className="px-5 max-sm:px-4 pb-4 text-xs text-text-muted">
               No clocked hours recorded for this week. If you worked and this
               looks wrong, speak to your manager — they can add the missing
               times.

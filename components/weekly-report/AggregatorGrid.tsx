@@ -111,7 +111,7 @@ export function AggregatorGrid({
       )}
 
       <div className="table-scroll overflow-x-auto">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="grid-stack w-full min-w-[560px] text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-hover text-xs uppercase tracking-wide text-text-muted">
               <th className="px-3 py-2 text-left font-semibold">Platform</th>
@@ -132,10 +132,13 @@ export function AggregatorGrid({
               return (
                 <tr key={r.platform} className="border-b border-border">
                   <td className="px-3 py-2 text-text-primary">{r.platform}</td>
-                  <td className="px-3 py-2 text-right font-mono text-text-secondary">
+                  <td
+                    data-label={platformSales.basis === "gross" ? "Gross sales (VM)" : "Net sales (VM)"}
+                    className="px-3 py-2 text-right font-mono text-text-secondary"
+                  >
                     £{r.sales.toFixed(2)}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td data-label="Commission" className="px-3 py-2 text-right">
                     <NumberCell
                       step="0.01"
                       min="0"
@@ -149,10 +152,10 @@ export function AggregatorGrid({
                       onCommit={() => commit(r.platform, r.line?.id ?? null)}
                     />
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-text-primary">
+                  <td data-label="Income" className="px-3 py-2 text-right font-mono text-text-primary">
                     £{income.toFixed(2)}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-text-muted">
+                  <td data-label="Comm. %" className="px-3 py-2 text-right font-mono text-text-muted">
                     {r.sales > 0 ? `${((commission / r.sales) * 100).toFixed(2)}%` : "—"}
                   </td>
                 </tr>
@@ -162,13 +165,13 @@ export function AggregatorGrid({
           <tfoot>
             <tr className="bg-surface-hover font-semibold">
               <td className="px-3 py-2 text-text-primary">Total</td>
-              <td className="px-3 py-2 text-right font-mono text-text-primary">
+              <td data-label="Sales" className="px-3 py-2 text-right font-mono text-text-primary">
                 £{totals.sales.toFixed(2)}
               </td>
-              <td className="px-3 py-2 text-right font-mono text-text-primary">
+              <td data-label="Commission" className="px-3 py-2 text-right font-mono text-text-primary">
                 £{totals.commission.toFixed(2)}
               </td>
-              <td className="px-3 py-2 text-right font-mono text-text-primary">
+              <td data-label="Income" className="px-3 py-2 text-right font-mono text-text-primary">
                 £{totals.income.toFixed(2)}
               </td>
               <td className="px-3 py-2" />

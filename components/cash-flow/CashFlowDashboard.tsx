@@ -31,11 +31,13 @@ function Stat({
   value,
   tone = "default",
   hint,
+  className,
 }: {
   label: string;
   value: string;
   tone?: "default" | "good" | "bad" | "gold";
   hint?: string;
+  className?: string;
 }) {
   const toneCls =
     tone === "good"
@@ -46,9 +48,9 @@ function Stat({
           ? "text-gold"
           : "text-text-primary";
   return (
-    <div className="rounded-xl bg-bg border border-border px-4 py-3">
+    <div className={`rounded-xl bg-bg border border-border px-3 sm:px-4 py-3 ${className ?? ""}`}>
       <p className="text-xs text-text-muted">{label}</p>
-      <p className={`text-lg font-semibold tabular-nums ${toneCls}`}>{value}</p>
+      <p className={`text-base sm:text-lg font-semibold tabular-nums ${toneCls}`}>{value}</p>
       {hint && <p className="text-[11px] text-text-muted mt-0.5">{hint}</p>}
     </div>
   );
@@ -145,7 +147,7 @@ export function CashFlowDashboard({
           Week of {weekLabel(parseISODate(weekStart))}
         </p>
         {stores.length > 1 && (
-          <div className="flex gap-2 flex-wrap">
+          <div className="grid grid-cols-2 sm:flex gap-2 sm:flex-wrap">
             {stores.map((s) => (
               <button
                 key={s.id}
@@ -184,7 +186,7 @@ export function CashFlowDashboard({
       {shown.map((v) => {
         const draw = v.summary.post_office_draw;
         return (
-          <Card key={v.store.id} className="p-0 overflow-hidden">
+          <Card key={v.store.id} className="p-0 max-md:p-0 overflow-hidden">
             <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-text-primary">{v.store.name}</h2>
@@ -194,7 +196,7 @@ export function CashFlowDashboard({
               {/* Links to the other cash-flow pages. Styled as navigation —
                   identical treatment, leading icon, trailing chevron — so none
                   of them reads as a selected filter on this page. */}
-              <div className="flex items-center gap-1 text-sm flex-wrap">
+              <div className="flex items-center gap-1 text-sm flex-wrap -mx-2.5 sm:mx-0">
                 <PageLink href={`${basePath}/daily?week=${weekStart}`} icon={<ListIcon size={14} />}>
                   Daily entries
                 </PageLink>
@@ -210,7 +212,7 @@ export function CashFlowDashboard({
               </div>
             </div>
 
-            <div className="p-5 flex flex-col gap-5">
+            <div className="p-3 sm:p-5 flex flex-col gap-4 sm:gap-5">
               {/* Post Office draw alert */}
               {draw > 0.001 && (
                 <div className="rounded-xl border border-danger/40 bg-danger/10 px-4 py-3">
@@ -225,8 +227,13 @@ export function CashFlowDashboard({
               )}
 
               {/* Stat tiles */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Stat label="Running cash balance" value={formatGBP(v.runningBalance)} tone="gold" />
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+                <Stat
+                  label="Running cash balance"
+                  value={formatGBP(v.runningBalance)}
+                  tone="gold"
+                  className="col-span-2 sm:col-span-1"
+                />
                 <Stat
                   label="Tuesday wage forecast"
                   value={formatGBP(v.summary.grand_total_wages)}

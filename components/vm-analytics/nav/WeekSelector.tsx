@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { WeekOption, ExecMode } from "@/lib/vm-analytics/types";
 import { weekRange } from "@/lib/vm-analytics/format";
@@ -41,6 +42,20 @@ export function WeekSelector({
   const rawMode = search.get("mode");
   const mode: ExecMode = rawMode === "4w" ? "4w" : rawMode === "12w" ? "12w" : "week";
 
+  // Phones only: en-GB renders "Sept", which truncates the range in a narrow select.
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const sync = () => setCompact(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+  const rangeLabel = (start?: string | null, end?: string | null) => {
+    const label = weekRange(start, end);
+    return compact ? label.replace(/Sept/g, "Sep") : label;
+  };
+
   function onWeekChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(search.toString());
     params.set("week", e.target.value);
@@ -72,17 +87,17 @@ export function WeekSelector({
   function periodLabel(n: number): string {
     const period = weeks.slice(0, n);
     if (period.length === 0) return "—";
-    const label = weekRange(period[period.length - 1].week_start, period[0].week_end);
+    const label = rangeLabel(period[period.length - 1].week_start, period[0].week_end);
     return period.length < n ? `${label} · ${period.length} of ${n} wks` : label;
   }
 
   const weekPicker = (
     <label className="flex min-w-0 flex-1 items-center gap-2 text-sm sm:flex-none">
-      <span className="text-secondary">Week</span>
+      <span className="text-secondary max-sm:sr-only">Week</span>
       <select value={selected ?? list[0].week_start_iso} onChange={onWeekChange} className={selectClass}>
         {list.map((w) => (
           <option key={w.week_start_iso} value={w.week_start_iso} className="bg-surface text-primary">
-            {weekRange(w.week_start, w.week_end)}
+            {rangeLabel(w.week_start, w.week_end)}
           </option>
         ))}
       </select>

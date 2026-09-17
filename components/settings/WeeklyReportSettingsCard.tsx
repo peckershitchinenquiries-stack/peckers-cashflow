@@ -89,7 +89,7 @@ export function WeeklyReportSettingsCard({ initial }: { initial: AppSettings }) 
           </span>
         </label>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end max-sm:[&>button]:w-full">
           <Button onClick={save} loading={busy}>
             Save weekly report settings
           </Button>

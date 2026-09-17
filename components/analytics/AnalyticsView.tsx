@@ -33,8 +33,8 @@ export function AnalyticsView({
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-3 flex-wrap mb-6">
-        <div className="inline-flex p-1 rounded-xl bg-surface border border-border">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-5 sm:mb-6">
+        <div className="grid grid-cols-2 w-full sm:w-auto sm:inline-flex p-1 rounded-xl bg-surface border border-border">
           <button
             onClick={() => setTab("weekly")}
             className={cn(
@@ -61,7 +61,7 @@ export function AnalyticsView({
 
         {/* Store toggle — figures are kept fully separate per store */}
         {isAdmin && stores.length > 1 && (
-          <div className="flex gap-2 flex-wrap">
+          <div className="grid grid-cols-2 w-full sm:w-auto sm:flex gap-2 sm:flex-wrap">
             {stores.map((s) => (
               <button
                 key={s.id}

@@ -189,7 +189,7 @@ export function LabourGrid({
         </div>
 
         <div className="table-scroll overflow-x-auto">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="grid-stack w-full min-w-[900px] text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-hover text-xs uppercase tracking-wide text-text-muted">
                 <th className="px-3 py-2 text-left font-semibold">Person</th>
@@ -255,26 +255,26 @@ export function LabourGrid({
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                    <td data-label="Hours worked" className="px-3 py-1.5 text-right font-mono text-text-secondary">
                       {t.hours.toFixed(2)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{numField("ni_hours")}</td>
-                    <td className="px-3 py-1.5 text-right">{numField("ni_rate", "any")}</td>
-                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                    <td data-label="NI hrs" className="px-3 py-1.5 text-right">{numField("ni_hours")}</td>
+                    <td data-label="NI rate" className="px-3 py-1.5 text-right">{numField("ni_rate", "any")}</td>
+                    <td data-label="NI total" className="px-3 py-1.5 text-right font-mono text-text-secondary">
                       £{t.ni_total.toFixed(2)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{numField("cash_hours")}</td>
-                    <td className="px-3 py-1.5 text-right">{numField("cash_rate", "any")}</td>
-                    <td className="px-3 py-1.5 text-right font-mono text-text-secondary">
+                    <td data-label="Cash hrs" className="px-3 py-1.5 text-right">{numField("cash_hours")}</td>
+                    <td data-label="Cash rate" className="px-3 py-1.5 text-right">{numField("cash_rate", "any")}</td>
+                    <td data-label="Cash total" className="px-3 py-1.5 text-right font-mono text-text-secondary">
                       £{t.cash_total.toFixed(2)}
                     </td>
-                    <td className="px-3 py-1.5 text-right">{numField("deliveries", "1")}</td>
-                    <td className="px-3 py-1.5 text-right">{numField("delivery_pay")}</td>
-                    <td className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">
+                    <td data-label="Deliveries" className="px-3 py-1.5 text-right">{numField("deliveries", "1")}</td>
+                    <td data-label="Delivery pay" className="px-3 py-1.5 text-right">{numField("delivery_pay")}</td>
+                    <td data-label="Total" className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">
                       £{t.total_pay.toFixed(2)}
                     </td>
                     {!readOnly && (
-                      <td className="px-2 py-1.5 text-center">
+                      <td data-role="remove" className="px-2 py-1.5 text-center">
                         <button
                           type="button"
                           onClick={() => remove(line.id)}

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 export function Logo({
   className,
   compact = false,
-  tagline = "Cash flow",
+  tagline = "Management software",
   variant = "default",
 }: {
   className?: string;

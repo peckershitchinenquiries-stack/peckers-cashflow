@@ -178,6 +178,8 @@ export function DatePicker({
             role="dialog"
             className={cn(
               "absolute left-0 z-40 w-[min(18rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3 animate-fade-in",
+              // Phones: centred on screen, so a field near either edge can't push it off.
+              "max-sm:fixed max-sm:left-1/2 max-sm:top-1/2 max-sm:bottom-auto max-sm:-translate-x-1/2 max-sm:-translate-y-1/2 max-sm:m-0 max-sm:z-[60] max-sm:w-[min(20rem,calc(100vw-1.5rem))]",
               flipUp ? "bottom-full mb-2" : "top-full mt-2",
             )}
           >

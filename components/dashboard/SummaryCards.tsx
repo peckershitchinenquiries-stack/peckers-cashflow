@@ -48,19 +48,20 @@ function StatCard({
           : "bg-surface-hover text-text-muted border-border";
 
   return (
-    <Card className="hover:border-border-strong transition-colors">
+    <Card className="hover:border-border-strong transition-colors max-sm:p-3.5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.18em] text-text-muted font-medium">
+          <p className="text-[10px] sm:text-xs uppercase tracking-[0.12em] sm:tracking-[0.18em] text-text-muted font-medium leading-snug">
             {label}
           </p>
-          <p className={cn("text-2xl sm:text-3xl font-semibold mt-2 truncate", toneClass)}>
+          <p className={cn("text-xl sm:text-3xl font-semibold mt-1.5 sm:mt-2 truncate tabular-nums", toneClass)}>
             {value}
           </p>
         </div>
         <div
           className={cn(
-            "h-10 w-10 rounded-xl border flex items-center justify-center flex-shrink-0",
+            // Two cards share a 375px row; the icon would take the width the figure needs.
+            "hidden sm:flex h-10 w-10 rounded-xl border items-center justify-center flex-shrink-0",
             iconBg,
           )}
         >

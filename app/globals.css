@@ -283,6 +283,11 @@
     padding: 0.1875rem 0 !important;
     text-align: right !important;
     overflow-wrap: anywhere;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Right-aligned flex values need their own end alignment once they wrap. */
+  .table-stack td > * {
+    min-width: 0;
   }
   .table-stack td[data-label]:not([data-label=""])::before {
     content: attr(data-label);
@@ -300,7 +305,16 @@
   .table-stack td[data-label=""] {
     text-align: left !important;
     font-size: 0.9375rem;
+    font-weight: 600;
     padding-bottom: 0.375rem !important;
+  }
+  /* A later unlabelled cell is an actions/footnote cell, not a second heading. */
+  .table-stack td[data-label=""] ~ td[data-label=""],
+  .table-stack td:not([data-label]) ~ td:not([data-label]) {
+    font-weight: 400;
+    font-size: 0.875rem;
+    padding-top: 0.375rem !important;
+    padding-bottom: 0 !important;
   }
   /* An empty-state row spans the card, not a label/value pair. */
   .table-stack td[colspan]:not([data-label]) {
@@ -314,85 +328,123 @@
   .table-stack {
     min-width: 0 !important;
   }
+}
 
-  /* `.stack-grid` (Live board): a compact card per row instead of one line per
-     field — name + status on top, role beneath, then the rest three across. */
-  .table-stack.stack-grid tbody {
+/* ---------------------------------------------------------------------------
+   Analytics tables on a phone
+
+   VM Analytics tables are numeric grids that genuinely need their columns, so
+   they keep scrolling sideways — but the label column is pinned, so a figure
+   never loses the row it belongs to, and cells are tightened to fit more of it.
+--------------------------------------------------------------------------- */
+@media screen and (max-width: 767px) {
+  .table-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .table-scroll .vm-table th,
+  .table-scroll .vm-table td {
+    padding: 0.5rem 0.625rem !important;
+  }
+  .table-scroll .vm-table th:first-child,
+  .table-scroll .vm-table td:first-child:not([colspan]) {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    max-width: 9.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: rgb(var(--color-surface));
+    box-shadow: 1px 0 0 rgb(var(--color-border));
+  }
+  .table-scroll .vm-table thead th:first-child {
+    background-color: rgb(var(--color-surface-hover));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Editable grids on a phone (`.grid-stack`, Weekly Report sheets)
+
+   Each row becomes a card of labelled fields, two across, so a manager types
+   into full-width boxes instead of panning a 900px spreadsheet. Labels come
+   from each cell's `data-label`; the first unlabelled cell is the row heading,
+   and `data-role="remove"` pins the delete button to the card's corner.
+--------------------------------------------------------------------------- */
+@media screen and (max-width: 767px) {
+  .grid-stack,
+  .grid-stack tbody,
+  .grid-stack tfoot {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+  }
+  .grid-stack thead {
+    display: none;
+  }
+  .grid-stack tr {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+  .grid-stack td {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    padding: 0.75rem;
-  }
-  .table-stack.stack-grid tr {
-    display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    column-gap: 0.75rem;
-    row-gap: 0.375rem;
-    padding: 0.75rem 0.875rem;
-    border: 1px solid rgb(var(--color-border));
-    border-radius: 0.75rem;
-    background-color: rgb(var(--color-surface));
-  }
-  /* The status tint rides on top of the solid card fill. */
-  .table-stack.stack-grid tr[data-status="on_shift"] {
-    background-image: linear-gradient(rgb(var(--color-success) / 0.05), rgb(var(--color-success) / 0.05));
-  }
-  .table-stack.stack-grid tr[data-status="expected"],
-  .table-stack.stack-grid tr[data-status="on_leave"] {
-    background-image: linear-gradient(rgb(var(--color-warning) / 0.05), rgb(var(--color-warning) / 0.05));
-  }
-  .table-stack.stack-grid tr[data-status="late"] {
-    background-image: linear-gradient(rgb(var(--color-warning) / 0.1), rgb(var(--color-warning) / 0.1));
-  }
-  .table-stack.stack-grid tr[data-status="day_off"] {
-    background-image: linear-gradient(rgb(var(--color-danger) / 0.05), rgb(var(--color-danger) / 0.05));
-  }
-  .table-stack.stack-grid tr[data-status="absent"] {
-    background-image: linear-gradient(rgb(var(--color-danger) / 0.1), rgb(var(--color-danger) / 0.1));
-  }
-  .table-stack.stack-grid tr:has(td[colspan]) {
-    border: 0;
-    background: transparent;
-  }
-  .table-stack.stack-grid td {
-    display: block;
-    grid-column: span 2;
-    width: auto;
+    gap: 0.25rem;
+    min-width: 0;
     padding: 0 !important;
     text-align: left !important;
   }
-  .table-stack.stack-grid td[data-label]:not([data-label=""])::before {
+  .grid-stack td[data-label]::before {
+    content: attr(data-label);
+    font-size: 10px;
+    line-height: 1.4;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgb(var(--color-text-muted));
+  }
+  .grid-stack td:not([data-label]),
+  .grid-stack td[colspan] {
+    grid-column: 1 / -1;
+  }
+  .grid-stack tbody td:not([data-label]) {
+    padding-right: 2.25rem !important;
+    font-weight: 500;
+  }
+  .grid-stack td input {
+    width: 100% !important;
+    min-width: 0 !important;
+    min-height: 2.5rem;
+    font-size: 16px;
+  }
+  .grid-stack td[data-role="remove"] {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    grid-column: auto;
+  }
+  .grid-stack td[data-role="remove"] button {
+    height: 2.25rem;
+    width: 2.25rem;
+    font-size: 1.125rem;
+  }
+  .grid-stack td:empty {
+    display: none;
+  }
+  .grid-stack tfoot tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 1rem;
+  }
+  .grid-stack tfoot td {
     display: block;
-    font-size: 9px;
-    line-height: 1.5;
+    grid-column: auto;
   }
-  .table-stack.stack-grid td[data-label=""] {
-    grid-column: 1 / span 4;
-    grid-row: 1;
-    align-self: center;
-    padding: 0 !important;
-  }
-  .table-stack.stack-grid td[data-label="Status"] {
-    grid-column: 5 / span 2;
-    grid-row: 1;
-    align-self: center;
-    justify-self: end;
-    white-space: nowrap;
-    text-align: right !important;
-  }
-  .table-stack.stack-grid td[data-label="Role"] {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    margin-top: -0.25rem;
-    font-size: 11px;
-  }
-  .table-stack.stack-grid td[data-label="Status"]::before,
-  .table-stack.stack-grid td[data-label="Role"]::before {
-    content: none;
-  }
-  .table-stack.stack-grid td[colspan] {
-    grid-column: 1 / -1;
-    text-align: center !important;
+  .grid-stack tfoot td[data-label]::before {
+    margin-right: 0.375rem;
   }
 }
 

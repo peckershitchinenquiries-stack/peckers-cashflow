@@ -122,7 +122,38 @@ export function AllowedUsersAdmin({
         </Button>
       </form>
 
-      <div className="overflow-x-auto -mx-1">
+      <ul className="sm:hidden flex flex-col gap-2">
+        {initialUsers.map((u) => {
+          const isMe = u.email.toLowerCase() === currentUserEmail.toLowerCase();
+          return (
+            <li
+              key={u.id}
+              className="flex items-center gap-3 rounded-xl border border-border bg-bg/40 pl-3 pr-1 py-2"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-text-primary flex items-center gap-2">
+                  <span className="truncate">{u.name || "—"}</span>
+                  {isMe && <Badge variant="gold" className="text-[10px]">You</Badge>}
+                </p>
+                <p className="text-xs text-text-muted break-all">{u.email}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => remove(u)}
+                loading={removingId === u.id}
+                disabled={isMe}
+                className="text-text-muted hover:text-danger"
+                aria-label="Remove"
+              >
+                <TrashIcon size={16} />
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden sm:block overflow-x-auto -mx-1">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs uppercase tracking-wider text-text-muted">

@@ -32,6 +32,9 @@ export const viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  // Lets the installed app draw under the notch and home indicator; the top and
+  // bottom bars pad themselves back out with env(safe-area-inset-*).
+  viewportFit: "cover",
   themeColor: "#0f0f0f",
 };
 

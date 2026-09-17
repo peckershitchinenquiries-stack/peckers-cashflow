@@ -134,7 +134,7 @@ export function StoresAdmin({ stores }: { stores: Store[] }) {
                     ) : null}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 w-full sm:w-auto [&>button]:flex-1 sm:[&>button]:flex-none">
                   <Button
                     size="sm"
                     variant="outline"

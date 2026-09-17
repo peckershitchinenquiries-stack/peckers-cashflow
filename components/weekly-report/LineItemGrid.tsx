@@ -173,7 +173,7 @@ export function LineItemGrid({
       </div>
 
       <div className="table-scroll overflow-x-auto">
-        <table className="w-full min-w-[520px] text-sm">
+        <table className="grid-stack w-full min-w-[520px] text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-hover text-xs uppercase tracking-wide text-text-muted">
               {isDated && <th className="px-3 py-2 text-left font-semibold">Date</th>}
@@ -194,7 +194,7 @@ export function LineItemGrid({
               return (
                 <tr key={d.key} className="border-b border-border">
                   {isDated && (
-                    <td className="px-3 py-1.5">
+                    <td data-label="Date" className="px-3 py-1.5">
                       <input
                         type="date"
                         className={cell}
@@ -216,7 +216,7 @@ export function LineItemGrid({
                     />
                   </td>
                   {isQtyRate && (
-                    <td className="px-3 py-1.5">
+                    <td data-label="Qty" className="px-3 py-1.5">
                       <NumberCell
                         step="0.001"
                         min="0"
@@ -229,7 +229,7 @@ export function LineItemGrid({
                     </td>
                   )}
                   {isQtyRate && (
-                    <td className="px-3 py-1.5">
+                    <td data-label="£ / unit" className="px-3 py-1.5">
                       <NumberCell
                         step="0.01"
                         min="0"
@@ -241,7 +241,7 @@ export function LineItemGrid({
                       />
                     </td>
                   )}
-                  <td className="px-3 py-1.5">
+                  <td data-label="Amount" className="px-3 py-1.5">
                     {isQtyRate ? (
                       <div className="px-2 py-1.5 text-right font-mono text-text-primary">
                         £{amount.toFixed(2)}
@@ -258,7 +258,7 @@ export function LineItemGrid({
                     )}
                   </td>
                   {isDated && (
-                    <td className="px-3 py-1.5">
+                    <td data-label="VAT" className="px-3 py-1.5">
                       <NumberCell
                         step="0.01"
                         className={cellNum}
@@ -270,7 +270,7 @@ export function LineItemGrid({
                       />
                     </td>
                   )}
-                  <td className="px-3 py-1.5">
+                  <td data-label={isDated ? "Paid by" : "Note"} className="px-3 py-1.5">
                     <input
                       className={cell}
                       value={d.note}
@@ -281,7 +281,7 @@ export function LineItemGrid({
                     />
                   </td>
                   {!readOnly && (
-                    <td className="px-2 py-1.5 text-center">
+                    <td data-role="remove" className="px-2 py-1.5 text-center">
                       <button
                         type="button"
                         onClick={() => remove(d.key)}
@@ -318,7 +318,7 @@ export function LineItemGrid({
                 £{total.toFixed(2)}
               </td>
               {isDated && (
-                <td className="px-3 py-2 text-right font-mono text-text-muted">
+                <td data-label="VAT" className="px-3 py-2 text-right font-mono text-text-muted">
                   £{vatTotal.toFixed(2)}
                 </td>
               )}

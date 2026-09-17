@@ -159,7 +159,7 @@ export function EntriesView({
         </div>
       </Card>
 
-      <Card className="p-0 overflow-hidden">
+      <Card className="p-0 max-md:p-0 overflow-hidden">
         {filtered.length === 0 ? (
           <EmptyState
             icon={<ListIcon />}

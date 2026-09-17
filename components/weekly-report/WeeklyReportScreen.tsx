@@ -366,7 +366,7 @@ async function ChannelsTab({
         </p>
       </div>
       <div className="table-scroll overflow-x-auto">
-        <table className="w-full min-w-[420px] text-sm">
+        <table className="w-full min-w-[420px] max-sm:min-w-0 text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-hover text-xs uppercase tracking-wide text-text-muted">
               <th className="px-3 py-2 text-left font-semibold">Channel</th>

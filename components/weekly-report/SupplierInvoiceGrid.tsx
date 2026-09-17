@@ -224,7 +224,7 @@ export function SupplierInvoiceGrid({
       </div>
 
       <div className="table-scroll overflow-x-auto">
-        <table className="w-full min-w-[640px] text-sm">
+        <table className="grid-stack w-full min-w-[640px] text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-hover text-xs uppercase tracking-wide text-text-muted">
               <th className="px-3 py-2 text-left font-semibold">{def.labelHeading}</th>
@@ -251,7 +251,7 @@ export function SupplierInvoiceGrid({
                   />
                 </td>
                 {columnIndexes.map((i) => (
-                  <td key={i} className="px-3 py-1.5">
+                  <td key={i} data-label={`Invoice ${i + 1}`} className="px-3 py-1.5">
                     <NumberCell
                       step="0.01"
                       className={cellNum}
@@ -263,11 +263,11 @@ export function SupplierInvoiceGrid({
                     />
                   </td>
                 ))}
-                <td className="px-3 py-1.5 text-right font-mono text-text-primary">
+                <td data-label="Total" className="px-3 py-1.5 text-right font-mono text-text-primary">
                   £{draftTotal(d).toFixed(2)}
                 </td>
                 {!readOnly && (
-                  <td className="px-2 py-1.5 text-center">
+                  <td data-role="remove" className="px-2 py-1.5 text-center">
                     <button
                       type="button"
                       onClick={() => removeSupplier(d.key)}

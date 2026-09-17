@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
-import { DownloadIcon, PlusIcon, TrashIcon } from "@/components/ui/icons";
+import { ChevronRightIcon, DownloadIcon, PlusIcon, TrashIcon } from "@/components/ui/icons";
 import {
   addManualNiRecord,
   deleteManualNiRecord,
@@ -88,6 +88,7 @@ export function NiMonthlyView({
   // admin and the store's managers. They don't affect any computed figures.
   const [adding, setAdding] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [openRow, setOpenRow] = React.useState<string | null>(null);
 
   const activeSlice = activeStore ? slices.get(activeStore.id) : undefined;
 
@@ -315,7 +316,7 @@ export function NiMonthlyView({
           const niTotal = emps.reduce((s, e) => s + e.ni_wages, 0);
           const cashTotal = emps.reduce((s, e) => s + e.cash_wages, 0);
           return (
-            <Card key={mk} className="p-0 overflow-hidden">
+            <Card key={mk} className="p-0 max-md:p-0 overflow-hidden">
               <div className="px-4 sm:px-5 py-4 border-b border-border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <h2 className="text-base sm:text-lg font-semibold text-text-primary break-words">
                   {monthLabel(mk)} — {activeStore.name}
@@ -335,7 +336,67 @@ export function NiMonthlyView({
                   </div>
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              {/* Phones: names only; tap one to open its figures in place. */}
+              <ul className="md:hidden print:hidden divide-y divide-border/60">
+                {emps.map((e) => {
+                  const rowKey = `${mk}:${e.employee_id}`;
+                  const open = openRow === rowKey;
+                  return (
+                    <li key={e.employee_id}>
+                      <button
+                        type="button"
+                        onClick={() => setOpenRow(open ? null : rowKey)}
+                        aria-expanded={open}
+                        className="w-full flex items-center gap-2 px-4 py-3 text-left"
+                      >
+                        <span className="min-w-0 flex-1 font-medium text-text-primary truncate">
+                          {e.employee_name}
+                        </span>
+                        {e.manual && (
+                          <Badge variant="gold" className="text-[10px] py-0 px-1.5">
+                            Manual
+                          </Badge>
+                        )}
+                        <span className="text-sm tabular-nums text-gold">{formatGBP(e.ni_wages)}</span>
+                        <ChevronRightIcon
+                          size={14}
+                          className={"text-text-muted shrink-0 transition-transform " + (open ? "rotate-90" : "")}
+                        />
+                      </button>
+                      {open && (
+                        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 px-4 pb-4 text-sm">
+                          <dt className="text-text-muted">Total hours</dt>
+                          <dd className="text-right tabular-nums"><HoursMinsDisplay hours={e.total_hours} /></dd>
+                          <dt className="text-text-muted">NI hours</dt>
+                          <dd className="text-right tabular-nums"><HoursMinsDisplay hours={e.ni_hours} /></dd>
+                          <dt className="text-text-muted">Cash hours</dt>
+                          <dd className="text-right tabular-nums"><HoursMinsDisplay hours={e.cash_hours} /></dd>
+                          <dt className="text-text-muted">NI wages</dt>
+                          <dd className="text-right tabular-nums text-gold">{formatGBP(e.ni_wages)}</dd>
+                          <dt className="text-text-muted">Cash £</dt>
+                          <dd className="text-right tabular-nums">{formatGBP(e.cash_wages)}</dd>
+                          {e.manual && e.id && (
+                            <dd className="col-span-2 text-right">
+                              <button
+                                onClick={() => removeManualRow(e.id!)}
+                                disabled={busy}
+                                className="inline-flex items-center gap-1.5 text-xs text-danger disabled:opacity-40"
+                              >
+                                <TrashIcon size={14} /> Delete manual row
+                              </button>
+                            </dd>
+                          )}
+                        </dl>
+                      )}
+                    </li>
+                  );
+                })}
+                <li className="flex items-center justify-between px-4 py-3 bg-bg/60 text-sm font-semibold">
+                  <span>Total hours</span>
+                  <HoursMinsDisplay hours={totalHours} />
+                </li>
+              </ul>
+              <div className="overflow-x-auto max-md:hidden print:block">
                 <table className="table-stack w-full text-sm">
                   <thead>
                     <tr className="text-left text-xs uppercase tracking-wider text-text-muted bg-bg/50">

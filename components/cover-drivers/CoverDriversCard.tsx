@@ -91,7 +91,7 @@ export function CoverDriversCard({
           }
         />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 max-sm:gap-2">
           {visibleDrivers.map((d) => (
             <CoverDriverCard
               key={d.id}
@@ -119,7 +119,28 @@ export function CoverDriversCard({
             description="Rows appear here once a cover driver clocks in and out at a store."
           />
         ) : (
-          <div className="overflow-x-auto -mx-1">
+          <>
+          <ul className="sm:hidden flex flex-col divide-y divide-border rounded-xl border border-border overflow-hidden">
+            {days.map((r) => (
+              <li
+                key={`${r.cover_driver_id}:${r.work_date}`}
+                className="flex items-center justify-between gap-3 px-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium text-text-primary truncate">{r.driver_name}</p>
+                  <p className="text-xs text-text-muted tabular-nums">
+                    {formatDDMMYYYY(r.work_date)}
+                    {showStoreColumn && <> · {storeName(r.store_id)}</>} · {formatGBP(r.hourly_cash_rate)}/h
+                  </p>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <Badge variant="gold">{formatGBP(r.total_pay)}</Badge>
+                  <HoursMinsDisplay hours={r.total_hours} />
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="hidden sm:block overflow-x-auto -mx-1">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-text-muted border-b border-border">
@@ -162,6 +183,7 @@ export function CoverDriversCard({
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
 

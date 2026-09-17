@@ -308,7 +308,10 @@ export function MonthlyView({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
+            {/* `sm:contents` drops these wrappers on wider screens, so the
+                desktop row is unchanged; on a phone they become two tidy rows. */}
+            <div className="grid grid-cols-[1fr_auto] gap-2 w-full sm:contents">
             <Select
               value={month}
               onChange={(e) => setMonth(Number(e.target.value))}
@@ -331,6 +334,8 @@ export function MonthlyView({
                 </option>
               ))}
             </Select>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:contents [&>button:nth-child(2)]:flex-1">
             <Button variant="secondary" size="icon" onClick={goPrev} aria-label="Previous month">
               <ChevronLeftIcon />
             </Button>
@@ -348,6 +353,7 @@ export function MonthlyView({
             <Button variant="secondary" size="icon" onClick={goNext} aria-label="Next month">
               <ChevronRightIcon />
             </Button>
+            </div>
           </div>
         </div>
       </Card>

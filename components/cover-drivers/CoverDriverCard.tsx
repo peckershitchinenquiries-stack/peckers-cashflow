@@ -11,6 +11,7 @@ import {
   CalendarIcon,
   PencilIcon,
   PhoneIcon,
+  ChevronRightIcon,
 } from "@/components/ui/icons";
 import { formatGBP } from "@/lib/utils";
 import type { CoverDriver, Store } from "@/lib/types";
@@ -33,6 +34,8 @@ export function CoverDriverCard({
 }) {
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
+  // Phones: name-only row until tapped, matching the employee list.
+  const [open, setOpen] = React.useState(false);
 
   const store = stores.find((s) => s.id === driver.store_id);
 
@@ -57,10 +60,27 @@ export function CoverDriverCard({
   }
 
   return (
-    <Card className="flex flex-col">
+    <Card className="flex flex-col max-sm:!p-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="sm:hidden w-full flex items-center gap-2 px-4 py-3 text-left"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-medium text-text-primary truncate">{driver.name}</span>
+          {store && <span className="block text-xs text-text-muted truncate">{store.name}</span>}
+        </span>
+        {!driver.is_active && <Badge variant="warning">Inactive</Badge>}
+        <ChevronRightIcon
+          size={16}
+          className={"text-text-muted shrink-0 transition-transform " + (open ? "rotate-90" : "")}
+        />
+      </button>
+      <div className={open ? "max-sm:px-4 max-sm:pb-4 max-sm:border-t max-sm:border-border max-sm:pt-3" : "max-sm:hidden"}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="text-lg font-semibold tracking-wide text-text-primary truncate">
+          <h3 className="text-lg font-semibold tracking-wide text-text-primary truncate max-sm:hidden">
             {driver.name}
           </h3>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
@@ -145,6 +165,7 @@ export function CoverDriverCard({
         {driver.notes && (
           <p className="text-sm text-text-muted mt-3 line-clamp-2">{driver.notes}</p>
         )}
+      </div>
       </div>
     </Card>
   );

@@ -107,6 +107,11 @@ function longDate(iso: string): string {
   return `${weekdayOf(iso)} ${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
+function plainDate(iso: string): string {
+  const d = parseISODate(iso);
+  return `${d.getDate()} ${MONTH_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 function shortDate(iso: string): string {
   return `${weekdayOf(iso)} ${formatDDMMYYYY(iso).slice(0, 5)}`;
 }
@@ -351,8 +356,13 @@ export function StaffWeekSummary({
             </Button>
             <div className="min-w-0 flex-1 text-center lg:flex-none lg:min-w-[17rem]">
               <p className="text-xs text-text-muted">Work week</p>
-              <p className="font-semibold tabular-nums">
-                {longDate(shownWeek)} – {longDate(toISODate(addDays(parseISODate(shownWeek), 6)))}
+              <p className="font-semibold tabular-nums max-sm:text-sm">
+                <span className="max-sm:hidden">
+                  {longDate(shownWeek)} – {longDate(toISODate(addDays(parseISODate(shownWeek), 6)))}
+                </span>
+                <span className="sm:hidden whitespace-nowrap">
+                  {plainDate(shownWeek)} – {plainDate(toISODate(addDays(parseISODate(shownWeek), 6)))}
+                </span>
               </p>
             </div>
             <Button
@@ -365,26 +375,26 @@ export function StaffWeekSummary({
               <ChevronRightIcon size={18} />
             </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 max-sm:block">
             <DatePicker
               value={shownWeek}
               onChange={(v) => v && setWeek(mondayOf(v))}
               max={toISODate(addDays(parseISODate(thisWeekStart), 6))}
               placeholder="Jump to a date"
-              containerClassName="w-44"
+              containerClassName="w-44 max-sm:w-full"
             />
           </div>
         </div>
 
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-wrap gap-2" role="group" aria-label="Show">
+          <div className="flex flex-wrap gap-2 max-sm:grid max-sm:grid-cols-2" role="group" aria-label="Show">
             {KINDS.map((k) => (
               <button
                 key={k.id}
                 onClick={() => setKind(k.id)}
                 aria-pressed={kind === k.id}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg border px-3 h-9 text-sm font-medium transition-colors",
+                  "inline-flex items-center gap-1.5 rounded-lg border px-3 h-9 text-sm font-medium transition-colors max-sm:h-11 max-sm:justify-center",
                   kind === k.id
                     ? "border-gold/50 bg-gold/15 text-gold"
                     : "border-border text-text-subtle hover:bg-surface-hover",

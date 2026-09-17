@@ -247,7 +247,7 @@ export function ManagerClockCard({
   }
 
   return (
-    <Card className="border-gold/30">
+    <Card className="border-gold/30 max-sm:p-4">
       <CardHeader>
         <div>
           <CardTitle>Your attendance</CardTitle>
@@ -270,7 +270,7 @@ export function ManagerClockCard({
       ) : (
         <div className="flex flex-col gap-4">
           {/* Location status */}
-          <div className="rounded-xl border border-border p-4 bg-surface-hover/40">
+          <div className="rounded-xl border border-border p-4 max-sm:p-3 bg-surface-hover/40">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <div className="text-sm font-medium flex items-center gap-2">

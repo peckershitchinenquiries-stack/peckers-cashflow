@@ -129,8 +129,8 @@ function WeekBlock({
   const total = days.reduce((sum, d) => sum + d.hours, 0);
 
   return (
-    <Card className="p-0 overflow-hidden">
-      <CardHeader className="px-5 pt-5 flex-row items-center justify-between">
+    <Card className="p-0 max-md:p-0 overflow-hidden">
+      <CardHeader className="px-5 pt-5 max-sm:px-4 max-sm:pt-4 flex-row items-center justify-between">
         <CardTitle>{weekLabel(weekStart)}</CardTitle>
         <Badge variant="gold">
           <HoursMinsDisplay hours={total} size="sm" />
@@ -143,7 +143,7 @@ function WeekBlock({
             <div
               key={d.iso}
               className={
-                "px-5 py-3 border-b border-border last:border-0 flex items-center justify-between " +
+                "px-5 max-sm:px-4 py-3 border-b border-border last:border-0 flex items-center justify-between " +
                 (isToday ? "bg-gold/5" : "")
               }
             >

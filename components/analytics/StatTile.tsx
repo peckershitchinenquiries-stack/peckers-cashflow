@@ -21,11 +21,11 @@ export function StatTile({
           ? "text-gold"
           : "text-text-primary";
   return (
-    <Card>
-      <p className="text-xs uppercase tracking-[0.18em] text-text-muted font-medium">
+    <Card className="max-sm:p-3.5">
+      <p className="text-[10px] sm:text-xs uppercase tracking-[0.12em] sm:tracking-[0.18em] text-text-muted font-medium leading-snug">
         {label}
       </p>
-      <p className={cn("text-2xl font-semibold mt-2", toneClass)}>
+      <p className={cn("text-xl sm:text-2xl font-semibold mt-1.5 sm:mt-2 tabular-nums break-words", toneClass)}>
         {formatINR(value)}
       </p>
       {hint && <div className="mt-2">{hint}</div>}

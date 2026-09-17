@@ -325,7 +325,7 @@ export function AlertsView({
               placeholder="Optional resolution note"
               className="w-full rounded-xl bg-bg border border-border px-3 py-2 text-sm outline-none focus:border-gold/60"
             />
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex justify-end gap-2 max-sm:[&>button]:flex-1">
               <Button variant="secondary" onClick={() => setResolving(null)}>
                 Cancel
               </Button>

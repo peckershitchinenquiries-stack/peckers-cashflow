@@ -200,7 +200,7 @@ export default async function StoreComparisonPage({
               <div className="text-xs font-medium uppercase tracking-wide text-text-muted">
                 {shortStore(s)}
               </div>
-              <div className="mt-1 text-2xl font-semibold text-text-primary">
+              <div className="mt-1 text-xl sm:text-2xl font-semibold text-text-primary break-words tabular-nums">
                 {gbp(n(r?.net_sales))}
               </div>
               <div className="mt-1 text-xs">

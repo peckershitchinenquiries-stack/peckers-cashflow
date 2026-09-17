@@ -129,7 +129,7 @@ export function ReportStatusBar({
           )}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 max-sm:w-full max-sm:[&>button]:flex-1">
           {hasLegacyInputs && !locked && (
             <Button
               size="sm"
@@ -192,7 +192,7 @@ export function ReportStatusBar({
             : "No recipients are configured yet — add them in Settings → Weekly Report."
         }
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex justify-end gap-2 max-sm:[&>button]:flex-1">
             <Button variant="secondary" onClick={() => setConfirmSend(false)}>
               Cancel
             </Button>

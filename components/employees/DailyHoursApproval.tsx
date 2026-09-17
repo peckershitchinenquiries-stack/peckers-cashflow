@@ -895,7 +895,7 @@ export function DailyHoursApproval({
         )}
       >
         <div className="flex-1 min-w-[8rem] basis-full sm:basis-auto">
-          <p className="font-medium truncate">
+          <p className="font-medium truncate max-sm:whitespace-normal max-sm:leading-7">
             {s.name}
             {s.kind === "cover" && (
               <span
@@ -1000,7 +1000,7 @@ export function DailyHoursApproval({
           {expanded && s.shiftRows.length > 0 && (
             <div className="mt-2 rounded-lg border border-border bg-bg/40 divide-y divide-border/60">
               {s.shiftRows.map((sh) => (
-                <div key={sh.id} className="flex items-center gap-2 px-3 py-2">
+                <div key={sh.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-text-primary tabular-nums">
                       {sh.label}
@@ -1062,7 +1062,7 @@ export function DailyHoursApproval({
         </div>
 
         {s.approved ? (
-          <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end">
+          <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end [&>button:last-child]:max-sm:ml-auto">
             <Badge variant="success">
               <CheckIcon size={12} />
               {s.kind === "manager"
@@ -1102,12 +1102,13 @@ export function DailyHoursApproval({
             </Button>
           </div>
         ) : (
-          <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end">
+          <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end max-sm:grid max-sm:grid-cols-2 max-sm:rounded-xl max-sm:border max-sm:border-border max-sm:bg-bg/40 max-sm:p-2.5">
             {/* No hours box on a manager row: their pay is a fixed daily wage
                 that this app never touches, so an editable figure here would
                 imply a correction that changes nothing. */}
             {s.kind !== "manager" && (
-            <div className="flex flex-col items-end gap-0.5">
+            <div className="flex flex-col items-end gap-0.5 max-sm:col-span-2 max-sm:flex-row max-sm:flex-wrap max-sm:items-center max-sm:justify-between">
+              <span className="sm:hidden text-[10px] uppercase tracking-wider text-text-muted">Hours</span>
               <HoursMinsInput
                 value={edited[key] ?? formatHoursMins(s.clocked_hours)}
                 onChange={(next) => setEdited((p) => ({ ...p, [key]: next }))}
@@ -1116,7 +1117,7 @@ export function DailyHoursApproval({
                 minAriaLabel={`Minutes for ${s.name} on ${longDate(s.event_date)}`}
               />
               {invalidHoursEdit(s) && (
-                <span className="text-[10px] text-danger">Invalid — minutes above 59</span>
+                <span className="text-[10px] text-danger max-sm:basis-full max-sm:text-right">Invalid — minutes above 59</span>
               )}
             </div>
             )}
@@ -1125,7 +1126,7 @@ export function DailyHoursApproval({
                 delivery boxes on a kitchen shift are just noise. */}
             {s.is_driver && (
               <>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 max-sm:min-w-0 [&>input]:max-sm:min-w-0 [&>input]:max-sm:flex-1 [&>input]:max-sm:h-10 [&>input]:max-sm:text-base">
                   <input
                     type="text"
                     inputMode="numeric"
@@ -1169,7 +1170,7 @@ export function DailyHoursApproval({
                     like the Rota's delivery modal, so a reason box appears
                     inline the moment that becomes true rather than after the
                     server rejects the approval. */}
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 max-sm:min-w-0 [&>input]:max-sm:min-w-0 [&>input]:max-sm:flex-1 [&>input]:max-sm:h-10 [&>input]:max-sm:text-base">
                   <input
                     type="text"
                     inputMode="numeric"
@@ -1222,7 +1223,7 @@ export function DailyHoursApproval({
                     }
                     placeholder="Reason for extra SD"
                     aria-label={`Reason for extra short deliveries for ${s.name} on ${longDate(s.event_date)}`}
-                    className="w-full sm:w-36 rounded-lg border border-warning/50 bg-surface px-2 py-1 text-xs outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
+                    className="w-full sm:w-36 max-sm:col-span-2 max-sm:h-10 max-sm:text-sm rounded-lg border border-warning/50 bg-surface px-2 py-1 text-xs outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
                   />
                 )}
                 {extraNeedsReason(s, "extraLong") && (
@@ -1237,7 +1238,7 @@ export function DailyHoursApproval({
                     }
                     placeholder="Reason for extra LD"
                     aria-label={`Reason for extra long deliveries for ${s.name} on ${longDate(s.event_date)}`}
-                    className="w-full sm:w-36 rounded-lg border border-warning/50 bg-surface px-2 py-1 text-xs outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
+                    className="w-full sm:w-36 max-sm:col-span-2 max-sm:h-10 max-sm:text-sm rounded-lg border border-warning/50 bg-surface px-2 py-1 text-xs outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
                   />
                 )}
               </>
@@ -1248,6 +1249,7 @@ export function DailyHoursApproval({
               size="sm"
               onClick={() => doApprove(s)}
               loading={busy}
+              className="max-sm:col-span-2 max-sm:min-h-11"
               disabled={
                 !isApprovable(s) ||
                 (s.kind !== "manager" && !(effHours(s) > 0)) ||
