@@ -1,46 +1,24 @@
 "use client";
 
 import * as React from "react";
-import { SummaryCards } from "./SummaryCards";
-import { RecentEntriesTable } from "./RecentEntriesTable";
-
-export type StoreDashboardData = {
-  store: { id: string; name: string };
-  /** Yesterday's cash sales for this store. */
-  cashSale: number;
-  /** Yesterday's supermarket expenses for this store. */
-  expenses: number;
-  /** cashSale − expenses. */
-  remainingCash: number;
-  /** Week's cash sales up to yesterday (today excluded). */
-  weekCash: number;
-  recent: {
-    id: string;
-    entry_date: string;
-    store_name: string | null;
-    manager_name: string | null;
-    vita_mojo_sales: number;
-    supermarket_expenses: number;
-    difference: number;
-    is_late: boolean;
-    created_at: string;
-  }[];
-};
+import type { StoreDashboard } from "@/lib/dashboard/types";
+import { LastWeekPerformanceCard } from "./LastWeekPerformanceCard";
+import { PayoutCard } from "./PayoutCard";
+import { NeedsActionPanel } from "./NeedsActionPanel";
 
 /**
- * Admin dashboard body with a store toggle. The two stores are completely
- * separate businesses — figures are never combined; the admin switches between
- * them with the tabs.
+ * The two stores are separate businesses — figures are never combined; the
+ * admin switches between them with the toggle.
  */
 export function AdminDashboardView({
-  storeData,
-  yesterdayLabel,
+  stores,
+  today,
 }: {
-  storeData: StoreDashboardData[];
-  yesterdayLabel: string;
+  stores: StoreDashboard[];
+  today: string;
 }) {
-  const [activeId, setActiveId] = React.useState(storeData[0]?.store.id ?? "");
-  const active = storeData.find((s) => s.store.id === activeId) ?? storeData[0];
+  const [activeId, setActiveId] = React.useState(stores[0]?.store.id ?? "");
+  const active = stores.find((s) => s.store.id === activeId) ?? stores[0];
 
   if (!active) {
     return (
@@ -50,11 +28,13 @@ export function AdminDashboardView({
     );
   }
 
+  const thisTuesday = <PayoutCard data={active.thisTuesday} kind="this" today={today} />;
+  const nextTuesday = <PayoutCard data={active.nextTuesday} kind="next" today={today} />;
+
   return (
-    <div className="flex flex-col gap-5">
-      {/* Store toggle — each store's figures are kept fully separate */}
+    <div className="flex flex-col gap-4 sm:gap-5">
       <div className="grid grid-cols-2 sm:flex gap-2 sm:flex-wrap">
-        {storeData.map(({ store }) => (
+        {stores.map(({ store }) => (
           <button
             key={store.id}
             onClick={() => setActiveId(store.id)}
@@ -70,15 +50,16 @@ export function AdminDashboardView({
         ))}
       </div>
 
-      <SummaryCards
-        cashSale={active.cashSale}
-        expenses={active.expenses}
-        remainingCash={active.remainingCash}
-        weekCash={active.weekCash}
-        yesterdayLabel={yesterdayLabel}
-      />
+      <LastWeekPerformanceCard data={active.performance} />
 
-      <RecentEntriesTable rows={active.recent} storeName={active.store.name} />
+      {/* Mobile reads top-down: this Tuesday, what's blocking it, then next week's forecast. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-start">
+        <div className="order-1">{thisTuesday}</div>
+        <div className="order-3 lg:order-2">{nextTuesday}</div>
+        <div className="order-2 lg:order-3">
+          <NeedsActionPanel data={active.needsAction} />
+        </div>
+      </div>
     </div>
   );
 }

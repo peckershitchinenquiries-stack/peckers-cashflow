@@ -7,13 +7,11 @@ import { PageTitle, ErrorState } from "@/components/vm-analytics/PageState";
 import { Section } from "@/components/vm-analytics/Section";
 import { WeeklySummaryTable } from "@/components/vm-analytics/WeeklySummaryTable";
 import { WeeklyReportScreen } from "@/components/weekly-report/WeeklyReportScreen";
-import { loadWeeklyReport } from "@/app/actions/weekly-report";
-import { loadVmSales } from "@/lib/weekly-report-sales";
+import { loadStoreWeekFigures } from "@/lib/weekly-report-figures";
 import {
   combineInputs,
   reportWeekOptions,
   resolveReportWeek,
-  rollUpInputs,
   type ReportTab,
 } from "@/lib/weekly-report";
 import type { Store } from "@/lib/types";
@@ -105,19 +103,8 @@ async function CombinedView({
     STORES.map(async (vmName) => {
       const store = stores.find((s) => s.vm_store_name === vmName);
       if (!store) return { vmName, store: null, sales: null, inputs: null };
-      const [bundle, sales] = await Promise.all([
-        loadWeeklyReport({ store_id: store.id, week_start: weekIso }),
-        loadVmSales(vmName, weekIso),
-      ]);
-      const frozen = bundle.report?.status !== "draft" ? bundle.report?.snapshot ?? null : null;
-      return {
-        vmName,
-        store,
-        sales: frozen ? { gross_sales: frozen.gross_sales, net_sales: frozen.net_sales } : sales,
-        inputs: bundle.report
-          ? frozen?.inputs ?? rollUpInputs(bundle.report, bundle.lines, bundle.labour)
-          : null,
-      };
+      const { sales, inputs } = await loadStoreWeekFigures(store.id, vmName, weekIso);
+      return { vmName, store, sales, inputs };
     }),
   );
 

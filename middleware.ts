@@ -34,6 +34,12 @@ function loginPathForArea(pathname: string): string {
   return "/login";
 }
 
+// JSON endpoints fetched by client components: a redirect to a login page would
+// hand fetch() an HTML document, so they get a JSON status instead.
+function isJsonApiPath(pathname: string): boolean {
+  return pathname === "/api/live-sales" || pathname.startsWith("/api/live-sales/");
+}
+
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
@@ -86,13 +92,19 @@ export async function middleware(req: NextRequest) {
     return applyCookies(NextResponse.redirect(url));
   };
 
+  const jsonApi = isJsonApiPath(req.nextUrl.pathname);
+  const jsonError = (status: number, error: string) =>
+    applyCookies(
+      NextResponse.json({ error }, { status, headers: { "Cache-Control": "no-store" } }),
+    );
+
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
       console.error("[Middleware] Missing Supabase environment variables");
-      return redirectTo("/login");
+      return jsonApi ? jsonError(503, "Service unavailable") : redirectTo("/login");
     }
 
     const supabase = createServerClient(supabaseUrl, supabaseKey, {
@@ -124,7 +136,11 @@ export async function middleware(req: NextRequest) {
     const { pathname } = req.nextUrl;
     const isPublic = isPublicPath(pathname);
     const notSignedIn = () =>
-      isPublic ? passThrough() : redirectTo(loginPathForArea(pathname));
+      jsonApi
+        ? jsonError(401, "Unauthorized")
+        : isPublic
+          ? passThrough()
+          : redirectTo(loginPathForArea(pathname));
 
     // Reads (and refreshes, when due) the session from the cookie — no Auth
     // round-trip of its own. The session's own user object is NOT trusted here;
@@ -177,6 +193,7 @@ export async function middleware(req: NextRequest) {
           : await fetchAllowed(userEmail);
       if (!allowed) {
         await supabase.auth.signOut();
+        if (jsonApi) return jsonError(401, "Unauthorized");
         if (pathname !== "/access-denied") {
           return redirectTo("/access-denied");
         }
@@ -203,6 +220,9 @@ export async function middleware(req: NextRequest) {
     // change-password screen (isolation-exempt, reachable by any role) until
     // they set their own. /access-denied stays reachable so a just-removed user
     // isn't trapped.
+    if (jsonApi && (mustChange || role !== "admin")) {
+      return jsonError(403, "Forbidden");
+    }
     if (mustChange && !onChangePw && !onResetPassword && pathname !== "/access-denied") {
       return redirectTo("/change-password");
     }
@@ -252,7 +272,7 @@ export async function middleware(req: NextRequest) {
     return passThrough();
   } catch (err) {
     console.error("[Middleware] Error:", err instanceof Error ? err.message : String(err));
-    return redirectTo("/login");
+    return jsonApi ? jsonError(503, "Service unavailable") : redirectTo("/login");
   }
 }
 

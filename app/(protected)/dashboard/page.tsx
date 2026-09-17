@@ -1,110 +1,98 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
-import { addDays, formatDDMMYYYY, startOfISOWeek, toISODate } from "@/lib/utils";
-import {
-  AdminDashboardView,
-  type StoreDashboardData,
-} from "@/components/dashboard/AdminDashboardView";
-import type { DailyCashEntry } from "@/lib/types";
+import { addDays, formatDDMMYYYY, londonISODate, parseISODate, startOfISOWeek, toISODate } from "@/lib/utils";
+import { payWeekOf } from "@/lib/cash-flow";
+import { AdminDashboardView } from "@/components/dashboard/AdminDashboardView";
+import { LiveGrossSalesPanel } from "@/components/dashboard/LiveGrossSalesPanel";
+import { loadLastWeekPerformance } from "@/lib/dashboard/performance";
+import { buildPayoutCard, loadPayoutHeaders, loadPayoutSummary } from "@/lib/dashboard/payouts";
+import { buildNeedsAction, loadNeedsActionRows } from "@/lib/dashboard/needs-action";
+import type { DashboardStore, DashboardWeeks, StoreDashboard } from "@/lib/dashboard/types";
 
 export const dynamic = "force-dynamic";
 
-type EntryRow = DailyCashEntry & { stores: { name: string | null } | null };
+// The server runs UTC; every date here is a UK business date, as in the alert scan.
+function dashboardWeeks(): DashboardWeeks {
+  const today = londonISODate(new Date());
+  const shift = (iso: string, days: number) => toISODate(addDays(parseISODate(iso), days));
+  const thisWeek = toISODate(startOfISOWeek(parseISODate(today)));
+  const lastWeek = shift(thisWeek, -7);
+  return {
+    today,
+    yesterday: shift(today, -1),
+    thisWeek,
+    lastWeek,
+    weekBefore: shift(lastWeek, -7),
+    nextWeek: shift(thisWeek, 7),
+  };
+}
 
-// The dashboard never shows today's figures — everything is yesterday or
-// earlier, and each store is kept completely separate (toggle, no combining).
-async function loadDashboardData() {
+async function loadDashboard(): Promise<{ stores: StoreDashboard[]; storesError: string | null }> {
   const supabase = createServerSupabase();
-  const today = toISODate(new Date());
-  const yesterday = toISODate(addDays(new Date(), -1));
-  // Stat cards are anchored to YESTERDAY, but the Recent Entries table shows
-  // every record up to and including TODAY so a same-day entry is visible.
-  const weekStart = toISODate(startOfISOWeek(addDays(new Date(), -1)));
-  const sevenDaysAgo = toISODate(addDays(new Date(), -6));
-  const rangeStart = sevenDaysAgo < weekStart ? sevenDaysAgo : weekStart;
+  const weeks = dashboardWeeks();
 
-  const [storesRes, entriesRes, alertsRes] = await Promise.all([
-    supabase.from("stores").select("id, name").order("name"),
-    supabase
-      .from("daily_cash_entries")
-      .select("*, stores(name)")
-      .gte("entry_date", rangeStart)
-      .lte("entry_date", today)
-      .order("entry_date", { ascending: false })
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("alerts")
-      .select("*")
-      .eq("resolved", false)
-      .order("created_at", { ascending: false })
-      .limit(5),
+  const { data, error } = await supabase
+    .from("stores")
+    .select("id, code, name, vm_store_name")
+    .order("name");
+  if (error) return { stores: [], storesError: error.message };
+  const stores = (data ?? []) as DashboardStore[];
+
+  const [perStore, headers, actionRows] = await Promise.all([
+    Promise.all(
+      stores.map((store) =>
+        Promise.all([
+          loadLastWeekPerformance(store, weeks),
+          loadPayoutSummary(store.id, weeks.thisWeek),
+          loadPayoutSummary(store.id, weeks.nextWeek),
+        ]),
+      ),
+    ),
+    loadPayoutHeaders(supabase, weeks),
+    loadNeedsActionRows(supabase, stores, weeks, payWeekOf(weeks.thisWeek).start),
   ]);
 
-  const stores = storesRes.data ?? [];
-  const entries = (entriesRes.data ?? []) as EntryRow[];
-
-  const storeData: StoreDashboardData[] = stores.map((store) => {
-    const storeEntries = entries.filter((e) => e.store_id === store.id);
-    const yest = storeEntries.filter((e) => e.entry_date === yesterday);
-    const cashSale = yest.reduce((s, e) => s + Number(e.vita_mojo_sales || 0), 0);
-    const expenses = yest.reduce((s, e) => s + Number(e.supermarket_expenses || 0), 0);
-    const weekCash = storeEntries
-      .filter((e) => e.entry_date >= weekStart && e.entry_date <= yesterday)
-      .reduce((s, e) => s + Number(e.vita_mojo_sales || 0), 0);
-
-    return {
-      store,
-      cashSale,
-      expenses,
-      remainingCash: cashSale - expenses,
-      weekCash,
-      recent: storeEntries.slice(0, 25).map((e) => ({
-        id: e.id,
-        entry_date: e.entry_date,
-        store_name: e.stores?.name ?? null,
-        manager_name: e.edited_by_name ?? e.submitted_by_name ?? null,
-        vita_mojo_sales: Number(e.vita_mojo_sales || 0),
-        supermarket_expenses: Number(e.supermarket_expenses || 0),
-        difference: Number(e.difference || 0),
-        is_late: !!e.is_late,
-        created_at: e.created_at,
-      })),
-    };
-  });
-
-  return { yesterday, storeData, openAlerts: alertsRes.data ?? [] };
+  return {
+    storesError: null,
+    stores: stores.map((store, i) => {
+      const [performance, thisSummary, nextSummary] = perStore[i];
+      const thisTuesday = buildPayoutCard(store, weeks.thisWeek, thisSummary, headers);
+      return {
+        store,
+        performance,
+        thisTuesday,
+        nextTuesday: buildPayoutCard(store, weeks.nextWeek, nextSummary, headers),
+        needsAction: buildNeedsAction(store, actionRows, weeks, performance, thisTuesday),
+      };
+    }),
+  };
 }
 
 export default async function DashboardPage() {
   const user = await requireUser();
-  const data = await loadDashboardData();
-
-  // Short "10/06" label for yesterday.
-  const yLabel = formatDDMMYYYY(data.yesterday).slice(0, 5);
+  const { stores, storesError } = await loadDashboard();
+  const today = londonISODate(new Date());
 
   return (
     <>
       <PageHeader
         title={`Hello, ${user.allowed?.name?.split(" ")[0] || "there"}`}
-        description={`Today is ${formatDDMMYYYY(new Date())}. Showing yesterday's figures (${formatDDMMYYYY(data.yesterday)}) per store.`}
+        description={`Today is ${formatDDMMYYYY(today)}. Live sales, last week's results and Tuesday payouts.`}
       />
 
-      {data.openAlerts.length > 0 && (
-        <a
-          href="/alerts"
-          className="block mb-5 rounded-2xl bg-warning/10 border border-warning/30 px-4 py-3 text-sm hover:bg-warning/15 transition-colors"
-        >
-          <span className="font-medium text-warning">
-            {data.openAlerts.length} open alert{data.openAlerts.length === 1 ? "" : "s"}
-          </span>
-          <span className="text-text-subtle ml-2">
-            — {data.openAlerts[0].title}
-            {data.openAlerts.length > 1 && ` and ${data.openAlerts.length - 1} more`}
-          </span>
-        </a>
+      {process.env.LIVE_SALES_ENABLED === "true" && (
+        <div className="mb-5">
+          <LiveGrossSalesPanel />
+        </div>
       )}
 
-      <AdminDashboardView storeData={data.storeData} yesterdayLabel={yLabel} />
+      {storesError ? (
+        <p className="rounded-2xl border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+          Couldn&apos;t load stores ({storesError}). Nothing below can be shown until this is fixed.
+        </p>
+      ) : (
+        <AdminDashboardView stores={stores} today={today} />
+      )}
     </>
   );
 }
