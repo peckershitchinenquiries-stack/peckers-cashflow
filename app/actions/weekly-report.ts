@@ -33,7 +33,9 @@ import {
   type WeeklyReportSnapshot,
 } from "@/lib/weekly-report";
 import { generateWeeklySummary } from "@/lib/vm-analytics/weekly-summary";
-import { loadVmSales } from "@/lib/weekly-report-sales";
+import { loadVmPlatformSales, loadVmSales } from "@/lib/weekly-report-sales";
+import { loadChannelHistory } from "@/lib/weekly-report-channels";
+import { buildWeeklyReportWorkbook, workbookFileName } from "@/lib/weekly-report-excel";
 import type { Employee } from "@/lib/types";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
@@ -996,6 +998,37 @@ function summaryHtml(
 }
 
 /**
+ * The workbook attachment. Any source that fails to load refuses the send: a
+ * sheet silently missing its lines would read as a week with no costs.
+ */
+async function buildReportWorkbook(
+  supabase: SupabaseClient,
+  report: WeeklyReport,
+  snapshot: WeeklyReportSnapshot,
+  store: { storeName: string; vmStoreName: string | null; showMeppershall: boolean },
+): Promise<Buffer> {
+  const [linesRes, labourRes, platformSales, history] = await Promise.all([
+    supabase.from("weekly_report_lines").select(LINE_COLUMNS).eq("report_id", report.id),
+    supabase.from("weekly_report_labour_lines").select(LABOUR_COLUMNS).eq("report_id", report.id),
+    loadVmPlatformSales(store.vmStoreName, report.week_start),
+    loadChannelHistory(supabase, report.store_id, store.vmStoreName, report.week_start),
+  ]);
+  const loadError = linesRes.error?.message ?? labourRes.error?.message ?? history.error;
+  if (loadError) throw new Error(`Couldn't build the Excel attachment: ${loadError}`);
+
+  return buildWeeklyReportWorkbook({
+    storeName: store.storeName,
+    weekStart: report.week_start,
+    snapshot,
+    lines: (linesRes.data ?? []) as WeeklyReportLine[],
+    labour: (labourRes.data ?? []) as WeeklyReportLabourLine[],
+    showMeppershall: store.showMeppershall,
+    platformSales: platformSales.rows,
+    channelWeeks: history.weeks,
+  });
+}
+
+/**
  * Mail the locked report to the superiors.
  *
  * The manager owns the week end to end — they enter it, freeze it and send it,
@@ -1016,7 +1049,11 @@ export async function sendWeeklyReport(input: {
 
   const [{ data: settingsRows }, { data: store }] = await Promise.all([
     supabase.from("app_settings").select("key, value"),
-    supabase.from("stores").select("name").eq("id", report.store_id).maybeSingle(),
+    supabase
+      .from("stores")
+      .select("name, vm_store_name, meppershall_default")
+      .eq("id", report.store_id)
+      .maybeSingle(),
   ]);
   const settings = mergeSettings(settingsRows ?? []).weekly_report;
 
@@ -1033,16 +1070,28 @@ export async function sendWeeklyReport(input: {
     );
   }
 
-  // A draft that is allowed to send has no snapshot, so compute one for the
-  // email without freezing the report.
-  const snapshot = report.snapshot ?? (await computeSnapshot(supabase, report));
+  // A draft is measured live, even one still carrying the snapshot of an
+  // earlier lock — its lines may have changed since, and the attachment's
+  // sheets are always the current lines.
+  const snapshot =
+    report.status !== "draft" && report.snapshot
+      ? report.snapshot
+      : await computeSnapshot(supabase, report);
   const storeName = store?.name ?? "Peckers";
+  const workbook = await buildReportWorkbook(supabase, report, snapshot, {
+    storeName,
+    vmStoreName: store?.vm_store_name ?? null,
+    showMeppershall: store?.meppershall_default != null || report.meppershall != null,
+  });
 
   const result = await sendEmail({
     recipients,
     subject: `Weekly Report — ${storeName} — w/c ${report.week_start}`,
     html: summaryHtml(storeName, report.week_start, snapshot),
-    text: `Weekly Report for ${storeName}, week commencing ${report.week_start}.`,
+    text: `Weekly Report for ${storeName}, week commencing ${report.week_start}. The full workbook is attached.`,
+    attachments: [
+      { filename: workbookFileName(storeName, report.week_start), content: workbook },
+    ],
   });
   if (!result.sent) throw new Error(`Couldn't send: ${result.reason ?? "unknown error"}`);
 

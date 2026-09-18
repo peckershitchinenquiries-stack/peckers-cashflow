@@ -43,6 +43,7 @@ export async function sendEmail(input: {
   subject: string;
   html: string;
   text?: string;
+  attachments?: Array<{ filename: string; content: Buffer }>;
 }): Promise<EmailResult> {
   try {
     const apiKey = process.env.RESEND_API_KEY;
@@ -65,6 +66,14 @@ export async function sendEmail(input: {
         subject: input.subject,
         html: input.html,
         text: input.text ?? input.subject,
+        ...(input.attachments?.length
+          ? {
+              attachments: input.attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content.toString("base64"),
+              })),
+            }
+          : {}),
       }),
     });
     if (!res.ok) {

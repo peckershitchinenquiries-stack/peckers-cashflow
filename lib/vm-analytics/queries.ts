@@ -177,6 +177,35 @@ export async function getGrossSalesByChannel(weekIso: string): Promise<ChannelGr
   return Array.from(merged.values());
 }
 
+// Every week of one store's GROSS per-channel sales up to `throughWeekIso`, as
+// week -> channel -> amount. Paged: PostgREST caps a response at 1000 rows, and
+// the per-hour ingest runs to hundreds of rows a week.
+export async function getStoreGrossChannelWeeks(
+  store: string,
+  throughWeekIso: string,
+): Promise<Map<string, Map<string, number>>> {
+  const sb = getVMSupabaseServer();
+  const PAGE = 1000;
+  const weeks = new Map<string, Map<string, number>>();
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await sb
+      .from("vm_sales_store_channel")
+      .select("week_start, channel, gross_sales")
+      .eq("store", store)
+      .lte("week_start", throughWeekIso)
+      .order("id")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`getStoreGrossChannelWeeks: ${error.message}`);
+    const rows = (data ?? []) as { week_start: string; channel: string; gross_sales: string }[];
+    for (const r of rows) {
+      const week = weeks.get(r.week_start) ?? new Map<string, number>();
+      week.set(r.channel, (week.get(r.channel) ?? 0) + numOf(r.gross_sales));
+      weeks.set(r.week_start, week);
+    }
+    if (rows.length < PAGE) return weeks;
+  }
+}
+
 // Lunch Time Deals: per (store, meal deal) sales for a week, from the raw
 // vm_meal_deals_sold table. The "Meal Deals Sold (weekly)" report is pulled per
 // store, so net_sales and counts are already per store.
