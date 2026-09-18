@@ -40,6 +40,7 @@ import {
   totalDeliveries,
 } from "@/lib/cover-driver-hours";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Input";
 import { PlusIcon } from "@/components/ui/icons";
 import {
   ManualClockEntryModal,
@@ -261,6 +262,15 @@ export function LiveDashboard({
     isSuperAdmin || !userStoreId ? true : s.id === userStoreId,
   );
 
+  // Phone-only: one store at a time, so the second store isn't buried below the first.
+  const [mobileStoreId, setMobileStoreId] = React.useState<string>(
+    () =>
+      (visibleStores.find((s) => s.id === userStoreId) ?? visibleStores[0])?.id ?? "",
+  );
+  const activeMobileStoreId = visibleStores.some((s) => s.id === mobileStoreId)
+    ? mobileStoreId
+    : visibleStores[0]?.id ?? "";
+
   const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   // The day's individual shifts, per employee. The clock row above is the day's
@@ -412,14 +422,16 @@ export function LiveDashboard({
           ))}
         </div>
         {visibleStores.length > 1 && (
-          <div className="flex gap-3 text-xs">
-            <span className="text-text-muted">Jump to:</span>
+          <Select
+            value={activeMobileStoreId}
+            onChange={(e) => setMobileStoreId(e.target.value)}
+          >
             {visibleStores.map((st) => (
-              <a key={st.id} href={`#live-store-${st.id}`} className="text-gold">
+              <option key={st.id} value={st.id}>
                 {st.name}
-              </a>
+              </option>
             ))}
-          </div>
+          </Select>
         )}
       </div>
 
@@ -584,7 +596,10 @@ export function LiveDashboard({
             <div
               key={store.id}
               id={`live-store-${store.id}`}
-              className="rounded-2xl bg-surface border border-border overflow-hidden transition-colors max-md:scroll-mt-32"
+              className={
+                "rounded-2xl bg-surface border border-border overflow-hidden transition-colors max-md:scroll-mt-32" +
+                (visibleStores.length > 1 && store.id !== activeMobileStoreId ? " max-md:hidden" : "")
+              }
             >
               <div className="px-3 md:px-5 pt-3 md:pt-5 pb-3 border-b border-border">
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
