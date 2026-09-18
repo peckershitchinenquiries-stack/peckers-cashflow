@@ -632,6 +632,7 @@ export function EmployeesView({
             }
             lockToStore={lockToStore}
             showStoreColumn={!lockToStore && storeFilter === "all"}
+            todayISO={todayISO}
             onChanged={refresh}
           />
           </div>

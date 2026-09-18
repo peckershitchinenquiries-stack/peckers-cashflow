@@ -83,7 +83,7 @@ export function NeedsActionPanel({ data }: { data: NeedsActionData }) {
   const list = items(data);
 
   return (
-    <Card className="max-sm:p-3.5">
+    <Card className="max-sm:p-3.5 lg:h-full">
       <h3 className="text-base font-semibold tracking-wide text-text-primary mb-3">Needs action</h3>
 
       {data.errors.length > 0 && (

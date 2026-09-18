@@ -53,10 +53,11 @@ export function AdminDashboardView({
       <LastWeekPerformanceCard data={active.performance} />
 
       {/* Mobile reads top-down: this Tuesday, what's blocking it, then next week's forecast. */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-start">
-        <div className="order-1">{thisTuesday}</div>
-        <div className="order-3 lg:order-2">{nextTuesday}</div>
-        <div className="order-2 lg:order-3">
+      {/* Desktop stretches the row so all three cards share top and bottom edges. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-5 items-start lg:items-stretch">
+        <div className="order-1 lg:h-full">{thisTuesday}</div>
+        <div className="order-3 lg:order-2 lg:h-full">{nextTuesday}</div>
+        <div className="order-2 lg:order-3 lg:h-full">
           <NeedsActionPanel data={active.needsAction} />
         </div>
       </div>

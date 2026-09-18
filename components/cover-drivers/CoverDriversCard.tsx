@@ -10,7 +10,15 @@ import { AddCoverDriverModal } from "./AddCoverDriverModal";
 import { EditCoverDriverModal } from "./EditCoverDriverModal";
 import { CoverDriverScheduleModal } from "./CoverDriverScheduleModal";
 import { CoverDriverCard } from "./CoverDriverCard";
-import { formatDDMMYYYY, formatGBP } from "@/lib/utils";
+import { DatePicker } from "@/components/ui/DatePicker";
+import {
+  endOfISOWeek,
+  formatDDMMYYYY,
+  formatGBP,
+  parseISODate,
+  startOfISOWeek,
+  toISODate,
+} from "@/lib/utils";
 import { HoursMinsDisplay } from "@/components/ui/HoursMinsDisplay";
 import type { CoverDriver, CoverDriverDaySummary, Store } from "@/lib/types";
 
@@ -21,6 +29,7 @@ export function CoverDriversCard({
   defaultStoreId,
   lockToStore = false,
   showStoreColumn = false,
+  todayISO,
   onChanged,
 }: {
   drivers: CoverDriver[];
@@ -31,12 +40,25 @@ export function CoverDriversCard({
   lockToStore?: boolean;
   /** Admin (all-stores view): show which store each row belongs to. */
   showStoreColumn?: boolean;
+  /** Server's "today", used to open the shifts list on the current week. */
+  todayISO?: string;
   onChanged: () => void;
 }) {
   const [showAdd, setShowAdd] = React.useState(false);
   const [editing, setEditing] = React.useState<CoverDriver | null>(null);
   const [scheduling, setScheduling] = React.useState<CoverDriver | null>(null);
   const [showInactive, setShowInactive] = React.useState(false);
+  // Opens on the current Mon–Sun week; clearing either picker widens the range.
+  const [from, setFrom] = React.useState(() =>
+    toISODate(startOfISOWeek(todayISO ? parseISODate(todayISO) : new Date())),
+  );
+  const [to, setTo] = React.useState(() =>
+    toISODate(endOfISOWeek(todayISO ? parseISODate(todayISO) : new Date())),
+  );
+
+  const shownDays = days.filter(
+    (d) => (!from || d.work_date >= from) && (!to || d.work_date <= to),
+  );
 
   const storeName = React.useMemo(() => {
     const map = new Map(stores.map((s) => [s.id, s.name]));
@@ -112,16 +134,27 @@ export function CoverDriversCard({
           Every completed clock-in/out. Total pay = hours × rate + deliveries × their rate.
         </p>
 
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+          <DatePicker label="From" value={from} onChange={setFrom} />
+          <DatePicker label="To" value={to} onChange={setTo} />
+        </div>
+
         {days.length === 0 ? (
           <EmptyState
             icon={<ClockIcon />}
             title="No cover shifts recorded"
             description="Rows appear here once a cover driver clocks in and out at a store."
           />
+        ) : shownDays.length === 0 ? (
+          <EmptyState
+            icon={<ClockIcon />}
+            title="No cover shifts in these dates"
+            description="Change the From / To dates, or clear them to see every shift."
+          />
         ) : (
           <>
           <ul className="sm:hidden flex flex-col divide-y divide-border rounded-xl border border-border overflow-hidden">
-            {days.map((r) => (
+            {shownDays.map((r) => (
               <li
                 key={`${r.cover_driver_id}:${r.work_date}`}
                 className="flex items-center justify-between gap-3 px-3 py-2.5"
@@ -153,7 +186,7 @@ export function CoverDriversCard({
                 </tr>
               </thead>
               <tbody>
-                {days.map((r, i) => (
+                {shownDays.map((r, i) => (
                   <tr
                     key={`${r.cover_driver_id}:${r.work_date}`}
                     className={`${i % 2 === 0 ? "" : "bg-bg/50"} border-t border-border/60`}

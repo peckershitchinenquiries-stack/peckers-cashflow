@@ -12,7 +12,15 @@ import {
   approveCoverDriverDay,
   deleteCoverDriverHours,
 } from "@/app/actions/cover-drivers";
-import { formatDDMMYYYY, formatGBP, formatHoursMinsWords } from "@/lib/utils";
+import {
+  endOfISOWeek,
+  formatDDMMYYYY,
+  formatGBP,
+  formatHoursMinsWords,
+  parseISODate,
+  startOfISOWeek,
+  toISODate,
+} from "@/lib/utils";
 import { HoursMinsDisplay } from "@/components/ui/HoursMinsDisplay";
 import { ManualClockEntryModal } from "@/components/clock/ManualClockEntryModal";
 import type {
@@ -113,8 +121,13 @@ export function CoverDriverHoursTable({
 }) {
   const toast = useToast();
   const [filterDriver, setFilterDriver] = React.useState("");
-  const [from, setFrom] = React.useState("");
-  const [to, setTo] = React.useState("");
+  // Opens on the current Mon–Sun week; clearing either picker widens the range.
+  const [from, setFrom] = React.useState(() =>
+    toISODate(startOfISOWeek(todayISO ? parseISODate(todayISO) : new Date())),
+  );
+  const [to, setTo] = React.useState(() =>
+    toISODate(endOfISOWeek(todayISO ? parseISODate(todayISO) : new Date())),
+  );
   const [approvingKey, setApprovingKey] = React.useState<string | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [showAddMissed, setShowAddMissed] = React.useState(false);
