@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
@@ -43,7 +44,7 @@ type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
 const LINE_COLUMNS =
   "id, report_id, section, label, sort_order, entry_date, qty, unit_rate, amount, vat_amount, note";
 const LABOUR_COLUMNS =
-  "id, report_id, person_name, source, employee_id, cover_driver_id, manager_id, hours, ni_hours, ni_rate, cash_hours, cash_rate, deliveries, delivery_pay, sort_order";
+  "id, report_id, person_name, source, employee_id, cover_driver_id, manager_id, hours, ni_hours, ni_rate, cash_hours, cash_rate, ni_total_override, cash_total_override, deliveries, delivery_pay, sort_order";
 
 async function requireStaff(): Promise<SessionUser> {
   const user = await getSessionUser();
@@ -376,8 +377,9 @@ export async function saveReportHeader(input: {
   return { ok: true };
 }
 
-export async function saveReportLine(input: {
-  report_id: string;
+export type ReportLineInput = {
+  /** Client-side row identity, echoed back with the id a new row was given. */
+  key?: string;
   id?: string | null;
   section: ReportSection;
   label: string;
@@ -388,16 +390,12 @@ export async function saveReportLine(input: {
   amount?: number | null;
   vat_amount?: number | null;
   note?: string | null;
-}): Promise<{ ok: true; id: string }> {
-  const user = await requireStaff();
+};
+
+function lineRowPayload(reportId: string, input: ReportLineInput) {
   if (!REPORT_SECTIONS.includes(input.section)) throw new Error("Unknown section.");
   const label = (input.label ?? "").trim();
   if (!label) throw new Error("A line needs a label.");
-
-  const supabase = createServerSupabase();
-  const report = await loadReportRow(supabase, input.report_id);
-  assertStoreAccess(user, report.store_id);
-  assertEditable(report);
 
   const qty = input.qty == null ? null : Number(input.qty);
   const unitRate = input.unit_rate == null ? null : Number(input.unit_rate);
@@ -410,8 +408,8 @@ export async function saveReportLine(input: {
         ? round2(qty * unitRate)
         : null;
 
-  const payload = {
-    report_id: input.report_id,
+  return {
+    report_id: reportId,
     section: input.section,
     label,
     sort_order: input.sort_order ?? 0,
@@ -424,6 +422,18 @@ export async function saveReportLine(input: {
     vat_amount: input.vat_amount == null ? null : round2(Number(input.vat_amount) || 0),
     note: input.note?.trim() || null,
   };
+}
+
+export async function saveReportLine(
+  input: ReportLineInput & { report_id: string },
+): Promise<{ ok: true; id: string }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+  const report = await loadReportRow(supabase, input.report_id);
+  assertStoreAccess(user, report.store_id);
+  assertEditable(report);
+
+  const payload = lineRowPayload(input.report_id, input);
 
   if (input.id) {
     const { error } = await supabase
@@ -444,6 +454,76 @@ export async function saveReportLine(input: {
   if (error) throw new Error(error.message);
   revalidateWeeklyReport();
   return { ok: true, id: data.id as string };
+}
+
+/**
+ * A whole sheet in ONE call.
+ *
+ * Save-on-blur cost a server action, a Supabase round trip and a full RSC
+ * revalidate per CELL, so entering a fifteen-supplier Cost of Goods sheet meant
+ * waiting on the page between rows. Every grid now holds drafts and sends them
+ * here together: at most three statements and one revalidate, whatever the
+ * sheet's size.
+ *
+ * Ids are minted HERE rather than read back from the insert, so a new row's id
+ * can be matched to the draft that produced it without relying on the order a
+ * multi-row insert returns.
+ */
+export async function saveReportLines(input: {
+  report_id: string;
+  lines: ReportLineInput[];
+  delete_ids?: string[];
+}): Promise<{ ok: true; ids: Record<string, string> }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+  const report = await loadReportRow(supabase, input.report_id);
+  assertStoreAccess(user, report.store_id);
+  assertEditable(report);
+
+  // An id the client sends is only honoured if it really is this report's row —
+  // otherwise a crafted payload could overwrite another store's week.
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("weekly_report_lines")
+    .select("id")
+    .eq("report_id", input.report_id);
+  if (existingErr) throw new Error(existingErr.message);
+  const existing = new Set((existingRows ?? []).map((r) => r.id as string));
+
+  const ids: Record<string, string> = {};
+  const updates: Array<Record<string, unknown>> = [];
+  const inserts: Array<Record<string, unknown>> = [];
+
+  for (const line of input.lines) {
+    const payload = lineRowPayload(input.report_id, line);
+    if (line.id && existing.has(line.id)) {
+      updates.push({ ...payload, id: line.id });
+    } else {
+      const id = randomUUID();
+      inserts.push({ ...payload, id });
+      if (line.key) ids[line.key] = id;
+    }
+  }
+
+  const deletes = (input.delete_ids ?? []).filter((id) => existing.has(id));
+  if (deletes.length > 0) {
+    const { error } = await supabase
+      .from("weekly_report_lines")
+      .delete()
+      .eq("report_id", input.report_id)
+      .in("id", deletes);
+    if (error) throw new Error(error.message);
+  }
+  if (updates.length > 0) {
+    const { error } = await supabase.from("weekly_report_lines").upsert(updates);
+    if (error) throw new Error(error.message);
+  }
+  if (inserts.length > 0) {
+    const { error } = await supabase.from("weekly_report_lines").insert(inserts);
+    if (error) throw new Error(error.message);
+  }
+
+  revalidateWeeklyReport();
+  return { ok: true, ids };
 }
 
 export async function deleteReportLine(input: {
@@ -488,8 +568,8 @@ export async function reorderReportLines(input: {
   return { ok: true };
 }
 
-export async function saveLabourLine(input: {
-  report_id: string;
+export type LabourLineInput = {
+  key?: string;
   id?: string | null;
   person_name: string;
   source?: "employee" | "cover_driver" | "manager" | "adhoc";
@@ -498,18 +578,17 @@ export async function saveLabourLine(input: {
   ni_rate?: number | null;
   cash_hours?: number | null;
   cash_rate?: number | null;
+  /** Typed totals for a line that is not priced by the hour — null computes. */
+  ni_total_override?: number | null;
+  cash_total_override?: number | null;
   deliveries?: number | null;
   delivery_pay?: number | null;
   sort_order?: number | null;
-}): Promise<{ ok: true; id: string }> {
-  const user = await requireStaff();
+};
+
+function labourRowPayload(reportId: string, input: LabourLineInput) {
   const name = (input.person_name ?? "").trim();
   if (!name) throw new Error("A labour line needs a name.");
-
-  const supabase = createServerSupabase();
-  const report = await loadReportRow(supabase, input.report_id);
-  assertStoreAccess(user, report.store_id);
-  assertEditable(report);
 
   // Bounded like every other hours input in the app: a week is 168 hours, and a
   // typo of 800 must not reach the P&L.
@@ -532,8 +611,8 @@ export async function saveLabourLine(input: {
     return Number.isFinite(n) ? round4(Math.max(0, n)) : null;
   };
 
-  const payload = {
-    report_id: input.report_id,
+  return {
+    report_id: reportId,
     person_name: name,
     source: input.source ?? "adhoc",
     hours: hrs(input.hours),
@@ -541,10 +620,26 @@ export async function saveLabourLine(input: {
     ni_rate: rate(input.ni_rate),
     cash_hours: hrs(input.cash_hours),
     cash_rate: rate(input.cash_rate),
+    // Null is the ordinary case and means "hours x rate". Only a line bought as
+    // a job rather than by the hour carries a figure here.
+    ni_total_override: money(input.ni_total_override),
+    cash_total_override: money(input.cash_total_override),
     deliveries: input.deliveries == null ? null : Math.max(0, Math.round(Number(input.deliveries) || 0)),
     delivery_pay: money(input.delivery_pay),
     sort_order: input.sort_order ?? 0,
   };
+}
+
+export async function saveLabourLine(
+  input: LabourLineInput & { report_id: string },
+): Promise<{ ok: true; id: string }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+  const report = await loadReportRow(supabase, input.report_id);
+  assertStoreAccess(user, report.store_id);
+  assertEditable(report);
+
+  const payload = labourRowPayload(input.report_id, input);
 
   if (input.id) {
     // person_name and source are the only fields a manual edit may not move a
@@ -567,6 +662,62 @@ export async function saveLabourLine(input: {
   if (error) throw new Error(error.message);
   revalidateWeeklyReport();
   return { ok: true, id: data.id as string };
+}
+
+/** The Labour sheet in one call — see `saveReportLines` for why. */
+export async function saveLabourLines(input: {
+  report_id: string;
+  lines: LabourLineInput[];
+  delete_ids?: string[];
+}): Promise<{ ok: true; ids: Record<string, string> }> {
+  const user = await requireStaff();
+  const supabase = createServerSupabase();
+  const report = await loadReportRow(supabase, input.report_id);
+  assertStoreAccess(user, report.store_id);
+  assertEditable(report);
+
+  const { data: existingRows, error: existingErr } = await supabase
+    .from("weekly_report_labour_lines")
+    .select("id")
+    .eq("report_id", input.report_id);
+  if (existingErr) throw new Error(existingErr.message);
+  const existing = new Set((existingRows ?? []).map((r) => r.id as string));
+
+  const ids: Record<string, string> = {};
+  const updates: Array<Record<string, unknown>> = [];
+  const inserts: Array<Record<string, unknown>> = [];
+
+  for (const line of input.lines) {
+    const payload = labourRowPayload(input.report_id, line);
+    if (line.id && existing.has(line.id)) {
+      updates.push({ ...payload, id: line.id });
+    } else {
+      const id = randomUUID();
+      inserts.push({ ...payload, id });
+      if (line.key) ids[line.key] = id;
+    }
+  }
+
+  const deletes = (input.delete_ids ?? []).filter((id) => existing.has(id));
+  if (deletes.length > 0) {
+    const { error } = await supabase
+      .from("weekly_report_labour_lines")
+      .delete()
+      .eq("report_id", input.report_id)
+      .in("id", deletes);
+    if (error) throw new Error(error.message);
+  }
+  if (updates.length > 0) {
+    const { error } = await supabase.from("weekly_report_labour_lines").upsert(updates);
+    if (error) throw new Error(error.message);
+  }
+  if (inserts.length > 0) {
+    const { error } = await supabase.from("weekly_report_labour_lines").insert(inserts);
+    if (error) throw new Error(error.message);
+  }
+
+  revalidateWeeklyReport();
+  return { ok: true, ids };
 }
 
 export async function deleteLabourLine(input: {
@@ -710,6 +861,8 @@ export async function prefillLabour(input: {
       ni_rate: emp.hourly_ni_rate != null ? Number(emp.hourly_ni_rate) : Number(emp.hourly_rate) || 0,
       cash_hours: cashHours,
       cash_rate: wage ? Number(wage.cash_rate) || 0 : Number(emp.hourly_cash_rate) || 0,
+      ni_total_override: null,
+      cash_total_override: null,
       deliveries: wage
         ? (wage.short_deliveries_count ?? 0) +
           (wage.long_deliveries_count ?? 0) +
@@ -737,6 +890,8 @@ export async function prefillLabour(input: {
       ni_rate: 0,
       cash_hours: Number(line.cash_hours) || 0,
       cash_rate: Number(line.cash_rate) || 0,
+      ni_total_override: null,
+      cash_total_override: null,
       deliveries:
         (line.short_deliveries_count ?? 0) +
         (line.long_deliveries_count ?? 0) +
@@ -792,6 +947,8 @@ export async function prefillLabour(input: {
       ni_rate: hours > 0 ? round4(wage / hours) : 0,
       cash_hours: 0,
       cash_rate: 0,
+      ni_total_override: null,
+      cash_total_override: null,
       deliveries: delivery
         ? (delivery.short_deliveries_count ?? 0) +
           (delivery.long_deliveries_count ?? 0) +
@@ -1190,18 +1347,16 @@ export async function importLegacyWeeklyInputs(input: {
     if (error) throw new Error(error.message);
   }
 
-  // The old form held ONE labour figure with no hours behind it, and the sheet
-  // has no flat-amount column. It lands as a single hour at the total, named so
-  // nobody mistakes it for someone's week — the manager replaces it by
+  // The old form held ONE labour figure with no hours behind it. It lands as a
+  // typed NI total (migration 059) rather than a fabricated hour at that rate,
+  // named so nobody mistakes it for someone's week — the manager replaces it by
   // prefilling.
   if (num(legacy.labour_cost) !== 0) {
     await supabase.from("weekly_report_labour_lines").insert({
       report_id: input.report_id,
       person_name: "Imported labour total (no per-person detail)",
       source: "adhoc",
-      hours: 1,
-      ni_hours: 1,
-      ni_rate: round2(num(legacy.labour_cost)),
+      ni_total_override: round2(num(legacy.labour_cost)),
       sort_order: -1,
     });
   }

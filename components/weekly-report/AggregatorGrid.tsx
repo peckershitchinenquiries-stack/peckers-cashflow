@@ -3,8 +3,10 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
-import { saveReportLine } from "@/app/actions/weekly-report";
-import { NumberCell, useDeferredSync } from "@/components/weekly-report/NumberCell";
+import { saveReportLines, type ReportLineInput } from "@/app/actions/weekly-report";
+import { NumberCell } from "@/components/weekly-report/NumberCell";
+import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
+import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   aggregatorRows,
   num,
@@ -43,8 +45,6 @@ export function AggregatorGrid({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const [edits, setEdits] = React.useState<Record<string, string>>({});
-
   const salesByPlatform = React.useMemo(
     () => new Map(platformSales.rows.map((p) => [p.platform, p.sales])),
     [platformSales],
@@ -53,25 +53,56 @@ export function AggregatorGrid({
     () => aggregatorRows(lines, salesByPlatform),
     [lines, salesByPlatform],
   );
+  const [busy, setBusy] = React.useState(false);
 
   const signature = lines.map((l) => `${l.id}:${l.amount}`).join("|");
-  const sync = useDeferredSync(signature, () => setEdits({}));
+  const sheet = useSheetDrafts<Record<string, string>>(
+    signature,
+    () =>
+      Object.fromEntries(
+        aggregatorRows(lines, salesByPlatform).map((r) => [
+          r.platform,
+          r.commission ? String(r.commission) : "",
+        ]),
+      ),
+    (d) => new Map(Object.entries(d)),
+    readOnly,
+  );
+  const draft = sheet.state;
 
-  async function commit(platform: string, existingId: string | null) {
-    if (readOnly) return;
-    const raw = edits[platform];
-    if (raw === undefined) return;
-    try {
-      await saveReportLine({
-        report_id: reportId,
-        id: existingId,
+  async function save() {
+    if (readOnly || busy) return;
+    const payload: ReportLineInput[] = [];
+    const kept = new Set<string>();
+    for (const r of rows) {
+      const raw = draft[r.platform] ?? "";
+      if (raw === "") continue;
+      if (r.line) kept.add(r.line.id);
+      payload.push({
+        key: r.platform,
+        id: r.line?.id ?? null,
         section: "aggregator",
-        label: platform,
+        label: r.platform,
         amount: round2(num(raw)),
       });
+    }
+    setBusy(true);
+    try {
+      await saveReportLines({
+        report_id: reportId,
+        lines: payload,
+        // A commission cleared back to blank is a line that should no longer
+        // reach the summary's Aggregator Costs.
+        delete_ids: rows
+          .map((r) => r.line?.id)
+          .filter((id): id is string => !!id && !kept.has(id)),
+      });
+      toast.success("Aggregator commission saved");
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't save that commission");
+      toast.error(err instanceof Error ? err.message : "Couldn't save the commission");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -79,17 +110,22 @@ export function AggregatorGrid({
   // sheet no longer lists would reach the summary while being invisible here.
   const stranded = round2(sumSection(lines, "aggregator") - rows.reduce((t, r) => t + r.commission, 0));
 
+  // Totals follow what is ON SCREEN, so the footer agrees with the rows while
+  // a commission is still being typed.
   const totals = rows.reduce(
-    (t, r) => ({
-      sales: t.sales + r.sales,
-      commission: t.commission + r.commission,
-      income: t.income + r.income,
-    }),
+    (t, r) => {
+      const commission = num(draft[r.platform] ?? "");
+      return {
+        sales: t.sales + r.sales,
+        commission: t.commission + commission,
+        income: t.income + round2(r.sales - commission),
+      };
+    },
     { sales: 0, commission: 0, income: 0 },
   );
 
   return (
-    <div className="vm-card overflow-hidden" ref={sync.ref} onBlurCapture={sync.onBlurCapture}>
+    <div className="vm-card overflow-hidden" ref={sheet.sync.ref} onBlurCapture={sheet.sync.onBlurCapture}>
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-text-primary">Aggregator Summary</h3>
         <span className="text-xs text-text-muted">→ Weekly Summary, Aggregator Costs</span>
@@ -125,9 +161,8 @@ export function AggregatorGrid({
           </thead>
           <tbody>
             {rows.map((r) => {
-              const raw = edits[r.platform];
-              const value = raw !== undefined ? raw : r.commission ? String(r.commission) : "";
-              const commission = raw !== undefined ? num(raw) : r.commission;
+              const value = draft[r.platform] ?? "";
+              const commission = num(value);
               const income = round2(r.sales - commission);
               return (
                 <tr key={r.platform} className="border-b border-border">
@@ -140,16 +175,13 @@ export function AggregatorGrid({
                   </td>
                   <td data-label="Commission" className="px-3 py-2 text-right">
                     <NumberCell
-                      step="0.01"
-                      min="0"
                       className={cellNum}
                       value={value}
                       disabled={readOnly}
                       placeholder="0.00"
                       onValueChange={(v) =>
-                        setEdits((p) => ({ ...p, [r.platform]: v }))
+                        sheet.setState((p) => ({ ...p, [r.platform]: v }))
                       }
-                      onCommit={() => commit(r.platform, r.line?.id ?? null)}
                     />
                   </td>
                   <td data-label="Income" className="px-3 py-2 text-right font-mono text-text-primary">
@@ -179,6 +211,16 @@ export function AggregatorGrid({
           </tfoot>
         </table>
       </div>
+
+      {!readOnly && (
+        <SheetSaveBar
+          dirty={sheet.dirty}
+          count={sheet.changed}
+          busy={busy}
+          onSave={save}
+          onDiscard={sheet.reset}
+        />
+      )}
     </div>
   );
 }

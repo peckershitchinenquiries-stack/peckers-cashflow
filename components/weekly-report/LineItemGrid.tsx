@@ -4,8 +4,10 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
-import { deleteReportLine, saveReportLine } from "@/app/actions/weekly-report";
-import { NumberCell, useDeferredSync } from "@/components/weekly-report/NumberCell";
+import { saveReportLines, type ReportLineInput } from "@/app/actions/weekly-report";
+import { NumberCell } from "@/components/weekly-report/NumberCell";
+import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
+import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   expenseVat,
   num,
@@ -55,13 +57,18 @@ function draftAmount(d: Draft, shape: SectionDef["shape"]): number {
   return num(d.amount);
 }
 
+function rowPrint(d: Draft): string {
+  return [d.label.trim(), d.qty, d.unit_rate, d.amount, d.vat, d.entry_date, d.note].join("\u0001");
+}
+
 /**
  * The spreadsheet-style grid every section but Labour uses.
  *
- * Edits save on blur — a per-row Save button on a fifteen-supplier sheet is a
- * fifteen-click ritual nobody would keep up. A row with no label is never sent:
- * the server refuses it, and an empty new row is simply a row the manager
- * started and abandoned.
+ * NOTHING is written until Save. Edits used to go up on blur, which is a server
+ * action and a full page revalidate per cell — the whole sheet now travels in
+ * one call, so entering it costs the same whether it holds two rows or twenty.
+ * A row with no label is never sent: the server refuses it, and an empty new row
+ * is simply a row the manager started and abandoned.
  */
 export function LineItemGrid({
   reportId,
@@ -76,16 +83,23 @@ export function LineItemGrid({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const [drafts, setDrafts] = React.useState<Draft[]>(() => lines.map(toDraft));
   const [busy, setBusy] = React.useState(false);
   const newKey = React.useRef(0);
 
   // Server data wins whenever it changes underneath us (a prefill, a lock, a
-  // carry-forward seed) — the grid is a view of the rows, not their owner.
+  // carry-forward seed) — the grid is a view of the rows, not their owner. It
+  // never wins over unsaved typing.
   const signature = lines
     .map((l) => `${l.id}:${l.label}:${l.amount}:${l.vat_amount}:${l.qty}:${l.unit_rate}`)
     .join("|");
-  const sync = useDeferredSync(signature, () => setDrafts(lines.map(toDraft)));
+  const sheet = useSheetDrafts<Draft[]>(
+    signature,
+    () => lines.map(toDraft),
+    (ds) => new Map(ds.map((d) => [d.key, rowPrint(d)])),
+    readOnly,
+  );
+  const drafts = sheet.state;
+  const setDrafts = sheet.setState;
 
   const isQtyRate = def.shape === "qty_rate";
   const isDated = def.shape === "dated";
@@ -94,50 +108,8 @@ export function LineItemGrid({
     setDrafts((prev) => prev.map((d) => (d.key === key ? { ...d, ...patch } : d)));
   }
 
-  async function commit(key: string) {
-    const draft = drafts.find((d) => d.key === key);
-    if (!draft || readOnly) return;
-    if (!draft.label.trim()) return;
-
-    setBusy(true);
-    try {
-      const res = await saveReportLine({
-        report_id: reportId,
-        id: draft.id,
-        section: def.key,
-        label: draft.label,
-        sort_order: drafts.findIndex((d) => d.key === key),
-        entry_date: isDated ? draft.entry_date || null : null,
-        qty: isQtyRate ? num(draft.qty) : null,
-        unit_rate: isQtyRate ? num(draft.unit_rate) : null,
-        amount: draftAmount(draft, def.shape),
-        vat_amount: isDated && draft.vat !== "" ? round2(num(draft.vat)) : null,
-        note: draft.note || null,
-      });
-      if (!draft.id) update(key, { id: res.id });
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't save that line");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function remove(key: string) {
-    const draft = drafts.find((d) => d.key === key);
-    if (!draft || readOnly) return;
+  function remove(key: string) {
     setDrafts((prev) => prev.filter((d) => d.key !== key));
-    if (!draft.id) return;
-    setBusy(true);
-    try {
-      await deleteReportLine({ report_id: reportId, id: draft.id });
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't remove that line");
-      router.refresh();
-    } finally {
-      setBusy(false);
-    }
   }
 
   function addRow() {
@@ -158,13 +130,57 @@ export function LineItemGrid({
     ]);
   }
 
+  async function save() {
+    if (readOnly || busy) return;
+    if (drafts.some((d) => !d.label.trim() && draftAmount(d, def.shape) !== 0)) {
+      toast.error(`Every row with an amount needs a ${def.labelHeading.toLowerCase()}.`);
+      return;
+    }
+
+    const payload: ReportLineInput[] = [];
+    const kept = new Set<string>();
+    drafts.forEach((d, index) => {
+      if (!d.label.trim()) return;
+      if (d.id) kept.add(d.id);
+      payload.push({
+        key: d.key,
+        id: d.id,
+        section: def.key,
+        label: d.label,
+        sort_order: index,
+        entry_date: isDated ? d.entry_date || null : null,
+        qty: isQtyRate ? num(d.qty) : null,
+        unit_rate: isQtyRate ? num(d.unit_rate) : null,
+        amount: draftAmount(d, def.shape),
+        vat_amount: isDated && d.vat !== "" ? round2(num(d.vat)) : null,
+        note: d.note || null,
+      });
+    });
+
+    setBusy(true);
+    try {
+      const res = await saveReportLines({
+        report_id: reportId,
+        lines: payload,
+        delete_ids: lines.map((l) => l.id).filter((id) => !kept.has(id)),
+      });
+      sheet.commit(drafts.map((d) => (d.id ? d : { ...d, id: res.ids[d.key] ?? null })));
+      toast.success(`${def.title} saved`);
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't save the sheet");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const total = round2(drafts.reduce((t, d) => t + draftAmount(d, def.shape), 0));
   const vatTotal = round2(
     drafts.reduce((t, d) => t + draftVat(d, draftAmount(d, def.shape)), 0),
   );
 
   return (
-    <div className="vm-card overflow-hidden" ref={sync.ref} onBlurCapture={sync.onBlurCapture}>
+    <div className="vm-card overflow-hidden" ref={sheet.sync.ref} onBlurCapture={sheet.sync.onBlurCapture}>
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
         <h3 className="text-sm font-semibold text-text-primary">{def.title}</h3>
         <span className="text-xs text-text-muted">
@@ -201,7 +217,6 @@ export function LineItemGrid({
                         value={d.entry_date}
                         disabled={readOnly}
                         onChange={(e) => update(d.key, { entry_date: e.target.value })}
-                        onBlur={() => commit(d.key)}
                       />
                     </td>
                   )}
@@ -212,32 +227,25 @@ export function LineItemGrid({
                       placeholder={def.labelHeading}
                       disabled={readOnly}
                       onChange={(e) => update(d.key, { label: e.target.value })}
-                      onBlur={() => commit(d.key)}
                     />
                   </td>
                   {isQtyRate && (
                     <td data-label="Qty" className="px-3 py-1.5">
                       <NumberCell
-                        step="0.001"
-                        min="0"
                         className={cellNum}
                         value={d.qty}
                         disabled={readOnly}
                         onValueChange={(v) => update(d.key, { qty: v })}
-                        onCommit={() => commit(d.key)}
                       />
                     </td>
                   )}
                   {isQtyRate && (
                     <td data-label="£ / unit" className="px-3 py-1.5">
                       <NumberCell
-                        step="0.01"
-                        min="0"
                         className={cellNum}
                         value={d.unit_rate}
                         disabled={readOnly}
                         onValueChange={(v) => update(d.key, { unit_rate: v })}
-                        onCommit={() => commit(d.key)}
                       />
                     </td>
                   )}
@@ -248,25 +256,21 @@ export function LineItemGrid({
                       </div>
                     ) : (
                       <NumberCell
-                        step="0.01"
                         className={cellNum}
                         value={d.amount}
                         disabled={readOnly}
                         onValueChange={(v) => update(d.key, { amount: v })}
-                        onCommit={() => commit(d.key)}
                       />
                     )}
                   </td>
                   {isDated && (
                     <td data-label="VAT" className="px-3 py-1.5">
                       <NumberCell
-                        step="0.01"
                         className={cellNum}
                         value={d.vat}
                         placeholder={expenseVat(amount).toFixed(2)}
                         disabled={readOnly}
                         onValueChange={(v) => update(d.key, { vat: v })}
-                        onCommit={() => commit(d.key)}
                       />
                     </td>
                   )}
@@ -277,7 +281,6 @@ export function LineItemGrid({
                       placeholder={isDated ? "Cash / card" : "Invoice ref"}
                       disabled={readOnly}
                       onChange={(e) => update(d.key, { note: e.target.value })}
-                      onBlur={() => commit(d.key)}
                     />
                   </td>
                   {!readOnly && (
@@ -330,11 +333,17 @@ export function LineItemGrid({
       </div>
 
       {!readOnly && (
-        <div className="border-t border-border px-4 py-3">
+        <SheetSaveBar
+          dirty={sheet.dirty}
+          count={sheet.changed}
+          busy={busy}
+          onSave={save}
+          onDiscard={sheet.reset}
+        >
           <Button size="sm" variant="secondary" onClick={addRow} disabled={busy}>
             Add line
           </Button>
-        </div>
+        </SheetSaveBar>
       )}
     </div>
   );

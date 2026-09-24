@@ -62,6 +62,9 @@ export type WeeklyReportLabourLine = {
   ni_rate: number | string | null;
   cash_hours: number | string | null;
   cash_rate: number | string | null;
+  /** Typed totals for a line that is not priced by the hour. Null = the product. */
+  ni_total_override: number | string | null;
+  cash_total_override: number | string | null;
   deliveries: number | null;
   delivery_pay: number | string | null;
   sort_order: number;
@@ -337,9 +340,18 @@ export type LabourLineTotals = {
   total_pay: number;
 };
 
+/** A typed total wins over the product; null — the ordinary case — computes it. */
+export function overridden(v: number | string | null | undefined): boolean {
+  return v != null && v !== "";
+}
+
 export function labourLineTotals(l: WeeklyReportLabourLine): LabourLineTotals {
-  const ni_total = round2(num(l.ni_hours) * num(l.ni_rate));
-  const cash_total = round2(num(l.cash_hours) * num(l.cash_rate));
+  const ni_total = overridden(l.ni_total_override)
+    ? round2(num(l.ni_total_override))
+    : round2(num(l.ni_hours) * num(l.ni_rate));
+  const cash_total = overridden(l.cash_total_override)
+    ? round2(num(l.cash_total_override))
+    : round2(num(l.cash_hours) * num(l.cash_rate));
   const delivery_pay = round2(num(l.delivery_pay));
   return {
     hours: round2(num(l.ni_hours) + num(l.cash_hours)),

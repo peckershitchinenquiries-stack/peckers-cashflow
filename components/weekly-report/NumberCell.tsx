@@ -5,17 +5,24 @@ import * as React from "react";
 /**
  * The one numeric input every weekly-report sheet types into.
  *
- * Two things it fixes that a bare <input type="number"> gets wrong on a grid
- * this dense:
- *
- * 1. A stored zero renders as "0", so typing 345 into a prefilled cell used to
- *    give 0345 — the manager had to delete the zero first. Focusing SELECTS the
- *    whole value, so the first keystroke replaces it. The mouse-up guard is
- *    load-bearing: the click that focuses the field would otherwise collapse
- *    that selection to a caret before the manager types.
- * 2. A number input answers the mouse wheel, silently retyping money on a
- *    scroll, and the up/down arrows do the same on a grid navigated by keyboard.
+ * It is a TEXT field, not `<input type="number">`. A number input reports an
+ * empty string for every intermediate a decimal passes through — "12." on the
+ * way to "12.5", "-" on the way to a credit — so a controlled grid saw the cell
+ * emptied mid-keystroke and fought the typing. It also answers the mouse wheel
+ * and the arrow keys, silently retyping money on a grid navigated by keyboard.
+ * Filtering the characters ourselves keeps what the manager typed exactly as
+ * they typed it.
  */
+const NUMERIC = /^-?\d*\.?\d*$/;
+
+/** What the manager meant, before it is judged: a comma decimal, a stray space. */
+function normalise(raw: string, integer: boolean, allowNegative: boolean): string {
+  let v = raw.replace(/\s|£|,/g, (m) => (m === "," ? "." : ""));
+  if (integer) v = v.replace(/\./g, "");
+  if (!allowNegative) v = v.replace(/-/g, "");
+  return v;
+}
+
 /**
  * Focus a money field and its whole value is selected, so the first keystroke
  * replaces it instead of typing into the existing digits. The mouse-up guard is
@@ -44,20 +51,29 @@ export function NumberCell({
   value,
   onValueChange,
   onCommit,
+  integer = false,
+  allowNegative = false,
   className,
   ...props
-}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "onChange" | "value" | "type"> & {
+}: Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  "onChange" | "value" | "type" | "step" | "min" | "max"
+> & {
   value: string;
   onValueChange: (value: string) => void;
   onCommit?: () => void;
+  /** Whole numbers only — delivery counts have no decimal half. */
+  integer?: boolean;
+  allowNegative?: boolean;
 }) {
   const select = useSelectOnFocus();
 
   return (
     <input
       {...props}
-      type="number"
-      inputMode="decimal"
+      type="text"
+      inputMode={integer ? "numeric" : "decimal"}
+      autoComplete="off"
       className={className}
       value={value}
       onFocus={(e) => {
@@ -68,12 +84,16 @@ export function NumberCell({
         select.onMouseUp(e);
         props.onMouseUp?.(e);
       }}
-      onWheel={(e) => e.currentTarget.blur()}
       onKeyDown={(e) => {
-        if (e.key === "ArrowUp" || e.key === "ArrowDown") e.preventDefault();
+        if (e.key === "Enter") e.currentTarget.blur();
         props.onKeyDown?.(e);
       }}
-      onChange={(e) => onValueChange(e.target.value)}
+      onChange={(e) => {
+        const next = normalise(e.target.value, integer, allowNegative);
+        // A rejected keystroke leaves the cell exactly as it was rather than
+        // blanking it, which is what a number input did with "12e".
+        if (next === "" || NUMERIC.test(next)) onValueChange(next);
+      }}
       onBlur={(e) => {
         select.onBlur();
         onCommit?.();
@@ -88,22 +108,23 @@ function holdsFocus(el: HTMLElement | null): boolean {
 }
 
 /**
- * Server data wins — but never mid-keystroke.
+ * Server data wins — but never over unsaved typing.
  *
- * Every cell saves on blur and then refreshes, so fresh rows land while the
- * manager is already typing in the NEXT cell. Re-seeding the drafts then wipes
- * what they have half-typed and snaps the cell back to the stored value, which
- * on a prefilled sheet reads as "it keeps putting a 0 back". Hold the update
- * until focus leaves the grid, then apply it.
+ * The grids batch their writes now, so between the first keystroke and Save the
+ * drafts are the only copy of what the manager has entered. A refresh landing in
+ * that window (another tab's save, a prefill, a revalidate) must not re-seed
+ * them. `blocked` holds the update until the sheet is clean and unfocused.
  */
-export function useDeferredSync(signature: string, apply: () => void) {
+export function useDeferredSync(signature: string, apply: () => void, blocked = false) {
   const ref = React.useRef<HTMLDivElement>(null);
   const applyRef = React.useRef(apply);
   applyRef.current = apply;
+  const blockedRef = React.useRef(blocked);
+  blockedRef.current = blocked;
   const pending = React.useRef(false);
 
   React.useEffect(() => {
-    if (holdsFocus(ref.current)) {
+    if (blockedRef.current || holdsFocus(ref.current)) {
       pending.current = true;
       return;
     }
@@ -115,7 +136,7 @@ export function useDeferredSync(signature: string, apply: () => void) {
   // the check has to wait a tick to know whether the grid was really left.
   const onBlurCapture = React.useCallback(() => {
     window.setTimeout(() => {
-      if (!pending.current || holdsFocus(ref.current)) return;
+      if (!pending.current || blockedRef.current || holdsFocus(ref.current)) return;
       pending.current = false;
       applyRef.current();
     }, 0);

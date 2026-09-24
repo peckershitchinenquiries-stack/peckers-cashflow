@@ -344,7 +344,10 @@ function labourSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
     "Deliveries",
     "Delivery Pay",
     "Total Pay",
-    "Cash pay",
+    // The workbook's own heading. It repeats "Cash Total" from column H — the
+    // sheet the stores read does exactly that, and this one is H + J, the cash
+    // the person takes.
+    "Cash Total",
   ]);
 
   const suffix = { employee: "", adhoc: "", cover_driver: " (Cover)", manager: " (Manager)" } as const;
