@@ -2,7 +2,8 @@ import { Suspense } from "react";
 import { DashboardSelector } from "@/components/vm-analytics/nav/DashboardSelector";
 import { WeekSelector } from "@/components/vm-analytics/nav/WeekSelector";
 import { StoreSelector } from "@/components/vm-analytics/nav/StoreSelector";
-import { getWeeks, getLaborCostWeeks } from "@/lib/vm-analytics/queries";
+import { getWeeks } from "@/lib/vm-analytics/queries";
+import { getLabourWeeks } from "@/lib/vm-analytics/labour";
 import { reportWeekOptions } from "@/lib/weekly-report";
 
 export default async function VmAnalyticsLayout({
@@ -17,9 +18,11 @@ export default async function VmAnalyticsLayout({
     weeks = [];
   }
 
-  let laborWeeks = [] as Awaited<ReturnType<typeof getLaborCostWeeks>>;
+  // The Labour Cost dashboard offers the weeks that hold CLOCKED work, which is
+  // what it costs. Same shape as getWeeks(), so WeekSelector is unchanged.
+  let laborWeeks = [] as Awaited<ReturnType<typeof getLabourWeeks>>;
   try {
-    laborWeeks = await getLaborCostWeeks();
+    laborWeeks = await getLabourWeeks();
   } catch {
     laborWeeks = [];
   }

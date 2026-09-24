@@ -6,12 +6,14 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   LabelList,
   Legend,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -218,6 +220,106 @@ export function LineChartCard({
           />
         ))}
       </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Lines over faint background bars, with an optional flat reference line.
+// Additive: a new component rather than an option on LineChartCard, so no
+// existing chart on any dashboard changes shape.
+//
+// The bars are context (scale on the right), the lines are the subject (scale
+// on the left) — e.g. labour % per store against a target, over net sales.
+export function ComboChartCard({
+  data,
+  xKey,
+  bars,
+  lines,
+  reference,
+  height = 300,
+  leftSuffix = "",
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  bars: { key: string; name: string; color?: string }[];
+  lines: { key: string; name: string; color?: string }[];
+  reference?: { value: number; label: string; color?: string };
+  height?: number;
+  leftSuffix?: string;
+}) {
+  const isMobile = useIsMobile();
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ComposedChart data={data} margin={{ top: 8, right: 8, left: 4, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+        <XAxis
+          dataKey={xKey}
+          {...axisProps}
+          interval={isMobile ? 1 : 0}
+          tick={{ fontSize: isMobile ? 10 : 11, fill: "#64748b" }}
+        />
+        <YAxis
+          yAxisId="left"
+          {...axisProps}
+          tickFormatter={(v: number) => `${v}${leftSuffix}`}
+        />
+        <YAxis
+          yAxisId="right"
+          orientation="right"
+          {...axisProps}
+          tickFormatter={gbpTick}
+          width={isMobile ? 48 : 70}
+        />
+        <Tooltip
+          formatter={(v: number, name: string) =>
+            lines.some((l) => l.name === name)
+              ? `${Number(v).toLocaleString()}${leftSuffix}`
+              : `£${Number(v).toLocaleString()}`
+          }
+          contentStyle={{ fontSize: 12, borderRadius: 8 }}
+        />
+        <Legend wrapperStyle={{ fontSize: 12 }} />
+        {bars.map((b) => (
+          <Bar
+            key={b.key}
+            yAxisId="right"
+            dataKey={b.key}
+            name={b.name}
+            fill={b.color ?? "#94a3b8"}
+            fillOpacity={0.22}
+            radius={[3, 3, 0, 0]}
+            maxBarSize={36}
+          />
+        ))}
+        {reference && (
+          <ReferenceLine
+            yAxisId="left"
+            y={reference.value}
+            stroke={reference.color ?? "#64748b"}
+            strokeDasharray="5 4"
+            strokeWidth={1.5}
+            label={{
+              value: reference.label,
+              position: "insideTopRight",
+              fontSize: 11,
+              fill: reference.color ?? "#64748b",
+            }}
+          />
+        )}
+        {lines.map((l, i) => (
+          <Line
+            key={l.key}
+            yAxisId="left"
+            type="monotone"
+            dataKey={l.key}
+            name={l.name}
+            stroke={l.color ?? PALETTE[i % PALETTE.length]}
+            strokeWidth={2.5}
+            dot={{ r: 2.5 }}
+            connectNulls
+          />
+        ))}
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }

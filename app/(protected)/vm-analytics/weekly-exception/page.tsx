@@ -4,10 +4,10 @@ import {
   getProductsNet,
   getDayparts,
   getDelivery,
-  getLaborCost,
   getMealDeals,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
+import { getLabourByStoreWeek } from "@/lib/vm-analytics/labour";
 import { n, gbp, int, pct, weekRange } from "@/lib/vm-analytics/format";
 import { canonicalStore, resolveStore, shortStore } from "@/lib/vm-analytics/constants";
 import {
@@ -202,7 +202,9 @@ export default async function WeeklyExceptionPage({
         getProductsNet(weekIso),
         getDayparts(weekIso),
         getDelivery(weekIso),
-        getLaborCost(weekIso).catch(() => []), // cashflow may lag; degrade gracefully
+        // Approved hours, priced by the shared wage builders — the same figure
+        // the Labour Cost dashboard shows, so the two can no longer disagree.
+        getLabourByStoreWeek([weekIso]).catch(() => ({ rows: [], load_error: null })),
         getMealDeals(weekIso).catch(() => []), // vm_v_meal_deals can time out on cold cache; degrade gracefully
 
         prevWeekIso ? getExec(prevWeekIso) : Promise.resolve([]),
@@ -257,13 +259,28 @@ export default async function WeeklyExceptionPage({
     const byCanonical = <Row extends { store: string }>(rows: Row[]) =>
       scope ? rows.filter((r) => canonicalStore(r.store) === canonicalStore(scope)) : rows;
 
+    // The aggregator keys stores by the OPS store name; map it into the shape
+    // ExceptionInputs already expects, keyed by the VM name the rest matches on.
+    const labourRows = labour.rows
+      .filter((r) => r.vm_store_name && (!scope || r.vm_store_name === scope))
+      .map((r) => ({
+        store: r.vm_store_name!,
+        week_start_date: r.week_start,
+        labour_cost: r.total_cost,
+        revenue: r.net_sales ?? 0,
+        labour_pct: r.labour_pct ?? 0,
+      }));
+
     report = buildExceptionReport({
       exec: byStore(augmentedExec),
       channels: byStore(channels),
       products: byStore(augmentedProducts),
       dayparts: byStore(dayparts),
       delivery: byStore(delivery),
-      labour: byCanonical(labour),
+      labour: labourRows,
+      unapprovedDays: labour.rows
+        .filter((r) => r.vm_store_name && (!scope || r.vm_store_name === scope))
+        .reduce((t, r) => t + r.unapproved_days, 0),
       mealDeals: byCanonical(mealDeals),
       activeStore,
     });
@@ -288,8 +305,8 @@ export default async function WeeklyExceptionPage({
         <DataTable columns={kpiColumns} rows={kpi} />
         {labourDataPartial && (
           <p className="mt-2 text-xs text-warning">
-            ⚠ Labour % looks low (under 15% of net) — the rota data for this week may be incomplete,
-            so labour-based figures should be treated as indicative.
+            ⚠ Some completed days this week are still waiting on Daily Approval. Labour is costed
+            from approved hours only, so the labour figures here are a lower bound.
           </p>
         )}
       </Section>

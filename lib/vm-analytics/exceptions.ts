@@ -78,7 +78,8 @@ export interface ExceptionReport {
   risks: Exception[];
   deliveryDependence: DeliveryDependenceRow[];
   platformThreshold: number;
-  labourDataPartial: boolean; // cross-check: labour % implausibly low → rota likely incomplete
+  /** Days still waiting on Daily Approval, so labour is a lower bound. */
+  labourDataPartial: boolean;
 }
 
 export interface ExceptionInputs {
@@ -87,7 +88,18 @@ export interface ExceptionInputs {
   products: ProductRow[];
   dayparts: DaypartRow[];
   delivery: DeliveryRow[];
+  /**
+   * Labour cost per store. Sourced from getLabourByStoreWeek (approved hours),
+   * mapped into this shape — NOT the `labor_cost_performance` view, which
+   * priced the rota. The shape is unchanged so nothing else here moves.
+   */
   labour: LaborCostRow[];
+  /**
+   * Completed days at those stores still unapproved. Replaces the old
+   * "labour % under 15 means the rota is incomplete" guess with the real
+   * signal: labour is only ever a LOWER BOUND while days are unapproved.
+   */
+  unapprovedDays?: number;
   mealDeals: MealDealRow[];
   // Canonical store name when scoped to one store ("Peckers Hitchin" / …),
   // otherwise null for the combined both-stores view.
@@ -165,11 +177,10 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
     });
   }
 
-  // Cross-check: scheduled rota wages well under ~15% of net usually means the
-  // rota isn't fully entered — flag rather than silently show a misleading %.
-  const labourCheckRow = singleStore ? kpi[0] : kpi[kpi.length - 1];
-  const labourDataPartial =
-    labourCheckRow?.labourPctOfNet != null && labourCheckRow.labourPctOfNet < 15;
+  // Labour is costed from APPROVED hours, so a week with days still sitting on
+  // Daily Approval is understated by exactly those days. That is a fact the
+  // caller can count, not something to infer from a suspiciously low %.
+  const labourDataPartial = (input.unapprovedDays ?? 0) > 0;
 
   // --- OPPORTUNITIES (plain-English) ---------------------------------------
   const opportunities: Exception[] = [];

@@ -567,6 +567,17 @@ export async function getMenuCategories(weekIso: string): Promise<MenuCategoryRo
   return (data ?? []) as MenuCategoryRow[];
 }
 
+// ORPHANED as of Update 203 — nothing in the app calls either of the two
+// functions below any more. They are the last readers of `labor_cost_performance`,
+// whose figures were wrong at source (it priced the rota, hardcoded the NI split
+// and knew nothing about cover drivers, manager wages or delivery pay). Labour
+// now comes from lib/vm-analytics/labour.ts.
+//
+// They are kept, working, ONLY so the currently deployed build keeps running
+// while this change ships. Migration `059_drop_labor_cost_performance.sql` drops
+// the view and these go with it — dropping it before the new code is deployed
+// would break production the moment it ran (the migration 027 trap, Update 65).
+
 // Get available weeks for Labor Cost dashboard (from cashflow Supabase).
 // week_start_date is the only week field these tables carry, so it serves as
 // both the start and the (display) end of the option.
