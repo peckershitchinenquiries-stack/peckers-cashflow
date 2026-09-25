@@ -247,6 +247,15 @@ export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Money for display, sign in FRONT of the symbol: -125 reads "-£125.00", never
+ * "£-125.00". Credit notes and refunds are ordinary entries on these sheets.
+ */
+export function money(v: number): string {
+  const n = round2(v);
+  return `${n < 0 ? "-" : ""}£${Math.abs(n).toFixed(2)}`;
+}
+
 /** Rates only. A manager's effective hourly rate is a division, and 2dp of it
  *  drifts by pennies a week against the fixed daily wage it came from. */
 export function round4(n: number): number {

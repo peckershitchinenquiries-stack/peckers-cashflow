@@ -10,6 +10,7 @@ import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
 import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   expenseVat,
+  money,
   num,
   round2,
   type SectionDef,
@@ -249,6 +250,7 @@ export function LineItemGrid({
                   {isQtyRate && (
                     <td data-label="Qty" className="px-3 py-1.5">
                       <NumberCell
+                        allowNegative
                         className={cellNum}
                         value={d.qty}
                         disabled={readOnly}
@@ -259,6 +261,7 @@ export function LineItemGrid({
                   {isQtyRate && (
                     <td data-label="£ / unit" className="px-3 py-1.5">
                       <NumberCell
+                        allowNegative
                         className={cellNum}
                         value={d.unit_rate}
                         disabled={readOnly}
@@ -269,10 +272,11 @@ export function LineItemGrid({
                   <td data-label="Amount" className="px-3 py-1.5">
                     {isQtyRate ? (
                       <div className="px-2 py-1.5 text-right font-mono text-text-primary">
-                        £{amount.toFixed(2)}
+                        {money(amount)}
                       </div>
                     ) : (
                       <NumberCell
+                        allowNegative
                         className={cellNum}
                         value={d.amount}
                         disabled={readOnly}
@@ -283,6 +287,7 @@ export function LineItemGrid({
                   {isDated && (
                     <td data-label="VAT" className="px-3 py-1.5">
                       <NumberCell
+                        allowNegative
                         className={cellNum}
                         value={d.vat}
                         placeholder={expenseVat(amount).toFixed(2)}
@@ -335,11 +340,11 @@ export function LineItemGrid({
                 Total
               </td>
               <td className="px-3 py-2 text-right font-mono text-text-primary">
-                £{total.toFixed(2)}
+                {money(total)}
               </td>
               {isDated && (
                 <td data-label="VAT" className="px-3 py-2 text-right font-mono text-text-muted">
-                  £{vatTotal.toFixed(2)}
+                  {money(vatTotal)}
                 </td>
               )}
               <td className="px-3 py-2" />

@@ -12,11 +12,12 @@ import { WeeklySummaryTable } from "@/components/vm-analytics/WeeklySummaryTable
 import { PageTitle } from "@/components/vm-analytics/PageState";
 import {
   FILLINGS_SECTIONS,
-  SECTION_DEFS,
   labourTotal,
+  money,
   num,
   rollUpInputs,
   round2,
+  SECTION_DEFS,
   sectionTotals,
   snapshotDrift,
   transferTitle,
@@ -213,7 +214,7 @@ function FillingsTotal({ total }: { total: number }) {
         </p>
       </div>
       <span className="font-mono text-lg font-semibold text-text-primary">
-        £{total.toFixed(2)}
+        {money(total)}
       </span>
     </div>
   );
@@ -317,7 +318,7 @@ function Row({ label, value, note }: { label: string; value: number; note: strin
         {label}
         <span className="ml-2 text-xs text-text-muted">{note}</span>
       </dt>
-      <dd className="font-mono text-text-primary">£{value.toFixed(2)}</dd>
+      <dd className="font-mono text-text-primary">{money(value)}</dd>
     </div>
   );
 }
@@ -382,7 +383,7 @@ async function ChannelsTab({
               <tr key={r.channel} className="border-b border-border">
                 <td className="px-3 py-2 text-text-primary">{r.channel}</td>
                 <td className="px-3 py-2 text-right font-mono text-text-primary">
-                  £{r.sales.toFixed(2)}
+                  {money(r.sales)}
                 </td>
                 <td className="px-3 py-2 text-right font-mono text-text-secondary">
                   {r.orders}

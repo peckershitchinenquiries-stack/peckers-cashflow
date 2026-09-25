@@ -1495,41 +1495,6 @@ export function DailyHoursApproval({
           }}
         />
       )}
-
-      {/* How the daily total feeds payroll */}
-      <p className="text-xs text-text-muted">
-        Approving a day confirms its hours and rolls them into that employee’s
-        weekly total. The <span className="font-medium text-text-primary">bank vs cash</span>{" "}
-        split is worked out per week (first 20h = bank) — see the{" "}
-        <span className="font-medium text-text-primary">Weekly Summary</span> tab.{" "}
-        <span className="font-medium text-text-primary">Cover</span> rows are cash
-        only and are paid per approved day, with no weekly split.{" "}
-        <span className="font-medium text-text-primary">Manager</span> rows appear
-        only when a manager covered deliveries — their salary is untouched, so
-        only the drop counts are confirmed here.{" "}
-        <span className="font-medium text-text-primary">Add manager entry</span>{" "}
-        records drops for a day a manager never clocked in; it asks for no times,
-        because nothing is paid from their hours.{" "}
-        <span className="font-medium text-text-primary">Add missed entry</span> also
-        closes a shift that is still running: pick the employee and their clock-in
-        time is filled in for you, so only the clock-out is needed. The day stays
-        off this list until it has one.
-      </p>
-      <p className="text-xs text-text-muted">
-        For drivers, <span className="font-medium text-text-primary">sd</span> /{" "}
-        <span className="font-medium text-text-primary">ld</span> are the day’s
-        short and long deliveries (the normal round), and{" "}
-        <span className="font-medium text-text-primary">ms</span> /{" "}
-        <span className="font-medium text-text-primary">ml</span> are
-        miscellaneous — extra deliveries beyond it, paid at the same per-drop
-        rate. Correcting any of these here{" "}
-        <span className="font-medium text-text-primary">replaces</span> what the
-        driver entered — the original is kept in the audit log, and the new
-        figure flows straight to the Tuesday payout and the Rota. Raising ms or
-        ml above zero asks for a reason, same as editing them from the Rota.{" "}
-        <span className="font-medium text-text-primary">Approve all</span> signs
-        off hours at their clocked value and leaves deliveries untouched.
-      </p>
     </div>
   );
 }

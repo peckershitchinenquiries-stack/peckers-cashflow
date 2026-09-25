@@ -9,6 +9,7 @@ import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
 import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   aggregatorRows,
+  money,
   num,
   round2,
   sumSection,
@@ -133,7 +134,7 @@ export function AggregatorGrid({
 
       {stranded !== 0 && (
         <p className="border-b border-border px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-          £{stranded.toFixed(2)} of commission is recorded against a platform this sheet no longer
+          {money(stranded)} of commission is recorded against a platform this sheet no longer
           lists. It still reaches the summary&apos;s Aggregator Costs — re-enter it against one of
           the three rows below.
         </p>
@@ -171,10 +172,11 @@ export function AggregatorGrid({
                     data-label={platformSales.basis === "gross" ? "Gross sales (VM)" : "Net sales (VM)"}
                     className="px-3 py-2 text-right font-mono text-text-secondary"
                   >
-                    £{r.sales.toFixed(2)}
+                    {money(r.sales)}
                   </td>
                   <td data-label="Commission" className="px-3 py-2 text-right">
                     <NumberCell
+                      allowNegative
                       className={cellNum}
                       value={value}
                       disabled={readOnly}
@@ -185,7 +187,7 @@ export function AggregatorGrid({
                     />
                   </td>
                   <td data-label="Income" className="px-3 py-2 text-right font-mono text-text-primary">
-                    £{income.toFixed(2)}
+                    {money(income)}
                   </td>
                   <td data-label="Comm. %" className="px-3 py-2 text-right font-mono text-text-muted">
                     {r.sales > 0 ? `${((commission / r.sales) * 100).toFixed(2)}%` : "—"}
@@ -198,13 +200,13 @@ export function AggregatorGrid({
             <tr className="bg-surface-hover font-semibold">
               <td className="px-3 py-2 text-text-primary">Total</td>
               <td data-label="Sales" className="px-3 py-2 text-right font-mono text-text-primary">
-                £{totals.sales.toFixed(2)}
+                {money(totals.sales)}
               </td>
               <td data-label="Commission" className="px-3 py-2 text-right font-mono text-text-primary">
-                £{totals.commission.toFixed(2)}
+                {money(totals.commission)}
               </td>
               <td data-label="Income" className="px-3 py-2 text-right font-mono text-text-primary">
-                £{totals.income.toFixed(2)}
+                {money(totals.income)}
               </td>
               <td className="px-3 py-2" />
             </tr>

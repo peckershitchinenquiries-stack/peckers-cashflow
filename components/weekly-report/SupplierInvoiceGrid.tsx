@@ -9,10 +9,11 @@ import { NumberCell } from "@/components/weekly-report/NumberCell";
 import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
 import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
-  MAX_INVOICE_COLUMNS,
-  MIN_INVOICE_COLUMNS,
   groupSupplierLines,
   lineAmount,
+  MAX_INVOICE_COLUMNS,
+  MIN_INVOICE_COLUMNS,
+  money,
   num,
   round2,
   type SectionDef,
@@ -290,6 +291,7 @@ export function SupplierInvoiceGrid({
                 {columnIndexes.map((i) => (
                   <td key={i} data-label={`Invoice ${i + 1}`} className="px-3 py-1.5">
                     <NumberCell
+                      allowNegative
                       className={cellNum}
                       placeholder="0.00"
                       value={d.invoices[i]?.amount ?? ""}
@@ -299,7 +301,7 @@ export function SupplierInvoiceGrid({
                   </td>
                 ))}
                 <td data-label="Total" className="px-3 py-1.5 text-right font-mono text-text-primary">
-                  £{draftTotal(d).toFixed(2)}
+                  {money(draftTotal(d))}
                 </td>
                 {!readOnly && (
                   <td data-role="remove" className="px-2 py-1.5 text-center">
@@ -332,7 +334,7 @@ export function SupplierInvoiceGrid({
                 Totals
               </td>
               <td className="px-3 py-2 text-right font-mono text-text-primary">
-                £{total.toFixed(2)}
+                {money(total)}
               </td>
               {!readOnly && <td className="px-2 py-2" />}
             </tr>

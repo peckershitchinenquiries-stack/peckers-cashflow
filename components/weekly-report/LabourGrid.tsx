@@ -15,6 +15,7 @@ import {
 import {
   labourLineTotals,
   labourTotal,
+  money,
   num,
   round2,
   type LabourSource,
@@ -420,13 +421,13 @@ export function LabourGrid({
                     <td data-label="Deliveries" className="px-3 py-1.5 text-right">{numField("deliveries", true)}</td>
                     <td data-label="Delivery Pay" className="px-3 py-1.5 text-right">{numField("delivery_pay")}</td>
                     <td data-label="Total Pay" className="px-3 py-1.5 text-right font-mono font-semibold text-text-primary">
-                      £{t.total_pay.toFixed(2)}
+                      {money(t.total_pay)}
                     </td>
                     <td
                       data-label="Cash Total (cash + delivery)"
                       className="px-3 py-1.5 text-right font-mono text-text-secondary"
                     >
-                      £{round2(t.cash_total + t.delivery_pay).toFixed(2)}
+                      {money(round2(t.cash_total + t.delivery_pay))}
                     </td>
                     {!readOnly && (
                       <td data-role="remove" className="px-2 py-1.5 text-center">
@@ -464,7 +465,7 @@ export function LabourGrid({
                   {round2(columnTotals.ni_rate).toFixed(2)}
                 </td>
                 <td data-label="NI Total" className="px-3 py-2 text-right font-mono text-text-primary">
-                  £{round2(columnTotals.ni_total).toFixed(2)}
+                  {money(round2(columnTotals.ni_total))}
                 </td>
                 <td data-label="Cash Hours" className="px-3 py-2 text-right font-mono text-text-primary">
                   {round2(columnTotals.cash_hours).toFixed(2)}
@@ -473,22 +474,22 @@ export function LabourGrid({
                   {round2(columnTotals.cash_rate).toFixed(2)}
                 </td>
                 <td data-label="Cash Total" className="px-3 py-2 text-right font-mono text-text-primary">
-                  £{round2(columnTotals.cash_total).toFixed(2)}
+                  {money(round2(columnTotals.cash_total))}
                 </td>
                 <td data-label="Deliveries" className="px-3 py-2 text-right font-mono text-text-primary">
                   {columnTotals.deliveries}
                 </td>
                 <td data-label="Delivery Pay" className="px-3 py-2 text-right font-mono text-text-primary">
-                  £{round2(columnTotals.delivery_pay).toFixed(2)}
+                  {money(round2(columnTotals.delivery_pay))}
                 </td>
                 <td data-label="Total Pay" className="px-3 py-2 text-right font-mono text-text-primary">
-                  £{total.toFixed(2)}
+                  {money(total)}
                 </td>
                 <td
                   data-label="Cash Total (cash + delivery)"
                   className="px-3 py-2 text-right font-mono text-text-primary"
                 >
-                  £{round2(columnTotals.cash_total + columnTotals.delivery_pay).toFixed(2)}
+                  {money(round2(columnTotals.cash_total + columnTotals.delivery_pay))}
                 </td>
                 {!readOnly && <td className="px-2 py-2" />}
               </tr>
