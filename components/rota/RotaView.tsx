@@ -150,6 +150,9 @@ export function RotaView({
     /** Every shift already booked for this employee+date at this store — lets
      *  the modal show them and offer "add another" alongside editing `existing`. */
     dayShifts: RotaShift[];
+    /** Set when the day already holds a shift at the OTHER store, so the modal
+     *  can say what it is — the times here must not coincide with it. */
+    awayNote?: string;
   } | null>(null);
   const [editingDelivery, setEditingDelivery] = React.useState<{
     driver: RotaEmployee;
@@ -761,17 +764,18 @@ export function RotaView({
     // store they belong to (a shift can sit at another store).
     const localShifts = dayAll.filter((s) => s.store_id === activeStoreId);
     const awayShifts = dayAll.filter((s) => s.store_id !== activeStoreId);
-    // Scheduled at ANOTHER store this day (and nothing here) —
-    // read-only, so a home manager can see where their staff are
-    // covering. If they ALSO have a shift here, the local cell
-    // below takes priority and the away shift is not shown.
+    // Scheduled at ANOTHER store this day (and nothing here). Shows where the
+    // person is covering, and on today/future days stays CLICKABLE so a shift
+    // can be added here alongside it — a split day across two stores (mornings
+    // at one, evening-to-close at the other) has no other way in. Editing the
+    // away shift itself still belongs to that store's rota, so the click always
+    // opens a NEW shift at the active store. If they also have a shift here,
+    // the local cell below takes priority and the away shift is not shown.
     if (localShifts.length === 0 && awayShifts.length > 0) {
       const awayStore = storeById.get(awayShifts[0].store_id);
-      return (
-        <div
-          className="w-full min-h-12 h-auto py-1 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
-          title={`Working at ${awayStore?.name ?? "another store"} this day`}
-        >
+      const awayPast = dateIso < todayISO();
+      const awayInner = (
+        <>
           <span className="font-medium truncate max-w-full">
             @ {awayStore?.name?.split(" ")[0] ?? "Away"}
           </span>
@@ -784,7 +788,37 @@ export function RotaView({
                 </span>
               ),
           )}
+        </>
+      );
+      const awayClass =
+        "w-full min-h-12 h-auto py-1 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1";
+      return awayPast ? (
+        <div
+          className={awayClass + " cursor-default opacity-70"}
+          title={`Working at ${awayStore?.name ?? "another store"} this day`}
+        >
+          {awayInner}
         </div>
+      ) : (
+        <button
+          onClick={() =>
+            setEditingShift({
+              employee: emp,
+              date: dateIso,
+              existing: null,
+              prefill: null,
+              dayShifts: [],
+              awayNote: `Also booked at ${awayStore?.name ?? "another store"}${awayShifts
+                .filter((s) => !s.is_day_off && s.start_time)
+                .map((s) => ` ${formatShiftRange(false, s.start_time, s.end_time)}`)
+                .join(",")} this day.`,
+            })
+          }
+          className={awayClass + " transition-colors hover:bg-gold/10"}
+          title={`Working at ${awayStore?.name ?? "another store"} this day — click to also book a shift at ${activeStore?.name ?? "this store"}`}
+        >
+          {awayInner}
+        </button>
       );
     }
     // Kept for the ghost/ prefill logic below, which only cares
@@ -1812,6 +1846,7 @@ export function RotaView({
           shiftDate={editingShift.date}
           existing={editingShift.existing}
           dayShifts={editingShift.dayShifts}
+          awayNote={editingShift.awayNote}
           shiftTimes={activeStore?.shift_times ?? shiftTimes}
           prefill={editingShift.prefill}
           onClose={() => setEditingShift(null)}

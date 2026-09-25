@@ -19,6 +19,10 @@ type Props = {
   /** Every shift already booked for this employee+date at this store — shown
    *  as a quick-switch list above the form, alongside "add another shift". */
   dayShifts: RotaShift[];
+  /** Set when the day already holds a shift at the OTHER store. Shown as a
+   *  banner: those times aren't in `dayShifts`, so the overlap hint below can't
+   *  see them, but the server checks every shift on the day whatever its store. */
+  awayNote?: string;
   /** Configured open/close/evening times used to resolve the presets. */
   shiftTimes: ShiftTimeSettings;
   /** Previous day's times, used to pre-fill a brand-new custom shift. */
@@ -53,6 +57,7 @@ export function ShiftEditModal({
   shiftDate,
   existing,
   dayShifts,
+  awayNote,
   shiftTimes,
   prefill = null,
   onClose,
@@ -80,6 +85,12 @@ export function ShiftEditModal({
       size="md"
     >
       <div className="flex flex-col gap-4">
+        {awayNote && (
+          <p className="rounded-xl border border-gold/30 bg-gold/5 px-3 py-2 text-xs text-gold">
+            {awayNote} This shift is booked at the store you're viewing — the
+            times must not coincide with it.
+          </p>
+        )}
         {dayShifts.length > 0 && (
           <div className="rounded-xl border border-border overflow-hidden">
             <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-text-muted bg-surface-hover/40">
