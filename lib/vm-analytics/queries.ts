@@ -19,6 +19,8 @@ import type {
   MenuCategoryChannelRow,
   HourlyActivityRow,
   HourlyNetActivityRow,
+  DailyNetHourRow,
+  DailyNetDayRow,
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
@@ -494,6 +496,45 @@ export async function getHourlyNetActivity(weekIso: string): Promise<HourlyNetAc
     .order("hour", { ascending: true });
   if (error) throw new Error(`getHourlyNetActivity: ${error.message}`);
   return (data ?? []) as HourlyNetActivityRow[];
+}
+
+// True per-(store, date, hour) NET sales. Unlike getHourlyNetActivity, which is
+// week-grain and has no weekday dimension, this carries the day itself, so the
+// Daypart net heat map no longer has to derive the weekday split from a gross
+// shape. Coverage starts 2026-03-02 — callers must keep their fallback for
+// anything older.
+export async function getDailyNetSalesByHour(
+  startIso: string,
+  endIso: string,
+): Promise<DailyNetHourRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_daily_net_sales_by_hour")
+    .select("store, store_slug, business_date, hour, net_sales")
+    .gte("business_date", startIso)
+    .lte("business_date", endIso)
+    .order("business_date", { ascending: true })
+    .order("hour", { ascending: true });
+  if (error) throw new Error(`getDailyNetSalesByHour: ${error.message}`);
+  return (data ?? []) as DailyNetHourRow[];
+}
+
+// Day totals from the same feed, for the Labour Cost weekday breakdown.
+// `trading_hours` is a health signal: 3 hours where 10-12 is usual means the
+// day was truncated, not quiet.
+export async function getDailyNetSalesByDay(
+  startIso: string,
+  endIso: string,
+): Promise<DailyNetDayRow[]> {
+  const sb = getVMSupabaseServer();
+  const { data, error } = await sb
+    .from("vm_v_daily_net_sales_by_day")
+    .select("store, store_slug, business_date, net_sales, trading_hours")
+    .gte("business_date", startIso)
+    .lte("business_date", endIso)
+    .order("business_date", { ascending: true });
+  if (error) throw new Error(`getDailyNetSalesByDay: ${error.message}`);
+  return (data ?? []) as DailyNetDayRow[];
 }
 
 export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {

@@ -3,6 +3,7 @@ import {
   getDaypartChannelDetail,
   getHourlyActivity,
   getHourlyNetActivity,
+  getDailyNetSalesByHour,
   getWeeks,
 } from "@/lib/vm-analytics/queries";
 import { n, gbp, int, weekRange } from "@/lib/vm-analytics/format";
@@ -18,6 +19,7 @@ import type {
   DaypartChannelDetailRow,
   HourlyActivityRow,
   HourlyNetActivityRow,
+  DailyNetHourRow,
 } from "@/lib/vm-analytics/types";
 
 export const dynamic = "force-dynamic";
@@ -191,6 +193,18 @@ const dayIndex = (wd: string) => {
 
 const sum = (arr: number[]) => arr.reduce((s, v) => s + v, 0);
 
+// Mon=0 .. Sun=6 offset of an ISO date within the week starting `weekStart`.
+// -1 when the date falls outside that week.
+const addDaysIso = (iso: string, days: number) =>
+  new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+
+function dayOffset(weekStart: string, date: string): number {
+  const days = Math.round(
+    (Date.parse(`${date}T00:00:00Z`) - Date.parse(`${weekStart}T00:00:00Z`)) / 86_400_000,
+  );
+  return days >= 0 && days <= 6 ? days : -1;
+}
+
 // Totals derived by summing the grid. Valid for counts and money only — a ratio
 // like AOV cannot be totalled this way (see the note above buildNetHeatmap).
 function withTotals(hours: number[], cells: number[][]): HeatmapData {
@@ -241,31 +255,62 @@ function buildOrderHeatmap(grids: HourGrids): HeatmapData {
   );
 }
 
-// Net sales per hour is known exactly (vm_net_sales_by_hour) but carries no
-// weekday dimension, so each hour's net total is split across the week in
-// proportion to that hour's GROSS weekday shape. Row (hour) totals are therefore
-// exact; the weekday split — and so the column totals — are derived.
-// Falls back to the order shape when an hour has no gross figure.
-// See docs/DAYPART_HEATMAP_FEASIBILITY.md.
-function buildNetHeatmap(grids: HourGrids, netRows: HourlyNetActivityRow[]): HeatmapData {
+// Net sales per hour x weekday, read straight from the daily net feed
+// (vm_v_daily_net_sales_by_hour) wherever it covers the date — both margins are
+// then exact. Coverage starts 2026-03-02, so older weeks, and any day the
+// nightly sync missed, still fall back to the old estimate: split that hour's
+// week net (vm_net_sales_by_hour, exact) across the uncovered days in
+// proportion to their GROSS shape, after subtracting what the exact days
+// already account for. Row (hour) totals stay exact either way.
+// See docs/DAILY_NET_SALES_READY.md.
+function buildNetHeatmap(
+  weekStart: string,
+  grids: HourGrids,
+  netRows: HourlyNetActivityRow[],
+  dailyRows: DailyNetHourRow[],
+): { data: HeatmapData; exactDays: number } {
   const netByHour = new Map<number, number>();
   for (const r of netRows) {
     const hour = Math.trunc(n(r.hour));
     netByHour.set(hour, (netByHour.get(hour) ?? 0) + n(r.net_sales));
   }
-  const cells = grids.hours.map((h) => {
-    const netHour = netByHour.get(h) ?? 0;
-    if (netHour === 0) return new Array(7).fill(0);
-    let shape = grids.gross.get(h)!;
+
+  const exactByHour = new Map<number, number[]>();
+  const exactDays = new Set<number>();
+  for (const r of dailyRows) {
+    const di = dayOffset(weekStart, r.business_date);
+    if (di < 0) continue;
+    const hour = Math.trunc(n(r.hour));
+    const row = exactByHour.get(hour) ?? new Array<number>(7).fill(0);
+    row[di] += n(r.net_sales);
+    exactByHour.set(hour, row);
+    exactDays.add(di);
+  }
+
+  const hours = Array.from(new Set([...grids.hours, ...exactByHour.keys()])).sort((a, b) => a - b);
+  const fullyExact = exactDays.size === 7;
+
+  const cells = hours.map((h) => {
+    const exact = exactByHour.get(h) ?? new Array<number>(7).fill(0);
+    if (fullyExact) return exact;
+
+    // Whatever the exact days don't account for is spread over the rest.
+    const netHour = Math.max(netByHour.get(h) ?? 0, sum(exact));
+    const residual = netHour - sum(exact);
+    if (residual <= 0) return exact;
+
+    const blank = (v: number, di: number) => (exactDays.has(di) ? 0 : v);
+    let shape = (grids.gross.get(h) ?? new Array<number>(7).fill(0)).map(blank);
     let total = sum(shape);
     if (total <= 0) {
-      shape = grids.orders.get(h)!;
+      shape = (grids.orders.get(h) ?? new Array<number>(7).fill(0)).map(blank);
       total = sum(shape);
     }
-    if (total <= 0) return new Array(7).fill(0);
-    return shape.map((v) => (netHour * v) / total);
+    if (total <= 0) return exact;
+    return exact.map((v, di) => v + (residual * shape[di]) / total);
   });
-  return withTotals(grids.hours, cells);
+
+  return { data: withTotals(hours, cells), exactDays: exactDays.size };
 }
 
 // NOTE: an AOV heat map at this grain was built and removed — see Update 34.
@@ -297,17 +342,19 @@ export default async function DaypartPage({
   let basicRows: DaypartChannelRow[];
   let hourlyRows: HourlyActivityRow[];
   let netRows: HourlyNetActivityRow[];
+  let dailyNetRows: DailyNetHourRow[];
   let weekEnd = "";
   try {
     const weeks = await getWeeks();
     weekIso = searchParams.week ?? weeks[0]?.week_start_iso ?? null;
     if (!weekIso) return <EmptyWeek />;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
-    [detailRows, basicRows, hourlyRows, netRows] = await Promise.all([
+    [detailRows, basicRows, hourlyRows, netRows, dailyNetRows] = await Promise.all([
       getDaypartChannelDetail(weekIso),
       getDaypartChannels(weekIso),
       getHourlyActivity(weekIso),
       getHourlyNetActivity(weekIso),
+      getDailyNetSalesByHour(weekIso, addDaysIso(weekIso, 6)),
     ]);
   } catch (e) {
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
@@ -319,20 +366,33 @@ export default async function DaypartPage({
     basicRows = basicRows.filter((c) => c.store === activeStore);
     hourlyRows = hourlyRows.filter((c) => c.store === activeStore);
     netRows = netRows.filter((c) => c.store === activeStore);
+    // The daily feed keys on the slug, so a store renamed in VM Hub can't
+    // silently drop out of this filter.
+    const slug = shortStore(activeStore).toLowerCase();
+    dailyNetRows = dailyNetRows.filter((r) => r.store_slug?.toLowerCase() === slug);
   }
 
   const hours = aggregateNetHours(netRows);
   const grids = buildHourGrids(hourlyRows);
   const heatmap = buildOrderHeatmap(grids);
-  const netHeatmap = buildNetHeatmap(grids, netRows);
+  const { data: netHeatmap, exactDays: netExactDays } = buildNetHeatmap(
+    weekIso,
+    grids,
+    netRows,
+    dailyNetRows,
+  );
+  const netFullyExact = netExactDays === 7;
 
   // vm_net_sales_by_hour is the row margin of both derived grids, and a gap in
   // it renders as a silent £0 row rather than an error (the backfill shipped
   // after Update 28). Compare what landed in the grid against the raw feed so a
   // shortfall is surfaced instead of read as a genuinely quiet hour.
   const netFeedTotal = netRows.reduce((s, r) => s + n(r.net_sales), 0);
+  // Both feeds round each hour to the penny, so a fully exact grid can differ
+  // from the week source by a few pence with nothing wrong. Only a real
+  // shortfall — a whole hour or day unplaced — is worth flagging.
   const netUnallocated = netFeedTotal - netHeatmap.grandTotal;
-  const netDataMissing = netFeedTotal <= 0;
+  const netDataMissing = netFeedTotal <= 0 && netHeatmap.grandTotal <= 0;
 
   const hasDetail = detailRows.length > 0;
   const periods = hasDetail ? fromDetail(detailRows) : fromBasic(basicRows);
@@ -408,7 +468,11 @@ export default async function DaypartPage({
 
       <Section
         title="Net Sales Heat Map — Hour × Day"
-        description="Net sales per trading hour by weekday. Each hour's total is exact (from the hourly net sales feed); the split across weekdays is derived from that hour's order distribution, so the Total column is exact and the Total row is indicative."
+        description={
+          netFullyExact
+            ? "Net sales per trading hour by weekday, from the daily net sales feed. Every cell, row and column total is the real figure for that hour on that day."
+            : `Net sales per trading hour by weekday. ${netExactDays > 0 ? `${netExactDays} of 7 days come from the daily net sales feed and are exact; the rest are` : "Days are"} estimated by splitting each hour's week total across the remaining days by their sales shape, so those columns are indicative.`
+        }
       >
         {netDataMissing ? (
           <div className="vm-table-container px-4 py-8 text-center text-tertiary">
@@ -421,10 +485,10 @@ export default async function DaypartPage({
               formatValue={gbp}
               legendLabel="net sales / hour"
             />
-            {netUnallocated > 0.01 && (
+            {netUnallocated > 1 && (
               <p className="mt-2 text-xs text-warning">
                 ⚠ {gbp(netUnallocated)} of net sales could not be placed on the grid — those
-                hours have no matching order activity, so the figures above understate the week.
+                hours are missing from the daily feed, so the figures above understate the week.
               </p>
             )}
           </>

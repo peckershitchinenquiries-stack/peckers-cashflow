@@ -184,6 +184,26 @@ export interface HourlyNetActivityRow {
   net_sales: Num;
 }
 
+// True per-DAY net sales, from the nightly "Net Sales by Hour" daily sync
+// (coverage starts 2026-03-02). These replace the old estimate that split a
+// week's net across days by a GROSS shape. Note vm_v_daily_net_sales — no
+// suffix — is a different, GROSS feed; never read net from it.
+export interface DailyNetHourRow {
+  store: string;
+  store_slug: string;
+  business_date: string;
+  hour: Num;
+  net_sales: Num;
+}
+
+export interface DailyNetDayRow {
+  store: string;
+  store_slug: string;
+  business_date: string;
+  net_sales: Num;
+  trading_hours: Num;
+}
+
 export interface WeekdayRow {
   store: string;
   week_start: string;

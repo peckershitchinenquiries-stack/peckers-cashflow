@@ -113,6 +113,10 @@ export const EXCEPTION_THRESHOLDS = {
   attachMinOrdersPct: 15, // only flag attachment for items in >= this % of orders
   productDeclinePct: -25, // revenue WoW below this (with volume) = underperformer
   productMinUnits: 20, // ignore tiny-volume items for underperformer risk
+  // An hour earning less than this share of the store own weekly sales-per-
+  // labour-hour is slack. Relative, not absolute: a quiet store is not
+  // overstaffed for being quiet, only for being staffed like a busy one.
+  labourSlackFloorRatio: 0.5,
 } as const;
 
 // Third-party delivery platforms — these charge commission, so reliance on them
