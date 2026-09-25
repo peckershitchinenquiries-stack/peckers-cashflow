@@ -57,6 +57,19 @@ function draftAmount(d: Draft, shape: SectionDef["shape"]): number {
   return num(d.amount);
 }
 
+/** A row the manager started and abandoned — nothing in it to record. */
+function isBlankRow(d: Draft): boolean {
+  return (
+    !d.label.trim() &&
+    !d.entry_date &&
+    !d.note.trim() &&
+    d.amount.trim() === "" &&
+    d.vat.trim() === "" &&
+    d.qty.trim() === "" &&
+    num(d.qty) === 0
+  );
+}
+
 function rowPrint(d: Draft): string {
   return [d.label.trim(), d.qty, d.unit_rate, d.amount, d.vat, d.entry_date, d.note].join("\u0001");
 }
@@ -67,8 +80,9 @@ function rowPrint(d: Draft): string {
  * NOTHING is written until Save. Edits used to go up on blur, which is a server
  * action and a full page revalidate per cell — the whole sheet now travels in
  * one call, so entering it costs the same whether it holds two rows or twenty.
- * A row with no label is never sent: the server refuses it, and an empty new row
- * is simply a row the manager started and abandoned.
+ * A row with no label is never sent on a section that requires one. Where the
+ * label is optional (Weekly Expenses, which on paper is receipts in a pile),
+ * only a wholly empty row is dropped.
  */
 export function LineItemGrid({
   reportId,
@@ -132,7 +146,10 @@ export function LineItemGrid({
 
   async function save() {
     if (readOnly || busy) return;
-    if (drafts.some((d) => !d.label.trim() && draftAmount(d, def.shape) !== 0)) {
+    if (
+      !def.labelOptional &&
+      drafts.some((d) => !d.label.trim() && draftAmount(d, def.shape) !== 0)
+    ) {
       toast.error(`Every row with an amount needs a ${def.labelHeading.toLowerCase()}.`);
       return;
     }
@@ -140,7 +157,7 @@ export function LineItemGrid({
     const payload: ReportLineInput[] = [];
     const kept = new Set<string>();
     drafts.forEach((d, index) => {
-      if (!d.label.trim()) return;
+      if (def.labelOptional ? isBlankRow(d) : !d.label.trim()) return;
       if (d.id) kept.add(d.id);
       payload.push({
         key: d.key,
@@ -224,7 +241,7 @@ export function LineItemGrid({
                     <input
                       className={cell}
                       value={d.label}
-                      placeholder={def.labelHeading}
+                      placeholder={def.labelOptional ? `${def.labelHeading} (optional)` : def.labelHeading}
                       disabled={readOnly}
                       onChange={(e) => update(d.key, { label: e.target.value })}
                     />

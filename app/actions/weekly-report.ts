@@ -27,6 +27,7 @@ import {
   round4,
   sectionTotals,
   REPORT_SECTIONS,
+  SECTION_DEFS,
   type ReportSection,
   type WeeklyReport,
   type WeeklyReportLabourLine,
@@ -395,7 +396,9 @@ export type ReportLineInput = {
 function lineRowPayload(reportId: string, input: ReportLineInput) {
   if (!REPORT_SECTIONS.includes(input.section)) throw new Error("Unknown section.");
   const label = (input.label ?? "").trim();
-  if (!label) throw new Error("A line needs a label.");
+  if (!label && !SECTION_DEFS[input.section].labelOptional) {
+    throw new Error("A line needs a label.");
+  }
 
   const qty = input.qty == null ? null : Number(input.qty);
   const unitRate = input.unit_rate == null ? null : Number(input.unit_rate);

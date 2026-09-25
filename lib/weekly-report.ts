@@ -114,6 +114,8 @@ export type SectionDef = {
   defaultUnitRate?: number;
   /** Which summary figure this section rolls into — null = record only. */
   feeds: string | null;
+  /** The paper sheet leaves this column blank as often as not — see `expense`. */
+  labelOptional?: boolean;
 };
 
 export type ReportTab =
@@ -201,6 +203,9 @@ export const SECTION_DEFS: Record<ReportSection, SectionDef> = {
     labelHeading: "Place",
     shape: "dated",
     feeds: null,
+    // The till-roll expense sheet is receipts in a pile: many carry no place
+    // and no date, only an amount. Demanding either would leave them unrecorded.
+    labelOptional: true,
   },
 };
 
