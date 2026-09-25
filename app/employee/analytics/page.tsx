@@ -8,7 +8,11 @@ import {
   buildEmployeeAnalytics,
   resolveSelection,
 } from "@/lib/employee-analytics";
-import type { AnalyticsClockRow } from "@/lib/employee-analytics";
+import {
+  attachStoreSplit,
+  type AnalyticsClockRow,
+  type AnalyticsSessionRow,
+} from "@/lib/employee-analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -56,15 +60,28 @@ export default async function EmployeeAnalyticsPage({
   // each other. store_id is needed as well as the hours: the NI/cash split
   // depends on whether the day was worked at their home store or a cover shift
   // somewhere else.
-  const clocksRes = await supabase
-    .from("clock_events")
-    .select(
-      "event_date, store_id, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
-    )
-    .eq("employee_id", employee.id)
-    .gte("event_date", range.start)
-    .lte("event_date", range.end)
-    .order("event_date");
+  const [clocksRes, sessionsRes] = await Promise.all([
+    supabase
+      .from("clock_events")
+      .select(
+        "event_date, store_id, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
+      )
+      .eq("employee_id", employee.id)
+      .gte("event_date", range.start)
+      .lte("event_date", range.end)
+      .order("event_date"),
+    // A day can be worked at BOTH stores, and its header names only the last
+    // one. Which store each shift was at decides whether its hours are
+    // home-store NI or away-store cash, so the split is read from the shifts.
+    supabase
+      .from("clock_sessions")
+      .select(
+        "event_date, store_id, clock_in_at, clock_out_at, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
+      )
+      .eq("employee_id", employee.id)
+      .gte("event_date", range.start)
+      .lte("event_date", range.end),
+  ]);
 
   // A failed query and a genuinely empty history render identically, and
   // "you've worked nothing" is a far worse lie than an error.
@@ -73,7 +90,10 @@ export default async function EmployeeAnalyticsPage({
     : null;
 
   const data = buildEmployeeAnalytics(
-    (clocksRes.data ?? []) as AnalyticsClockRow[],
+    attachStoreSplit(
+      (clocksRes.data ?? []) as AnalyticsClockRow[],
+      (sessionsRes.data ?? []) as AnalyticsSessionRow[],
+    ),
     employee,
     selection,
     now,

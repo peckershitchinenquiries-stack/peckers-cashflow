@@ -63,9 +63,26 @@ export const DELIVERY_WEEK_OPTIONS = [1, 2, 3, 4, 8, 12];
 export const MAX_HISTORY_MONTHS = 12;
 
 /** The subset of a clock_events row this module reads. */
+/** One store's share of a day, for a day worked across two of them. */
+export type AnalyticsDayStore = {
+  store_id: string;
+  hours: number;
+  sd: number;
+  ld: number;
+  sm: number;
+  lm: number;
+};
+
 export type AnalyticsClockRow = {
   event_date: string;
   store_id: string;
+  /**
+   * The day split by the store each SHIFT was worked at, when it spans more
+   * than one. The NI/cash split turns on home store vs away, so a day covering
+   * an away afternoon and a home evening cannot be priced off one store_id.
+   * Absent on an ordinary single-store day, which prices off the columns below.
+   */
+  stores?: AnalyticsDayStore[];
   clock_in_at: string | null;
   clock_out_at: string | null;
   worked_hours?: number | null;
@@ -76,6 +93,68 @@ export type AnalyticsClockRow = {
   extra_short_deliveries?: number | null;
   extra_long_deliveries?: number | null;
 };
+
+/** One clocked shift, as the analytics page reads it. */
+export type AnalyticsSessionRow = {
+  event_date: string;
+  store_id: string | null;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  approved_hours?: number | string | null;
+  short_deliveries_count?: number | null;
+  long_deliveries_count?: number | null;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+};
+
+/**
+ * Attach each day's per-store split, for the days whose shifts span more than
+ * one store. A single-store day gets nothing and prices off its own columns, so
+ * the common case is untouched.
+ *
+ * Deliberately NOT approval-gated: this screen answers "what did you work and
+ * what is it worth", which is the same question resolvedDayHours answers.
+ */
+export function attachStoreSplit(
+  rows: AnalyticsClockRow[],
+  sessions: AnalyticsSessionRow[],
+): AnalyticsClockRow[] {
+  const byDate = new Map<string, AnalyticsSessionRow[]>();
+  for (const s of sessions)
+    byDate.set(s.event_date, [...(byDate.get(s.event_date) ?? []), s]);
+
+  return rows.map((row) => {
+    const daySessions = byDate.get(row.event_date);
+    if (!daySessions || daySessions.length < 2) return row;
+    const stores = new Set(daySessions.map((s) => s.store_id ?? row.store_id));
+    if (stores.size < 2) return row;
+
+    const byStore = new Map<string, AnalyticsDayStore>();
+    for (const s of daySessions) {
+      const storeId = s.store_id ?? row.store_id;
+      const part =
+        byStore.get(storeId) ??
+        { store_id: storeId, hours: 0, sd: 0, ld: 0, sm: 0, lm: 0 };
+      part.hours +=
+        s.approved_hours != null
+          ? Number(s.approved_hours) || 0
+          : s.clock_out_at
+            ? Math.max(
+                0,
+                (new Date(s.clock_out_at).getTime() -
+                  new Date(s.clock_in_at).getTime()) /
+                  3_600_000,
+              )
+            : 0;
+      part.sd += Math.max(0, Math.round(Number(s.short_deliveries_count) || 0));
+      part.ld += Math.max(0, Math.round(Number(s.long_deliveries_count) || 0));
+      part.sm += Math.max(0, Math.round(Number(s.extra_short_deliveries) || 0));
+      part.lm += Math.max(0, Math.round(Number(s.extra_long_deliveries) || 0));
+      byStore.set(storeId, part);
+    }
+    return { ...row, stores: [...byStore.values()] };
+  });
+}
 
 /** The employee fields that decide what an hour or a drop is worth. */
 export type AnalyticsEmployee = {
@@ -502,28 +581,43 @@ export function buildDayTotals(
       const deliveries = rates.isDriver ? sd + ld + sm + lm : 0;
       if (hours <= 0 && deliveries === 0) continue;
 
-      // The rule, per store, for this day's hours only.
-      const cashHours = cashHoursFromStoreTotal(hours, row.store_id, {
-        store_id: emp.store_id,
-        hourly_cash_rate: emp.hourly_cash_rate,
-        // At the home store the allowance is whatever the week has left, not
-        // the full weekly limit — earlier days in the week already used some.
-        bank_weekly_hours_limit: bankAllowanceLeft,
-      });
-      const bankHours = Math.max(0, hours - cashHours);
-      if (row.store_id === emp.store_id) {
-        bankAllowanceLeft = Math.max(0, bankAllowanceLeft - bankHours);
+      // The rule, per store, applied to each store's share of the day. A day
+      // worked at both is away-store cash for one half and home-store NI for
+      // the other; pricing it off a single store_id got both halves wrong.
+      const parts: AnalyticsDayStore[] = row.stores?.length
+        ? row.stores
+        : [{ store_id: row.store_id, hours, sd, ld, sm, lm }];
+      let cashHours = 0;
+      let bankHours = 0;
+      let deliveryPay = 0;
+      for (const part of parts) {
+        const partCash = cashHoursFromStoreTotal(part.hours, part.store_id, {
+          store_id: emp.store_id,
+          hourly_cash_rate: emp.hourly_cash_rate,
+          // At the home store the allowance is whatever the week has left, not
+          // the full weekly limit — earlier days in the week already used some.
+          bank_weekly_hours_limit: bankAllowanceLeft,
+        });
+        const partBank = Math.max(0, part.hours - partCash);
+        if (part.store_id === emp.store_id) {
+          bankAllowanceLeft = Math.max(0, bankAllowanceLeft - partBank);
+        }
+        cashHours += partCash;
+        bankHours += partBank;
+        if (rates.isDriver) {
+          deliveryPay +=
+            (part.sd + part.sm) * rates.shortRate + (part.ld + part.lm) * rates.longRate;
+        }
       }
-
-      const deliveryPay = rates.isDriver
-        ? (sd + sm) * rates.shortRate + (ld + lm) * rates.longRate
-        : 0;
       const bankPay = bankHours * rates.niRate;
       const cashPay = cashHours * rates.cashRate;
+      // On a split day the parts ARE the day, so the headline hours must be
+      // their sum or the NI + cash split wouldn't add back up to it.
+      const dayHours = row.stores?.length ? bankHours + cashHours : hours;
 
       out.push({
         date: row.event_date,
-        hours,
+        hours: dayHours,
         bankHours,
         cashHours,
         bankPay,
@@ -535,7 +629,7 @@ export function buildDayTotals(
         sm: rates.isDriver ? sm : 0,
         lm: rates.isDriver ? lm : 0,
         deliveries,
-        daysWorked: hours > 0 ? 1 : 0,
+        daysWorked: dayHours > 0 ? 1 : 0,
       });
     }
   }

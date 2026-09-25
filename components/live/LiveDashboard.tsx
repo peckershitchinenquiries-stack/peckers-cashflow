@@ -164,6 +164,37 @@ function computeStatus(
   return "expected";
 }
 
+/**
+ * The shift cell for one store. A store can hold two bookings on the same day
+ * ("12:00–17:00, 18:00–21:00"), so one range would hide the second.
+ */
+function bookedShiftLabel(
+  storeShifts: RotaShift[],
+  fallback: EffShift | null,
+): string {
+  const working = storeShifts.filter((s) => !s.is_day_off);
+  if (working.length > 1)
+    return working
+      .map((s) => formatShiftRange(false, s.start_time, s.end_time))
+      .join(", ");
+  return formatShiftRange(
+    fallback?.is_day_off ?? false,
+    fallback?.start_time ?? null,
+    fallback?.end_time ?? null,
+    fallback?.is_on_leave,
+  );
+}
+
+/** "09:00–13:00, 17:00–now" — the sessions actually clocked at this store. */
+function sessionsLabel(sessions: { clock_in_at: string; clock_out_at: string | null }[]): string {
+  return sessions
+    .map(
+      (s) =>
+        `${formatTimeOnly(s.clock_in_at)}–${s.clock_out_at ? formatTimeOnly(s.clock_out_at) : "now"}`,
+    )
+    .join(", ");
+}
+
 /** Gross hourly rate used to value a day's wage (on-the-books NI rate). */
 function rateOf(emp: LiveEmployee): number {
   return Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0) || 0;
@@ -271,7 +302,24 @@ export function LiveDashboard({
     ? mobileStoreId
     : visibleStores[0]?.id ?? "";
 
-  const shiftByEmp = new Map(shifts.map((s) => [s.employee_id, s]));
+  // A day can hold SEVERAL booked shifts (migration 032), and they need not be
+  // at the same store — 12:00–17:00 at one, 17:00–23:00 at the other. Keyed by
+  // employee alone this was a Map that kept only the last row, so half a split
+  // day vanished before anything downstream ever saw it.
+  const shiftsByEmp = new Map<string, RotaShift[]>();
+  for (const s of shifts) {
+    const arr = shiftsByEmp.get(s.employee_id) ?? [];
+    arr.push(s);
+    shiftsByEmp.set(s.employee_id, arr);
+  }
+  for (const arr of shiftsByEmp.values())
+    arr.sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""));
+  const shiftsByEmpStore = new Map<string, RotaShift[]>();
+  for (const [empId, arr] of shiftsByEmp)
+    for (const s of arr) {
+      const k = `${empId}:${s.store_id}`;
+      shiftsByEmpStore.set(k, [...(shiftsByEmpStore.get(k) ?? []), s]);
+    }
   const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
   // The day's individual shifts, per employee. The clock row above is the day's
   // header: its In is the FIRST clock-in and its Out the last, so hours have to
@@ -286,6 +334,16 @@ export function LiveDashboard({
   // carry a higher seq than one that happened earlier in the day.
   for (const arr of sessionsByEmp.values())
     arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
+  // The header's store_id follows the open/latest shift (Update 98), so it
+  // cannot say where the OTHER half of a cross-store day was worked. Each
+  // store's card reads its own sessions instead.
+  const sessionsByEmpStore = new Map<string, LiveClockSession[]>();
+  for (const [empId, arr] of sessionsByEmp)
+    for (const s of arr) {
+      if (!s.store_id) continue;
+      const k = `${empId}:${s.store_id}`;
+      sessionsByEmpStore.set(k, [...(sessionsByEmpStore.get(k) ?? []), s]);
+    }
   const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
   // Same treatment as employees: the clock row is the day's header, so a
   // manager's worked hours have to come from the sessions or a split day would
@@ -306,16 +364,33 @@ export function LiveDashboard({
 
   const storeById = new Map(stores.map((s) => [s.id, s]));
 
-  // Which store an employee belongs to TODAY: where they clocked in (the source
-  // of truth for where they actually are), else where they're scheduled, else
-  // their home store. Staff aren't locked to one store, so a visiting worker
-  // shows under the store they actually worked at — not their home store.
-  const todayStoreOf = (emp: LiveEmployee): string | null => {
+  /** An HH:MM rota time as today's wall-clock instant, for ordering shifts. */
+  const schedTimeMs = (t: string): number => {
+    const [h, m] = t.split(":").map(Number);
+    const d = new Date(now);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  };
+
+  // Which stores an employee belongs to TODAY — a SET, not one store. A day can
+  // be split across both (Hitchin 12:00–17:00, then Stevenage 17:00–close), and
+  // answering with a single store put the whole person on one card and left the
+  // other store blind to a shift it was expecting.
+  //
+  // Every session worked today counts, plus every store booked on the rota, plus
+  // the day header's own store (pre-029 rows carry no sessions). A worker with
+  // nothing on today falls back to their home store, so they still show as TBC
+  // or Day Off where they belong. Day-off rota cells place nobody: a booking
+  // elsewhere is where they actually are.
+  const todayStoresOf = (emp: LiveEmployee): string[] => {
+    const out = new Set<string>();
+    for (const s of sessionsByEmp.get(emp.id) ?? []) if (s.store_id) out.add(s.store_id);
     const c = clockByEmp.get(emp.id);
-    if (c?.store_id) return c.store_id;
-    const s = shiftByEmp.get(emp.id);
-    if (s?.store_id) return s.store_id;
-    return emp.store_id ?? null;
+    if (c?.store_id) out.add(c.store_id);
+    for (const s of shiftsByEmp.get(emp.id) ?? [])
+      if (!s.is_day_off) out.add(s.store_id);
+    if (out.size === 0 && emp.store_id) out.add(emp.store_id);
+    return [...out];
   };
 
   // Same rule for a manager: the store they clocked in at today (source of truth
@@ -359,11 +434,18 @@ export function LiveDashboard({
   // Real published rota row for today, else the recurring template for today's
   // weekday — so an expected shift (and late/absent status) still shows even
   // when the manager hasn't published a rota.
+  //
+  // Scoped to ONE store: a cross-store day must not show its Hitchin booking on
+  // the Stevenage card. The recurring template carries no store, so it only
+  // stands in at the employee's HOME store.
   function effectiveShiftFor(
     empId: string,
+    storeId: string,
+    isHomeStore: boolean,
   ): { shift: EffShift | null; fromTemplate: boolean } {
-    const real = shiftByEmp.get(empId);
+    const real = shiftsByEmpStore.get(`${empId}:${storeId}`)?.[0];
     if (real) return { shift: real, fromTemplate: false };
+    if (!isHomeStore) return { shift: null, fromTemplate: false };
     const tmpl = scheduleByEmpDay.get(`${empId}:${todayWeekday}`);
     if (tmpl && tmpl.is_working && tmpl.start_time) {
       return {
@@ -438,18 +520,28 @@ export function LiveDashboard({
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 md:gap-5">
         {visibleStores.map((store) => {
           const storeEmployees = employees.filter(
-            (e) => todayStoreOf(e) === store.id && e.employment_status === "active",
+            (e) =>
+              e.employment_status === "active" && todayStoresOf(e).includes(store.id),
           );
           // This store's own staff who are working at ANOTHER store today, so the
-          // store's manager can see where they've gone.
+          // store's manager can see where they've gone. Someone splitting the day
+          // between both stores is NOT away — they're on the roster above, and
+          // listing them here as well would read as if they never turned up.
           const awayStaff = employees
             .filter(
               (e) =>
                 e.store_id === store.id &&
                 e.employment_status === "active" &&
-                todayStoreOf(e) !== store.id,
+                !todayStoresOf(e).includes(store.id),
             )
-            .map((e) => ({ emp: e, at: storeById.get(todayStoreOf(e) ?? "") ?? null }))
+            .map((e) => ({
+              emp: e,
+              atLabel:
+                todayStoresOf(e)
+                  .map((id) => storeById.get(id)?.name)
+                  .filter(Boolean)
+                  .join(" + ") || "another store",
+            }))
             .sort((a, b) => a.emp.name.localeCompare(b.emp.name));
           // Sort: manager first, then on-shift, then others
           const sorted = [...storeEmployees].sort((a, b) => {
@@ -477,45 +569,135 @@ export function LiveDashboard({
               ),
             );
 
-          const onShiftCount = sorted.filter((e) => {
-            const c = clockByEmp.get(e.id);
-            return c?.clock_in_at && !c.clock_out_at;
-          }).length;
-
           // Per-employee daily wage: expected (scheduled hours × rate) and
           // actual (hours clocked so far × rate). Drives the table columns and
           // the store totals below.
+          //
+          // Everything below is scoped to THIS store. A day split across both
+          // stores produces a row on each card carrying only that store's
+          // booked shifts, sessions, hours, wage and drops — summing the whole
+          // day on both would bill every cross-store shift twice.
           const wageRows = sorted.map((emp) => {
-            const { shift, fromTemplate } = effectiveShiftFor(emp.id);
-            const realShift = shiftByEmp.get(emp.id);
-            const clock = clockByEmp.get(emp.id);
-            const sessions = sessionsByEmp.get(emp.id);
-            const status = computeStatus(shift, clock, now);
+            const isHomeStore = emp.store_id === store.id;
+            const { shift: firstShift, fromTemplate } = effectiveShiftFor(
+              emp.id,
+              store.id,
+              isHomeStore,
+            );
+            const storeShifts = shiftsByEmpStore.get(`${emp.id}:${store.id}`) ?? [];
+            const sessions = sessionsByEmpStore.get(`${emp.id}:${store.id}`) ?? [];
+            const dayClock = clockByEmp.get(emp.id);
+            // The header stands in only for a pre-029 day with no sessions, and
+            // only on the store it is actually filed against.
+            const headerHere =
+              sessions.length === 0 && dayClock?.store_id === store.id ? dayClock : null;
+            const openSession = sessions.find((x) => !x.clock_out_at) ?? null;
+            const clock: ClockLike | null = sessions.length
+              ? {
+                  clock_in_at: sessions[0].clock_in_at,
+                  clock_out_at: openSession
+                    ? null
+                    : sessions[sessions.length - 1].clock_out_at,
+                }
+              : headerHere
+                ? {
+                    clock_in_at: headerHere.clock_in_at,
+                    clock_out_at: headerHere.clock_out_at,
+                  }
+                : null;
+
+            // With two bookings here, status follows the one still to finish —
+            // otherwise a morning already worked would keep reading "Clocked
+            // Out" while the evening shift goes unnoticed.
+            const upcoming = storeShifts.find(
+              (x) => !x.is_day_off && x.end_time && schedTimeMs(x.end_time) > now.getTime(),
+            );
+            const shift: EffShift | null = upcoming ?? firstShift;
+            // A finished earlier shift says nothing about one that hasn't
+            // started, so it must not mark the next one as already done.
+            const nextStartMs =
+              !openSession && upcoming?.start_time ? schedTimeMs(upcoming.start_time) : null;
+            const statusClock =
+              nextStartMs != null &&
+              sessions.length > 0 &&
+              sessions.every(
+                (x) => x.clock_out_at && new Date(x.clock_out_at).getTime() <= nextStartMs,
+              )
+                ? null
+                : clock;
+            const status = computeStatus(shift, statusClock, now);
+
             const rate = rateOf(emp);
-            const expHours =
-              shift && !shift.is_day_off
-                ? realShift && Number(realShift.scheduled_hours) > 0
-                  ? Number(realShift.scheduled_hours)
-                  : shiftHours(shift.start_time, shift.end_time)
+            const expHours = storeShifts.length
+              ? storeShifts.reduce(
+                  (t, x) =>
+                    t +
+                    (x.is_day_off
+                      ? 0
+                      : Number(x.scheduled_hours) > 0
+                        ? Number(x.scheduled_hours)
+                        : shiftHours(x.start_time, x.end_time)),
+                  0,
+                )
+              : shift && !shift.is_day_off
+                ? shiftHours(shift.start_time, shift.end_time)
                 : 0;
-            const actHours = clock
-              ? liveDayWorkedHours(clock, sessions, now)
-              : 0;
+            const actHours = sessions.length
+              ? sessions.reduce(
+                  (t, x) => t + clockedHours(x.clock_in_at, x.clock_out_at, now),
+                  0,
+                )
+              : headerHere
+                ? liveDayWorkedHours(headerHere, undefined, now)
+                : 0;
+            // Drops come off the sessions worked HERE (migration 033); the day
+            // header's totals are the sum across both stores.
+            const deliveries = sessions.length
+              ? sessions.reduce(
+                  (t, x) =>
+                    t +
+                    (Number(x.short_deliveries_count) || 0) +
+                    (Number(x.long_deliveries_count) || 0),
+                  0,
+                )
+              : headerHere
+                ? (Number(headerHere.short_deliveries_count) || 0) +
+                  (Number(headerHere.long_deliveries_count) || 0)
+                : null;
+            const manualEntry = sessions.length
+              ? sessions.some((x) => x.manual_entry)
+              : (headerHere?.manual_entry ?? false);
+            const manualReason = sessions.length
+              ? (sessions.find((x) => x.manual_entry)?.manual_entry_reason ?? null)
+              : (headerHere?.manual_entry_reason ?? null);
+
             return {
               emp,
               shift,
+              // Clocked in HERE and not out again. Read off the clock rather
+              // than the status, which is "tbc" for anyone working a shift
+              // nobody booked.
+              onShift: openSession != null ||
+                Boolean(headerHere?.clock_in_at && !headerHere.clock_out_at),
+              storeShifts,
               fromTemplate,
               clock,
               sessions,
               status,
               expHours,
               actHours,
+              deliveries,
+              manualEntry,
+              manualReason,
               expectedWage: expHours * rate,
               actualWage: actHours * rate,
             };
           });
           const expectedTotal = wageRows.reduce((s, r) => s + r.expectedWage, 0);
           const actualTotal = wageRows.reduce((s, r) => s + r.actualWage, 0);
+          // Counted off this store's rows: someone mid-shift at the other store
+          // is not "on shift now" here.
+          const onShiftCount = wageRows.filter((r) => r.onShift).length;
 
           // Managers are on a fixed daily wage (not hourly), and it only
           // counts once they've actually clocked in — no clock-in, no wage.
@@ -816,15 +998,13 @@ export function LiveDashboard({
                           </span>
                         </div>
                       ))}
-                      {awayStaff.map(({ emp, at }) => (
+                      {awayStaff.map(({ emp, atLabel }) => (
                         <div
                           key={emp.id}
                           className="flex items-center justify-between gap-2 text-sm"
                         >
                           <span className="text-text-primary truncate">{emp.name}</span>
-                          <span className="text-gold text-xs shrink-0">
-                            @ {at?.name ?? "another store"}
-                          </span>
+                          <span className="text-gold text-xs shrink-0">@ {atLabel}</span>
                         </div>
                       ))}
                     </div>
@@ -852,12 +1032,7 @@ export function LiveDashboard({
                     role={r.emp.position ?? "Team member"}
                     status={r.status}
                     statusLabel={STATUS_STYLES[r.status].label}
-                    shiftLabel={formatShiftRange(
-                      r.shift?.is_day_off ?? false,
-                      r.shift?.start_time ?? null,
-                      r.shift?.end_time ?? null,
-                      r.shift?.is_on_leave,
-                    )}
+                    shiftLabel={bookedShiftLabel(r.storeShifts, r.shift)}
                     shiftNote={r.fromTemplate && r.shift ? "default" : null}
                     clockInAt={r.clock?.clock_in_at ?? null}
                     clockOutAt={r.clock?.clock_out_at ?? null}
@@ -866,20 +1041,12 @@ export function LiveDashboard({
                     expectedWage={r.expectedWage}
                     actualWage={r.actualWage}
                     deliveries={
-                      hasRole(r.emp.position, "Driver")
-                        ? (Number(r.clock?.short_deliveries_count) || 0) +
-                          (Number(r.clock?.long_deliveries_count) || 0)
-                        : null
+                      hasRole(r.emp.position, "Driver") ? (r.deliveries ?? 0) : null
                     }
-                    shiftCount={r.sessions?.length ?? 0}
-                    shiftsLabel={(r.sessions ?? [])
-                      .map(
-                        (x) =>
-                          `${formatTimeOnly(x.clock_in_at)}–${x.clock_out_at ? formatTimeOnly(x.clock_out_at) : "now"}`,
-                      )
-                      .join(", ")}
-                    manualEntry={r.clock?.manual_entry ?? false}
-                    manualReason={r.clock?.manual_entry_reason ?? null}
+                    shiftCount={r.sessions.length}
+                    shiftsLabel={sessionsLabel(r.sessions)}
+                    manualEntry={r.manualEntry}
+                    manualReason={r.manualReason}
                   />
                 ))}
               </div>
@@ -910,17 +1077,12 @@ export function LiveDashboard({
                         </td>
                       </tr>
                     )}
-                    {wageRows.map(({ emp, shift, fromTemplate, clock, sessions, status, expectedWage, actualWage }) => {
+                    {wageRows.map(({ emp, shift, storeShifts, fromTemplate, clock, sessions, status, deliveries, manualEntry, manualReason, expectedWage, actualWage }) => {
                       const style = STATUS_STYLES[status];
-                      const shiftCount = sessions?.length ?? 0;
+                      const shiftCount = sessions.length;
                       // "09:00–13:00, 17:00–now" — hover detail so a second
                       // shift is never mistaken for one long unbroken day.
-                      const shiftsLabel = (sessions ?? [])
-                        .map(
-                          (s) =>
-                            `${formatTimeOnly(s.clock_in_at)}–${s.clock_out_at ? formatTimeOnly(s.clock_out_at) : "now"}`,
-                        )
-                        .join(", ");
+                      const shiftsLabel = sessionsLabel(sessions);
                       return (
                         <tr
                           key={emp.id}
@@ -936,12 +1098,7 @@ export function LiveDashboard({
                             {emp.position ?? "—"}
                           </td>
                           <td className="px-2 py-2 text-text-subtle">
-                            {formatShiftRange(
-                              shift?.is_day_off ?? false,
-                              shift?.start_time ?? null,
-                              shift?.end_time ?? null,
-                              shift?.is_on_leave,
-                            )}
+                            {bookedShiftLabel(storeShifts, shift)}
                             {fromTemplate && shift && (
                               <span
                                 className="ml-1 text-[9px] uppercase tracking-wide text-text-muted"
@@ -963,12 +1120,12 @@ export function LiveDashboard({
                                 ×{shiftCount}
                               </span>
                             )}
-                            {clock?.manual_entry && (
+                            {manualEntry && (
                               <span
                                 className="block text-[9px] uppercase tracking-wide text-warning"
                                 title={
-                                  clock.manual_entry_reason
-                                    ? `Entered by a manager — ${clock.manual_entry_reason}`
+                                  manualReason
+                                    ? `Entered by a manager — ${manualReason}`
                                     : "Entered by a manager (no location check)"
                                 }
                               >
@@ -998,12 +1155,8 @@ export function LiveDashboard({
                             {actualWage > 0 ? formatGBP(actualWage) : "—"}
                           </td>
                           <td className="px-2 py-2 text-center text-xs text-text-subtle">
-                            {hasRole(emp.position, "Driver")
-                              ? clock?.short_deliveries_count == null &&
-                                clock?.long_deliveries_count == null
-                                ? "—"
-                                : (Number(clock?.short_deliveries_count) || 0) +
-                                  (Number(clock?.long_deliveries_count) || 0)
+                            {hasRole(emp.position, "Driver") && deliveries != null
+                              ? deliveries
                               : "—"}
                           </td>
                         </tr>
@@ -1237,13 +1390,19 @@ export function LiveDashboard({
                   // Whoever is at THIS store today first, so the common pick is
                   // still the top of the list and a visitor is a deliberate one.
                   .sort((a, b) => {
-                    const aHere = todayStoreOf(a) === adding.storeId;
-                    const bHere = todayStoreOf(b) === adding.storeId;
+                    const aHere = todayStoresOf(a).includes(adding.storeId);
+                    const bHere = todayStoresOf(b).includes(adding.storeId);
                     if (aHere !== bHere) return aHere ? -1 : 1;
                     return a.name.localeCompare(b.name);
                   })
                   .map<ManualEntryCandidate>((e) => {
-                    const { shift } = effectiveShiftFor(e.id);
+                    // The booking AT the store being recorded against — a shift
+                    // at the other store is not what this entry is filling in.
+                    const { shift } = effectiveShiftFor(
+                      e.id,
+                      adding.storeId,
+                      e.store_id === adding.storeId,
+                    );
                     return {
                       id: e.id,
                       name: e.name,

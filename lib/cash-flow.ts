@@ -494,9 +494,14 @@ export function aggregateWorked(
 // ---------------- cross-store weekly wage attribution ----------------
 //
 // Employees are not locked to one store: someone can work Mon–Wed at Hitchin and
-// Thu–Fri at Stevenage. Each DAY's work (and pay) is attributed to the store it
-// was worked at (one clock/shift row per day, so a day maps to exactly one
-// store).
+// Thu–Fri at Stevenage — or BOTH IN ONE DAY, 12:00–17:00 at one and 17:00–close
+// at the other. Pay is therefore attributed per SHIFT, not per day.
+//
+// This used to read the day header's store_id, which follows whichever shift is
+// open or ran last (Update 98). On a cross-store day that billed all of it to
+// the store of the evening shift: the afternoon store's envelope never saw the
+// person at all, their away-store hours were wrongly treated as home-store NI,
+// and the drops driven for one store were paid by the other.
 //
 // NI/cash split (confirmed with the client): NI/bank is a HOME-store concept —
 // the employee's payroll record lives at their home store, so only the home
@@ -535,12 +540,70 @@ export type StoreClockRow = {
   approved_extra_long_deliveries?: number | null;
 };
 
-/** One resolved working day: the store worked and the hours that count. */
-type DayWork = { date: string; store_id: string; hours: number };
+/**
+ * One PAYABLE shift (migrations 029 + 035). The day header is only a summary of
+ * these, and its single store_id cannot describe a day split across two stores
+ * — so pay is resolved from the shifts themselves wherever they exist.
+ */
+export type StoreClockSessionRow = {
+  employee_id: string;
+  store_id: string | null;
+  event_date: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  /** Per-shift sign-off. NOTHING on an unapproved shift is payable. */
+  hours_approved?: boolean | null;
+  /** The manager's correction for this shift; null means the clocked time stood. */
+  approved_hours?: number | string | null;
+  short_deliveries_count?: number | null;
+  long_deliveries_count?: number | null;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+};
+
+/** What every pay screen must select to resolve StoreClockSessionRow. */
+export const PAY_CLOCK_SESSION_COLUMNS =
+  "employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
+
+/** A completed shift's clocked length. An open one has worked nothing yet. */
+function sessionHours(s: { clock_in_at: string; clock_out_at: string | null }): number {
+  if (!s.clock_out_at) return 0;
+  const ms = new Date(s.clock_out_at).getTime() - new Date(s.clock_in_at).getTime();
+  return ms > 0 ? ms / 3_600_000 : 0;
+}
+
+/** An employee's payable week, split by the store each shift was worked at. */
+type StoreWork = {
+  hours: Map<string, number>;
+  short: Map<string, number>;
+  long: Map<string, number>;
+  extraShort: Map<string, number>;
+  extraLong: Map<string, number>;
+};
+
+function emptyStoreWork(): StoreWork {
+  return {
+    hours: new Map(),
+    short: new Map(),
+    long: new Map(),
+    extraShort: new Map(),
+    extraLong: new Map(),
+  };
+}
+
+function addTo(m: Map<string, number>, key: string, n: number) {
+  if (n) m.set(key, (m.get(key) ?? 0) + n);
+}
 
 /**
- * Resolve an employee's payable working days for the week: the APPROVED hours
- * on each clocked day, attributed to the store it was clocked at.
+ * Resolve an employee's payable work for the week: the APPROVED hours and drops
+ * on each signed-off SHIFT, attributed to the store that shift was worked at.
+ *
+ * A day's shifts are used whenever they exist; the day header stands in only
+ * for a day that has none (a pre-029 row, or one hand-fixed since). The two
+ * agree on a single-store day — the header's approved_hours is by definition
+ * the sum of its approved shifts (see deriveDayHeader) — so the fallback is a
+ * safety net, not a second rule.
  *
  * There is deliberately NO rota fallback. Scheduled hours are a plan, never a
  * record of work, and nothing on the rota has been signed off by anyone — so
@@ -555,21 +618,123 @@ type DayWork = { date: string; store_id: string; hours: number };
  * question — "what did this person actually work" — and is what the Rota, the
  * Live board and the employee's own screens must keep showing.
  */
-function resolveWorkingDays(clocks: StoreClockRow[]): DayWork[] {
-  const days: DayWork[] = [];
-  for (const c of clocks) {
-    if (!c.clock_in_at) continue;
-    const hours = Number(c.approved_hours) || 0;
-    if (hours > 0) days.push({ date: c.event_date, store_id: c.store_id, hours });
+function resolveStoreWork(
+  clocks: StoreClockRow[],
+  sessions: StoreClockSessionRow[],
+): StoreWork {
+  const work = emptyStoreWork();
+  for (const p of resolvePayableWork(clocks, sessions)) {
+    addTo(work.hours, p.store_id, p.hours);
+    addTo(work.short, p.store_id, p.short);
+    addTo(work.long, p.store_id, p.long);
+    addTo(work.extraShort, p.store_id, p.extra_short);
+    addTo(work.extraLong, p.store_id, p.extra_long);
   }
-  return days;
+  return work;
 }
 
-/** Total resolved working hours per store for an employee's week. */
-function hoursByStore(days: DayWork[]): Map<string, number> {
-  const byStore = new Map<string, number>();
-  for (const d of days) byStore.set(d.store_id, (byStore.get(d.store_id) ?? 0) + d.hours);
-  return byStore;
+/** One payable piece of work: a signed-off shift, or a whole pre-029 day. */
+export type PayableWork = {
+  employee_id: string;
+  store_id: string;
+  event_date: string;
+  hours: number;
+  short: number;
+  long: number;
+  extra_short: number;
+  extra_long: number;
+};
+
+/**
+ * Flatten a week's clock records into payable work, each piece carrying the
+ * store it was ACTUALLY worked at. This is the one place the day-vs-shift
+ * question is answered; every per-store hours or cost figure is built on it.
+ */
+export function resolvePayableWork(
+  clocks: StoreClockRow[],
+  sessions: StoreClockSessionRow[],
+): PayableWork[] {
+  const byEmpDate = new Map<string, StoreClockSessionRow[]>();
+  for (const s of sessions) {
+    const k = `${s.employee_id}:${s.event_date}`;
+    byEmpDate.set(k, [...(byEmpDate.get(k) ?? []), s]);
+  }
+
+  const out: PayableWork[] = [];
+  for (const c of clocks) {
+    if (!c.clock_in_at) continue;
+    const daySessions = byEmpDate.get(`${c.employee_id}:${c.event_date}`);
+    if (daySessions?.length) {
+      for (const s of daySessions) {
+        // Only a finished, signed-off shift is payable — and only where it was
+        // worked. A shift whose store is somehow unset falls back to the day's,
+        // which is the best the record can say.
+        if (!s.hours_approved || !s.clock_out_at) continue;
+        const storeId = s.store_id ?? c.store_id;
+        if (!storeId) continue;
+        out.push({
+          employee_id: c.employee_id,
+          store_id: storeId,
+          event_date: c.event_date,
+          hours: s.approved_hours != null ? Number(s.approved_hours) || 0 : sessionHours(s),
+          short: Number(s.short_deliveries_count) || 0,
+          long: Number(s.long_deliveries_count) || 0,
+          extra_short: Number(s.extra_short_deliveries) || 0,
+          extra_long: Number(s.extra_long_deliveries) || 0,
+        });
+      }
+      continue;
+    }
+    if (!c.store_id) continue;
+    out.push({
+      employee_id: c.employee_id,
+      store_id: c.store_id,
+      event_date: c.event_date,
+      hours: Number(c.approved_hours) || 0,
+      short: Number(c.approved_short_deliveries_count) || 0,
+      long: Number(c.approved_long_deliveries_count) || 0,
+      extra_short: Number(c.approved_extra_short_deliveries) || 0,
+      extra_long: Number(c.approved_extra_long_deliveries) || 0,
+    });
+  }
+  return out;
+}
+
+/**
+ * Approved hours per employee, per store, per DAY — for the screens that break
+ * a week down by weekday. A cross-store day yields one entry per store.
+ */
+export function approvedHoursByEmployeeStoreDay(
+  clocks: StoreClockRow[],
+  sessions: StoreClockSessionRow[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const p of resolvePayableWork(clocks, sessions)) {
+    if (p.hours <= 0) continue;
+    const k = `${p.employee_id}:${p.store_id}:${p.event_date}`;
+    out.set(k, (out.get(k) ?? 0) + p.hours);
+  }
+  return out;
+}
+
+/**
+ * Approved hours per employee per store for a week, keyed `employeeId:storeId`.
+ *
+ * Every screen that shows hours or labour cost PER STORE must go through this
+ * rather than filtering clock days on `store_id`: that column names only the
+ * store of a day's last shift, so a day split across two stores counted wholly
+ * against one of them.
+ */
+export function approvedHoursByEmployeeStore(
+  clocks: StoreClockRow[],
+  sessions: StoreClockSessionRow[],
+): Map<string, number> {
+  const raw = new Map<string, number>();
+  for (const p of resolvePayableWork(clocks, sessions)) {
+    const k = `${p.employee_id}:${p.store_id}`;
+    raw.set(k, (raw.get(k) ?? 0) + p.hours);
+  }
+  return new Map([...raw].map(([k, h]) => [k, roundHoursToMinute(h)]));
 }
 
 /**
@@ -602,7 +767,7 @@ export function cashHoursFromStoreTotal(
 }
 
 function cashHoursAtStore(
-  days: DayWork[],
+  work: StoreWork,
   storeId: string,
   emp: {
     store_id?: string | null;
@@ -610,7 +775,7 @@ function cashHoursAtStore(
     bank_weekly_hours_limit?: number | null;
   },
 ): number {
-  return cashHoursFromStoreTotal(hoursByStore(days).get(storeId) ?? 0, storeId, emp);
+  return cashHoursFromStoreTotal(work.hours.get(storeId) ?? 0, storeId, emp);
 }
 
 /**
@@ -626,6 +791,7 @@ export function buildWageLinesForStore(
   storeId: string,
   employees: Employee[],
   clocks: StoreClockRow[],
+  sessions: StoreClockSessionRow[] = [],
 ): WageLine[] {
   const clocksByEmp = new Map<string, StoreClockRow[]>();
   for (const c of clocks) {
@@ -633,33 +799,30 @@ export function buildWageLinesForStore(
     arr.push(c);
     clocksByEmp.set(c.employee_id, arr);
   }
+  const sessionsByEmp = new Map<string, StoreClockSessionRow[]>();
+  for (const s of sessions) {
+    const arr = sessionsByEmp.get(s.employee_id) ?? [];
+    arr.push(s);
+    sessionsByEmp.set(s.employee_id, arr);
+  }
 
   const lines: WageLine[] = [];
   for (const emp of employees) {
     const empClocks = clocksByEmp.get(emp.id) ?? [];
-    const days = resolveWorkingDays(empClocks);
-    const cashHours = roundHoursToMinute(cashHoursAtStore(days, storeId, emp));
+    const work = resolveStoreWork(empClocks, sessionsByEmp.get(emp.id) ?? []);
+    const cashHours = roundHoursToMinute(cashHoursAtStore(work, storeId, emp));
 
-    // Deliveries come from the APPROVED columns on the clock rows AT this store
+    // Deliveries come from the APPROVED shifts worked AT this store
     // (migration 035) — drops a driver logged but nobody has signed off are on
     // record and visible everywhere else, they simply aren't payable yet.
     const isDriver = hasRole(emp.position, "Driver");
     // Normal-round drops and the extra ("miscellaneous") drops are counted
     // separately so the payout sheet can show SD / LD / SM / LM, but both are
     // paid at the same per-type rate.
-    let shortDeliveries = 0;
-    let longDeliveries = 0;
-    let shortMisc = 0;
-    let longMisc = 0;
-    if (isDriver) {
-      for (const c of empClocks) {
-        if (c.store_id !== storeId) continue;
-        shortDeliveries += Number(c.approved_short_deliveries_count) || 0;
-        longDeliveries += Number(c.approved_long_deliveries_count) || 0;
-        shortMisc += Number(c.approved_extra_short_deliveries) || 0;
-        longMisc += Number(c.approved_extra_long_deliveries) || 0;
-      }
-    }
+    let shortDeliveries = isDriver ? (work.short.get(storeId) ?? 0) : 0;
+    let longDeliveries = isDriver ? (work.long.get(storeId) ?? 0) : 0;
+    let shortMisc = isDriver ? (work.extraShort.get(storeId) ?? 0) : 0;
+    let longMisc = isDriver ? (work.extraLong.get(storeId) ?? 0) : 0;
     shortDeliveries = Math.max(0, Math.round(shortDeliveries));
     longDeliveries = Math.max(0, Math.round(longDeliveries));
     shortMisc = Math.max(0, Math.round(shortMisc));

@@ -17,6 +17,7 @@ import {
   buildCoverDriverWageLines,
   buildManagerWageLines,
   buildWageLinesForStore,
+  type StoreClockSessionRow,
   round2,
   type CoverDriverPayRow,
   type ManagerPayee,
@@ -472,9 +473,14 @@ export function buildStaffWeek(input: {
     if (!empClocks?.length) continue;
     const rates = resolvePayRates(emp);
     const days: (StaffWeekDay | null)[] = Array(7).fill(null);
+    // The shifts as the PAYOUT reads them — each carrying the store it was
+    // worked at, so a day split across both stores pays each its own half.
+    const empSessions: StoreClockSessionRow[] = [];
 
     for (const c of empClocks) {
       const sessions = [...(sessionsByDay.get(c.id) ?? [])].sort(byClockIn);
+      for (const x of sessions)
+        empSessions.push({ ...x, employee_id: emp.id, event_date: c.event_date });
       const shifts: StaffWeekShift[] = sessions.length
         ? sessions.map((s) => ({
             clockIn: s.clock_in_at,
@@ -529,10 +535,17 @@ export function buildStaffWeek(input: {
       };
     }
 
-    const storeIds = Array.from(new Set(empClocks.map((c) => c.store_id)));
+    // Off the SHIFTS as well as the days: a store the person only visited for
+    // the second half of a day appears on no day header.
+    const storeIds = Array.from(
+      new Set([
+        ...empClocks.map((c) => c.store_id),
+        ...empSessions.map((x) => x.store_id).filter((x): x is string => !!x),
+      ]),
+    );
     const live: StoreLineBuild[] = [];
     for (const storeId of storeIds) {
-      const [line] = buildWageLinesForStore(storeId, [emp], empClocks);
+      const [line] = buildWageLinesForStore(storeId, [emp], empClocks, empSessions);
       if (line) live.push(toStoreLine(storeId, line));
     }
     const stores = withFrozen(live, `emp:${emp.id}`, frozen, confirmed);

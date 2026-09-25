@@ -12,8 +12,10 @@ import { addDays, parseISODate, toISODate } from "@/lib/utils";
 import {
   buildCoverDriverWageLines,
   buildManagerWageLines,
+  approvedHoursByEmployeeStore,
   buildWageLinesForStore,
   cashHoursFromStoreTotal,
+  PAY_CLOCK_SESSION_COLUMNS,
   type CoverDriverPayRow,
   type ManagerPayee,
   type ManagerPayRow,
@@ -778,8 +780,14 @@ export async function prefillLabour(input: {
   const weekStart = report.week_start;
   const weekEnd = weekEndOf(weekStart);
 
-  const [employeesRes, clocksRes, coverRes, managersRes, managerClocksRes] =
-    await Promise.all([
+  const [
+    employeesRes,
+    clocksRes,
+    coverRes,
+    managersRes,
+    managerClocksRes,
+    sessionsRes,
+  ] = await Promise.all([
       // Leavers included: someone marked "left" still worked the week being
       // costed. All stores' employees are candidates — staff cross-cover.
       supabase.from("employees").select("*"),
@@ -816,11 +824,20 @@ export async function prefillLabour(input: {
         .eq("store_id", storeId)
         .gte("event_date", weekStart)
         .lte("event_date", weekEnd),
+      // The individual shifts. A day worked at BOTH stores carries only the
+      // last shift's store on its header, so per-store hours have to be summed
+      // from these or the whole day is costed against one store.
+      supabase
+        .from("clock_sessions")
+        .select(PAY_CLOCK_SESSION_COLUMNS)
+        .gte("event_date", weekStart)
+        .lte("event_date", weekEnd),
     ]);
 
   const loadError =
     employeesRes.error?.message ??
     clocksRes.error?.message ??
+    sessionsRes.error?.message ??
     coverRes.error?.message ??
     managerClocksRes.error?.message ??
     null;
@@ -828,22 +845,25 @@ export async function prefillLabour(input: {
 
   const employees = (employeesRes.data ?? []) as Employee[];
   const clocks = clocksRes.data ?? [];
+  const sessions = sessionsRes.data ?? [];
 
   // The cash + delivery halves come from the SAME builder the Tuesday payout
   // uses, so the two can never disagree about what a week's cash was worth.
   const cashLines = new Map(
-    buildWageLinesForStore(storeId, employees, clocks).map((l) => [l.employee_id, l]),
+    buildWageLinesForStore(storeId, employees, clocks, sessions).map((l) => [
+      l.employee_id,
+      l,
+    ]),
   );
+  const hoursByEmpStore = approvedHoursByEmployeeStore(clocks, sessions);
 
   const payload: Array<Record<string, unknown>> = [];
   let sort = 0;
 
   for (const emp of employees) {
-    const hoursAtStore = round2(
-      clocks
-        .filter((c) => c.employee_id === emp.id && c.store_id === storeId && c.clock_in_at)
-        .reduce((t, c) => t + (Number(c.approved_hours) || 0), 0),
-    );
+    // Per SHIFT, not per day — a day split across both stores owes each store
+    // only the hours worked there.
+    const hoursAtStore = round2(hoursByEmpStore.get(`${emp.id}:${storeId}`) ?? 0);
     const wage = cashLines.get(emp.id);
     if (hoursAtStore <= 0 && !wage) continue;
 

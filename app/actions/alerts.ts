@@ -27,6 +27,7 @@ import {
   buildManagerWageLines,
   buildPrePaymentSummary,
   buildWageLinesForStore,
+  PAY_CLOCK_SESSION_COLUMNS,
   payWeekOf,
   supermarketCashAmount,
   type CoverDriverPayRow,
@@ -326,6 +327,7 @@ async function runScan(
     coverRes,
     managersRes,
     managerClocksRes,
+    paySessionsRes,
   ] = await Promise.all([
       supabase
         .from("rota_shifts")
@@ -388,6 +390,15 @@ async function runScan(
         .select(
           "manager_id, store_id, event_date, approved_short_deliveries_count, approved_long_deliveries_count, approved_extra_short_deliveries, approved_extra_long_deliveries",
         )
+        .gte("event_date", payWeek.start)
+        .lte("event_date", payWeek.end),
+      // The pay week's individual shifts. A day split across two stores carries
+      // only the last shift's store on its header, so the forecast has to read
+      // these or it bills the whole day to one store — exactly what the payout
+      // sheet it is meant to predict no longer does.
+      supabase
+        .from("clock_sessions")
+        .select(PAY_CLOCK_SESSION_COLUMNS)
         .gte("event_date", payWeek.start)
         .lte("event_date", payWeek.end),
     ]);
@@ -772,6 +783,7 @@ async function runScan(
   const payWeekClocks = clocks.filter(
     (c) => c.event_date >= payWeek.start && c.event_date <= payWeek.end,
   );
+  const paySessions = paySessionsRes.data ?? [];
 
   // Which stores' pay-week cash this client could actually READ. `alerts` is
   // is_staff() but daily_cash_entries is can_access_store, so on a MANAGER's
@@ -863,7 +875,7 @@ async function runScan(
     // a cover driver's day and a manager's drops are cash out of the same pot,
     // so omitting them understated wages due and hid draws the sheet showed.
     const lines = [
-      ...buildWageLinesForStore(store.id, employees, payWeekClocks),
+      ...buildWageLinesForStore(store.id, employees, payWeekClocks, paySessions),
       ...buildCoverDriverWageLines(store.id, coverRows),
       ...buildManagerWageLines(store.id, managerPayees, managerPayRows),
     ].sort((a, b) => b.total_payment - a.total_payment);

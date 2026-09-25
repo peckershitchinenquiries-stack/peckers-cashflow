@@ -13,6 +13,7 @@ import {
   buildManagerWageLines,
   buildPrePaymentSummary,
   buildWageLinesForStore,
+  PAY_CLOCK_SESSION_COLUMNS,
   normalisePayoutAdjustment,
   payWeekOf,
   sumAdjustments,
@@ -227,6 +228,7 @@ async function computeSummary(
     managerClocksRes,
     storeRes,
     adjustmentRes,
+    sessionsRes,
   ] = await Promise.all([
     supabase
       .from("daily_cash_entries")
@@ -293,6 +295,15 @@ async function computeSummary(
       .eq("store_id", storeId)
       .eq("week_start_date", weekStartISO)
       .maybeSingle(),
+    // The individual shifts behind those days. A day split across two stores
+    // (12:00–17:00 here, 17:00–close there) has ONE header carrying only the
+    // store of its last shift, so pay has to be resolved from these or the
+    // afternoon's hours and drops are billed to the evening's store.
+    supabase
+      .from("clock_sessions")
+      .select(PAY_CLOCK_SESSION_COLUMNS)
+      .gte("event_date", payWeek.start)
+      .lte("event_date", payWeek.end),
   ]);
 
   // A failed query must never read as "nobody worked": every wage on this sheet
@@ -302,6 +313,9 @@ async function computeSummary(
   // the message to the screen instead of letting the totals lie.
   const loadError =
     clocksRes.error?.message ??
+    // Without the shifts every cross-store day would silently fall back to its
+    // header's single store, which is the bug this query exists to fix.
+    sessionsRes.error?.message ??
     employeesRes.error?.message ??
     managerClocksRes.error?.message ??
     coverRes.error?.message ??
@@ -315,7 +329,12 @@ async function computeSummary(
   const entries = (entriesRes.data ?? []) as DailyCashEntry[];
   const employees = (employeesRes.data ?? []) as Employee[];
   const lines = [
-    ...buildWageLinesForStore(storeId, employees, clocksRes.data ?? []),
+    ...buildWageLinesForStore(
+      storeId,
+      employees,
+      clocksRes.data ?? [],
+      sessionsRes.data ?? [],
+    ),
     ...buildCoverDriverWageLines(
       storeId,
       (coverRes.data ?? []) as CoverDriverPayRow[],

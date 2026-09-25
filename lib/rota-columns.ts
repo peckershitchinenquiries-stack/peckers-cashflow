@@ -31,7 +31,9 @@ export const SCHEDULE_COLUMNS = "employee_id, weekday, is_working, start_time, e
 export const COVER_SCHEDULE_COLUMNS =
   "cover_driver_id, weekday, is_working, start_time, end_time";
 
-// Sessions exist on Live only to sum a split day's hours and label it
-// "09:00–13:00, 17:00–now" — the geofence coordinates and audit columns are
-// never read there.
-export const LIVE_CLOCK_SESSION_COLUMNS = "employee_id, clock_in_at, clock_out_at";
+// Sessions are what place a person on the board: a day can span two stores
+// (migration 032), so each store's card reads only the sessions worked THERE —
+// for its hours, its "09:00–13:00, 17:00–now" label and its drops. The
+// geofence coordinates and approval columns are still never read there.
+export const LIVE_CLOCK_SESSION_COLUMNS =
+  "employee_id, store_id, clock_in_at, clock_out_at, manual_entry, manual_entry_reason, short_deliveries_count, long_deliveries_count";

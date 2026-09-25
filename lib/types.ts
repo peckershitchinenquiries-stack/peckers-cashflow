@@ -239,7 +239,14 @@ export type LiveEmployee = Pick<
 /** What Live fetches of a clock session — see LIVE_CLOCK_SESSION_COLUMNS. */
 export type LiveClockSession = Pick<
   ClockSession,
-  "employee_id" | "clock_in_at" | "clock_out_at"
+  | "employee_id"
+  | "store_id"
+  | "clock_in_at"
+  | "clock_out_at"
+  | "manual_entry"
+  | "manual_entry_reason"
+  | "short_deliveries_count"
+  | "long_deliveries_count"
 >;
 
 /** Parse pipe-delimited positions string into array. */
