@@ -651,6 +651,20 @@ export type ClockSessionSpan = {
   seq: number;
   clock_in_at: string;
   clock_out_at: string | null;
+  /**
+   * Where this shift was worked. A day's shifts can sit at DIFFERENT stores, so
+   * the day header's store speaks only for the last one — anything attributing
+   * hours or drops to a store must read this (Update 224).
+   */
+  store_id?: string | null;
+  /**
+   * Where the clock-out was taken. A shift closed well away from its own store
+   * is one the person moved during and never re-clocked, so its whole span is
+   * billed to where it began — flagged on Daily Approval rather than paid out
+   * silently.
+   */
+  clock_out_lat?: number | null;
+  clock_out_lng?: number | null;
   auto_clocked_out?: boolean | null;
   manual_entry?: boolean | null;
   /** Signed off, and so payable, on its own. */
@@ -662,6 +676,8 @@ export type ClockSessionSpan = {
   long_deliveries_count?: number | null;
   extra_short_deliveries?: number | null;
   extra_long_deliveries?: number | null;
+  extra_short_reason?: string | null;
+  extra_long_reason?: string | null;
 };
 
 /**

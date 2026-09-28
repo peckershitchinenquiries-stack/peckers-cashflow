@@ -384,6 +384,36 @@ export async function setSessionDeliveries(
   if (error) throw new Error(error.message);
 }
 
+/** The distinct stores a day's shifts were worked at. */
+export function storesWorkedOnDay(
+  sessions: Array<{ store_id?: string | null }>,
+): string[] {
+  return Array.from(
+    new Set(sessions.map((s) => s.store_id).filter((v): v is string => Boolean(v))),
+  );
+}
+
+/**
+ * Refuse a DAY-level figure on a day whose shifts sit at different stores.
+ *
+ * Every day-level write here settles the difference onto one shift, which was
+ * exact while a day meant a store. Once an employee can work Hitchin then
+ * Stevenage on one date, that shift is a different store's payout, and the
+ * correction silently moves money between tills. There is no way to guess the
+ * split, so the manager is sent to the per-shift controls instead of having one
+ * invented for them (Update 224).
+ */
+function assertSingleStoreDay(
+  sessions: Array<{ store_id?: string | null }>,
+  what: string,
+): void {
+  if (storesWorkedOnDay(sessions).length > 1) {
+    throw new Error(
+      `This day was worked at more than one store, so ${what} can't be set for the day as a whole — each store is paid from its own till. Correct it shift by shift on Daily Approval instead.`,
+    );
+  }
+}
+
 /**
  * Apply a DAY-level delivery total that a manager typed (Daily Approval, the
  * Rota's delivery modal) onto a day that may hold several shifts.
@@ -404,6 +434,7 @@ export async function applyDayDeliveryTotal(
 ): Promise<boolean> {
   const sessions = await sessionsForEvent(supabase, clockEventId);
   if (sessions.length === 0) return false;
+  assertSingleStoreDay(sessions, "the delivery counts");
 
   const last = sessions[sessions.length - 1];
   const others = sessions.slice(0, -1);
@@ -482,6 +513,9 @@ export async function approveDaySessions(
   const completed = sessions.filter((s) => s.clock_out_at);
   const pending = completed.filter((s) => !s.hours_approved);
   if (pending.length === 0) return 0;
+  // Approving the clocked times across stores is fine — each shift keeps its
+  // own duration. It is only a typed DAY TOTAL that has nowhere honest to go.
+  if (opts.dayHours != null) assertSingleStoreDay(sessions, "a corrected day total");
 
   let remaining =
     opts.dayHours != null && Number.isFinite(opts.dayHours)

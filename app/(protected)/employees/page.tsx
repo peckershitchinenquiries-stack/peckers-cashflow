@@ -55,7 +55,7 @@ export default async function EmployeesPage() {
     supabase
       .from("clock_sessions")
       .select(
-        "id, clock_event_id, seq, clock_in_at, clock_out_at, auto_clocked_out, manual_entry, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
+        "id, clock_event_id, store_id, seq, clock_in_at, clock_out_at, clock_out_lat, clock_out_lng, auto_clocked_out, manual_entry, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason",
       )
       .gte("event_date", eightWeeksBack)
       .order("clock_in_at", { ascending: true }),

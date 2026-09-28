@@ -361,8 +361,20 @@ export function EmployeesView({
     router.refresh();
   }
 
-  async function handleShiftApproval(session_id: string, approved: boolean) {
-    await setShiftApproval({ session_id, approved });
+  async function handleShiftApproval(
+    session_id: string,
+    approved: boolean,
+    override_hours?: number,
+    deliveries?: DeliveryEdit,
+  ) {
+    await setShiftApproval({
+      session_id,
+      approved,
+      override_hours,
+      // A cross-store day can only be corrected shift by shift, so the counts
+      // are settled whole here rather than merged field by field.
+      deliveries: deliveries ? toDeliveryInput(deliveries) : undefined,
+    });
     // The day's own row is re-derived server-side from its shifts, so unlike the
     // day-level handlers there is nothing sensible to patch locally — refresh
     // and take the recomputed header.
@@ -423,8 +435,14 @@ export function EmployeesView({
   };
 
   // Daily view: scope to the selected store and count what still needs approval.
+  // A day worked at two stores belongs to BOTH — its header carries only the
+  // last shift's store, so filtering on that alone hid the morning's hours
+  // from the store that owes them (Update 224).
   const visibleDaily = daily.filter(
-    (d) => storeFilter === "all" || d.store_id === storeFilter,
+    (d) =>
+      storeFilter === "all" ||
+      d.store_id === storeFilter ||
+      d.sessions.some((sess) => sess.store_id === storeFilter),
   );
   // A pre-034 manager day has a null store_id; keep it visible rather than
   // silently dropping a day someone still has to sign off.

@@ -1,7 +1,13 @@
 // Server-side loader for the NI (monthly) summary pages — admin + manager.
 
 import { createServerSupabase } from "./supabase-server";
-import { round2, worksForCash } from "./cash-flow";
+import {
+  PAY_CLOCK_SESSION_COLUMNS,
+  resolvePayableWork,
+  round2,
+  worksForCash,
+} from "./cash-flow";
+import type { StoreClockRow, StoreClockSessionRow } from "./cash-flow";
 import { roundHoursToMinute } from "./utils";
 import type { ManualNiRow, NiRow } from "@/components/ni/NiMonthlyView";
 
@@ -32,11 +38,12 @@ type NiEmployee = {
   bank_weekly_hours_limit: number | null;
 };
 
+/** Approved work attributed to the store it was actually done at. */
 type NiDayRow = {
   employee_id: string;
   store_id: string;
   event_date: string;
-  approved_hours: number | null;
+  hours: number;
 };
 
 /** First day of the month `MONTHS_SHOWN - 1` months back, as YYYY-MM-DD. */
@@ -46,10 +53,33 @@ function windowStartDate(): string {
   return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
+/** One page-at-a-time read; PostgREST caps a response. */
+async function loadAllPages<T>(
+  run: (from: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>,
+): Promise<T[] | null> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await run(from);
+    if (error) return null;
+    const page = (data ?? []) as T[];
+    out.push(...page);
+    if (page.length < PAGE_SIZE) return out;
+  }
+}
+
 /**
- * Approved clocked days over the reporting window. Returns null on any failure
- * — a partial read would silently under-report a payroll month, which is worse
- * than showing nothing.
+ * Approved work over the reporting window, attributed PER SHIFT to the store
+ * it was worked at — never to the day header's single store, which carries the
+ * last shift's store and cannot describe a day split across two (Update 224).
+ *
+ * Resolved through the payout's own `resolvePayableWork`, deliberately: the NI
+ * allowance is decided by whether an hour was worked at the employee's home
+ * store, and that must be the same hour the Tuesday sheet pays. Two rules for
+ * one question is how an employee ends up over the NI cap on paper and under
+ * it in the bank.
+ *
+ * Returns null on any failure — a partial read would silently under-report a
+ * payroll month, which is worse than showing nothing.
  */
 async function loadApprovedDays(
   supabase: ReturnType<typeof createServerSupabase>,
@@ -57,27 +87,44 @@ async function loadApprovedDays(
   storeId: string | null,
 ): Promise<NiDayRow[] | null> {
   const fromDate = windowStartDate();
-  const out: NiDayRow[] = [];
 
-  for (let from = 0; ; from += PAGE_SIZE) {
-    let query = supabase
-      .from("clock_events")
-      .select("employee_id, store_id, event_date, approved_hours")
-      .in("employee_id", employeeIds)
-      .gte("event_date", fromDate)
-      .not("clock_in_at", "is", null)
-      .gt("approved_hours", 0)
-      .order("event_date", { ascending: true })
-      .order("employee_id", { ascending: true });
-    if (storeId) query = query.eq("store_id", storeId);
+  // Headers are only the fallback for a pre-029 day with no shifts beneath it,
+  // so neither read may be scoped by store: a day filtered out here is a day
+  // whose OTHER half this store does owe.
+  const [clocks, sessions] = await Promise.all([
+    loadAllPages<StoreClockRow>((from) =>
+      supabase
+        .from("clock_events")
+        .select(
+          "employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours",
+        )
+        .in("employee_id", employeeIds)
+        .gte("event_date", fromDate)
+        .not("clock_in_at", "is", null)
+        .order("event_date", { ascending: true })
+        .order("employee_id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1),
+    ),
+    loadAllPages<StoreClockSessionRow>((from) =>
+      supabase
+        .from("clock_sessions")
+        .select(PAY_CLOCK_SESSION_COLUMNS)
+        .in("employee_id", employeeIds)
+        .gte("event_date", fromDate)
+        .order("event_date", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1),
+    ),
+  ]);
+  if (!clocks || !sessions) return null;
 
-    const { data, error } = await query.range(from, from + PAGE_SIZE - 1);
-    if (error) return null;
-
-    const page = (data ?? []) as NiDayRow[];
-    out.push(...page);
-    if (page.length < PAGE_SIZE) return out;
-  }
+  return resolvePayableWork(clocks, sessions)
+    .filter((w) => w.hours > 0 && (!storeId || w.store_id === storeId))
+    .map((w) => ({
+      employee_id: w.employee_id,
+      store_id: w.store_id,
+      event_date: w.event_date,
+      hours: w.hours,
+    }));
 }
 
 /**
@@ -113,13 +160,15 @@ export async function loadNiRows(storeId?: string | null): Promise<NiRow[]> {
 
   // `${employee_id}|${YYYY-MM}` → hours worked at the employee's HOME store.
   // Hours at any other store are cash from the first minute (cash-flow.ts), so
-  // they earn no NI allowance and are excluded here rather than counted.
+  // they earn no NI allowance and are excluded here rather than counted. Now
+  // decided per SHIFT, so the Hitchin half of a Stevenage employee's split day
+  // drops out while the Stevenage half still counts.
   const monthTotals = new Map<string, number>();
   for (const d of days) {
     const emp = empById.get(d.employee_id);
     if (!emp || d.store_id !== emp.store_id) continue;
     const key = `${d.employee_id}|${d.event_date.slice(0, 7)}`;
-    monthTotals.set(key, (monthTotals.get(key) ?? 0) + (Number(d.approved_hours) || 0));
+    monthTotals.set(key, (monthTotals.get(key) ?? 0) + d.hours);
   }
 
   const out: NiRow[] = [];

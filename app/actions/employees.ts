@@ -18,10 +18,13 @@ import { employeeNiRate, rollupApprovedWeek } from "@/lib/employee-hours-rollup"
 import {
   applyDayDeliveryTotal,
   approveDaySessions,
+  normaliseDeliveryInput,
   recomputeDayHeader,
   setSessionApproval,
+  setSessionDeliveries,
   unapproveDaySessions,
 } from "@/lib/clock-sessions";
+import type { DeliveryInput } from "@/lib/clock-sessions";
 import { withContactEmails } from "@/lib/contact-email";
 import { resolveActiveStoreId } from "@/lib/types";
 import type {
@@ -913,6 +916,13 @@ export async function setShiftApproval(input: {
   approved: boolean;
   /** Corrected hours for this shift only. Ignored when withdrawing. */
   override_hours?: number;
+  /**
+   * Corrected drops for this shift only. The one honest way to fix a
+   * cross-store day: the day-level total settles onto the last shift, which on
+   * such a day is a different store's till (Update 224). Ignored when
+   * withdrawing — a correction belongs with the sign-off that carries it.
+   */
+  deliveries?: DeliveryInput;
 }) {
   const user = await requireAllowed();
   const supabase = createServerSupabase();
@@ -938,6 +948,11 @@ export async function setShiftApproval(input: {
     approvedHours = roundHoursToMinute(h);
   }
 
+  // Before the approval, so a rejected count never leaves a shift signed off
+  // against figures the manager was trying to replace.
+  const deliveries = input.approved ? normaliseDeliveryInput(input.deliveries) : null;
+  if (deliveries) await setSessionDeliveries(supabase, session.id, deliveries);
+
   await setSessionApproval(supabase, session.id, {
     approved: input.approved,
     approvedHours,
@@ -957,6 +972,7 @@ export async function setShiftApproval(input: {
       employee_id: session.employee_id,
       event_date: session.event_date,
       ...(approvedHours != null ? { approved_hours: approvedHours } : {}),
+      ...(deliveries ? { deliveries } : {}),
     },
   });
 

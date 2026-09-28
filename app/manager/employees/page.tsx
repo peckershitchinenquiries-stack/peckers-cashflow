@@ -24,6 +24,12 @@ export const dynamic = "force-dynamic";
 const APPROVAL_EMPLOYEE_COLUMNS =
   "id, name, position, store_id, employment_status, is_active, hourly_rate, hourly_ni_rate";
 
+const CLOCK_EVENT_COLUMNS =
+  "id, employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, session_count, hours_approved, approved_hours, auto_clocked_out, manual_entry, manual_entry_reason, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason";
+
+const SESSION_COLUMNS =
+  "id, clock_event_id, store_id, seq, clock_in_at, clock_out_at, clock_out_lat, clock_out_lng, auto_clocked_out, manual_entry, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason";
+
 export default async function ManagerEmployeesPage() {
   const user = await requireRole(["manager"]);
   const storeId = resolveActiveStoreId(user.allowed) ?? "";
@@ -73,23 +79,29 @@ export default async function ManagerEmployeesPage() {
       .neq("store_id", storeId)
       .gte("event_date", eightWeeksBack),
     supabase.from("stores").select("*").eq("id", storeId),
-    // Names only, so the missed-entry modal can say which store a visitor is
-    // based at. Kept apart from `stores` above, which scopes the rest of the page.
-    supabase.from("stores").select("id, name").order("name"),
+    // Name and geofence for every store, so the missed-entry modal can say
+    // which store a visitor is based at and Daily Approval can name the other
+    // half of a cross-store day and tell where a shift was clocked OUT.
+    // Coordinates are not payroll data; the rest of the page stays scoped to
+    // `stores` above.
+    supabase
+      .from("stores")
+      .select("id, name, latitude, longitude, geofence_radius_m")
+      .order("name"),
     supabase
       .from("clock_events")
-      .select("id, employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, auto_clocked_out, manual_entry, manual_entry_reason, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason")
+      .select(CLOCK_EVENT_COLUMNS)
       .eq("store_id", storeId)
       .gte("event_date", eightWeeksBack)
       .not("clock_out_at", "is", null)
       .order("event_date", { ascending: false }),
-    // The individual shifts inside those days. A day can hold several, and the
-    // approval row lists them under the total it is signing off.
+    // The individual shifts inside those days, for the shifts worked HERE. A
+    // day can hold several, and the approval row lists them under the total it
+    // is signing off. The days these reach that the header query misses — a
+    // morning here, an evening at the other store — are pulled in below.
     supabase
       .from("clock_sessions")
-      .select(
-        "id, clock_event_id, seq, clock_in_at, clock_out_at, auto_clocked_out, manual_entry, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
-      )
+      .select(SESSION_COLUMNS)
       .eq("store_id", storeId)
       .gte("event_date", eightWeeksBack)
       .order("clock_in_at", { ascending: true }),
@@ -139,16 +151,81 @@ export default async function ManagerEmployeesPage() {
   if (clocksRes.error) {
     console.error("[manager/employees] clock_events query failed:", clocksRes.error.message);
   }
+
+  type SessionRow = NonNullable<typeof sessionsRes.data>[number];
+  type ClockEventRow = NonNullable<typeof clocksRes.data>[number];
+
+  const clockEvents: ClockEventRow[] = [...(clocksRes.data ?? [])];
+  const ownSessions: SessionRow[] = [...(sessionsRes.data ?? [])];
+
+  // A day worked at two stores has ONE header, carrying the store of its LAST
+  // shift (Update 98). Scoped to this store's headers alone, a morning worked
+  // here that ended at the other store was invisible on this screen — the
+  // hours unapprovable, and so unpayable, by anyone (Update 224). Two narrow
+  // follow-ups fix that without widening the estate's payroll to every
+  // manager:
+  //   · the headers our own shifts point at but the header query didn't return
+  //   · every shift of the days that can be cross-store — the ones just found,
+  //     plus any day here holding more than one shift
+  // A single-shift day whose header is ours cannot be cross-store, so the vast
+  // majority of days need neither.
+  const headerIds = new Set(clockEvents.map((e) => e.id));
+  const crossStoreEventIds = Array.from(
+    new Set(
+      ownSessions.map((s) => s.clock_event_id).filter((id) => id && !headerIds.has(id)),
+    ),
+  );
+  const multiShiftEventIds = clockEvents
+    .filter((e) => (e.session_count ?? 1) > 1)
+    .map((e) => e.id);
+  const needAllShifts = Array.from(
+    new Set([...crossStoreEventIds, ...multiShiftEventIds]),
+  );
+
+  const [crossHeadersRes, crossSessionsRes] = await Promise.all([
+    crossStoreEventIds.length > 0
+      ? supabase
+          .from("clock_events")
+          .select(CLOCK_EVENT_COLUMNS)
+          .in("id", crossStoreEventIds)
+          .not("clock_out_at", "is", null)
+      : Promise.resolve({ data: [], error: null }),
+    needAllShifts.length > 0
+      ? supabase
+          .from("clock_sessions")
+          .select(SESSION_COLUMNS)
+          .in("clock_event_id", needAllShifts)
+          .order("clock_in_at", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (crossHeadersRes.error || crossSessionsRes.error) {
+    console.error(
+      "[manager/employees] cross-store clock query failed:",
+      crossHeadersRes.error?.message ?? crossSessionsRes.error?.message,
+    );
+  }
+  clockEvents.push(...((crossHeadersRes.data ?? []) as ClockEventRow[]));
+
   // Shifts keyed by the day they belong to, so an approval row can show the
-  // windows that make up its total.
-  const sessionsByEvent = new Map<string, NonNullable<typeof sessionsRes.data>>();
-  for (const s of sessionsRes.data ?? []) {
+  // windows that make up its total. A cross-store day's set REPLACES the
+  // this-store-only one: a half-day breakdown reads as a day someone worked
+  // half of, which is exactly the bug being fixed.
+  const sessionsByEvent = new Map<string, SessionRow[]>();
+  for (const s of ownSessions) {
     const arr = sessionsByEvent.get(s.clock_event_id) ?? [];
     arr.push(s);
     sessionsByEvent.set(s.clock_event_id, arr);
   }
+  const fullSets = new Map<string, SessionRow[]>();
+  for (const s of (crossSessionsRes.data ?? []) as SessionRow[]) {
+    const arr = fullSets.get(s.clock_event_id) ?? [];
+    arr.push(s);
+    fullSets.set(s.clock_event_id, arr);
+  }
+  for (const [eventId, rows] of fullSets) sessionsByEvent.set(eventId, rows);
+
   const clockDailySummaries = mapClockEventsToDaily(
-    clocksRes.data ?? [],
+    clockEvents,
     empMap,
     sessionsByEvent,
   );
@@ -196,7 +273,13 @@ export default async function ManagerEmployeesPage() {
         clockDailySummaries={clockDailySummaries}
         managerDaily={managerDaily}
         managers={managerAccounts}
-        loadError={clocksRes.error?.message ?? null}
+        loadError={
+          clocksRes.error?.message ??
+          sessionsRes.error?.message ??
+          crossHeadersRes.error?.message ??
+          crossSessionsRes.error?.message ??
+          null
+        }
         todayISO={todayISO()}
         stores={storesRes.data ?? []}
         entryStores={allStoresRes.data ?? []}

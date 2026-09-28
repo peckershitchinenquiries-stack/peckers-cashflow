@@ -18,6 +18,8 @@ import {
   cn,
   formatHoursMins,
   formatHoursMinsWords,
+  haversineMeters,
+  isWithinGeofence,
   londonHHMM,
   parseHoursMinsInput,
   parseISODate,
@@ -29,6 +31,7 @@ import { ManualClockEntryModal } from "@/components/clock/ManualClockEntryModal"
 import { ManagerDeliveryEntryModal } from "@/components/clock/ManagerDeliveryEntryModal";
 import type {
   ClockDailySummary,
+  ClockSessionSpan,
   CoverDailyApprovalRow,
   EntryEmployeeDay,
   ManagerDailyApprovalRow,
@@ -103,6 +106,12 @@ type ApprovalRow = {
    * to choose between, so its row stays exactly as it was.
    */
   shiftRows: ShiftRow[];
+  /**
+   * The day's shifts as loaded. Kept raw alongside `shiftRows` because the
+   * store checks need coordinates and store ids that the display shape drops,
+   * and they can only run where the store list is in scope.
+   */
+  sessions: ClockSessionSpan[];
   approved: boolean;
   approved_hours: number | null;
   /** cover_driver_hours row id — cover rows only, needed to undo. */
@@ -134,6 +143,15 @@ type ShiftRow = {
   approvedHours: number | null;
   open: boolean;
   deliveries: number;
+  /** Where this shift was worked — a day's shifts can sit at different stores. */
+  storeId: string | null;
+  /** Editable per shift, which is the only honest way to fix a cross-store day. */
+  short: number;
+  long: number;
+  extraShort: number;
+  extraLong: number;
+  extraShortReason: string | null;
+  extraLongReason: string | null;
 };
 
 /** "09:00–13:00" for one shift; an unfinished one reads "17:00–…". */
@@ -177,6 +195,13 @@ function shiftRowsOf(sessions: ClockDailySummary["sessions"] | undefined): Shift
           (Number(s.long_deliveries_count) || 0) +
           (Number(s.extra_short_deliveries) || 0) +
           (Number(s.extra_long_deliveries) || 0),
+        storeId: s.store_id ?? null,
+        short: Math.max(0, Number(s.short_deliveries_count) || 0),
+        long: Math.max(0, Number(s.long_deliveries_count) || 0),
+        extraShort: Math.max(0, Number(s.extra_short_deliveries) || 0),
+        extraLong: Math.max(0, Number(s.extra_long_deliveries) || 0),
+        extraShortReason: s.extra_short_reason ?? null,
+        extraLongReason: s.extra_long_reason ?? null,
       };
     });
 }
@@ -202,6 +227,16 @@ const rowKey = (r: ApprovalRow) => `${r.kind}:${r.person_id}:${r.event_date}`;
  *  scroll wheel and arrow keys can't silently change a count mid-review. */
 const deliveryDigits = (raw: string) => raw.replace(/\D/g, "").slice(0, 3);
 
+type DeliveryField = "short" | "long" | "extraShort" | "extraLong";
+
+/** The four delivery boxes a per-shift row renders, in order. */
+const SHIFT_DELIVERY_FIELDS: Array<[DeliveryField, string, string]> = [
+  ["short", "sd", "SD — short deliveries, the normal round"],
+  ["long", "ld", "LD — long deliveries, the normal round"],
+  ["extraShort", "ms", "MS — extra short deliveries, beyond the normal round"],
+  ["extraLong", "ml", "ML — extra long deliveries, beyond the normal round"],
+];
+
 function fromEmployee(s: ClockDailySummary): ApprovalRow {
   return {
     kind: "employee",
@@ -214,6 +249,7 @@ function fromEmployee(s: ClockDailySummary): ApprovalRow {
     clock_out_at: s.clock_out_at,
     shifts: shiftLabels(s.sessions),
     shiftRows: shiftRowsOf(s.sessions),
+    sessions: s.sessions ?? [],
     approved: s.hours_approved,
     approved_hours: s.approved_hours,
     approved_row_id: null,
@@ -243,6 +279,7 @@ function fromCover(c: CoverDailyApprovalRow): ApprovalRow {
     // Cover drivers are single-shift: multi-shift days are an employee feature.
     shifts: [],
     shiftRows: [],
+    sessions: [],
     approved: c.approved,
     approved_hours: c.approved_hours,
     approved_row_id: c.approved_row_id,
@@ -276,6 +313,7 @@ function fromManager(m: ManagerDailyApprovalRow): ApprovalRow {
     // Per-shift sign-off exists for managers in the database, but their row is
     // approved on the day's drop total, so there is nothing to break out here.
     shiftRows: [],
+    sessions: [],
     approved: m.approved,
     // A manager's hours are monitoring only — the badge shows what they worked,
     // never a figure anyone can edit, because none of it is paid from here.
@@ -324,7 +362,12 @@ type Handlers = {
    * accumulate: approving a second shift adds to what is already approved
    * rather than replacing it, and undoing one leaves the rest of the day paid.
    */
-  onShiftApproval?: (session_id: string, approved: boolean) => Promise<void>;
+  onShiftApproval?: (
+    session_id: string,
+    approved: boolean,
+    override_hours?: number,
+    deliveries?: DeliveryEdit,
+  ) => Promise<void>;
   /** Managers are settled on deliveries alone — no hours override. */
   onManagerApprove?: (
     manager_id: string,
@@ -403,7 +446,13 @@ export function DailyHoursApproval({
    * Every store's name, for the covering warnings in the missed-entry modal.
    * Defaults to `stores`, which on a manager's screen holds their store only.
    */
-  entryStores?: Array<{ id: string; name: string }>;
+  entryStores?: Array<{
+    id: string;
+    name: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    geofence_radius_m?: number | null;
+  }>;
   /**
    * Fixes the store a missed entry is recorded against, replacing the picker —
    * the store a manager is running. Without it the modal would default a
@@ -451,16 +500,131 @@ export function DailyHoursApproval({
     );
   }
 
+  // Per-shift corrections reuse the row edit maps under a `sh:<id>` key. A
+  // cross-store day can only be corrected here — a day total would settle onto
+  // one store's till — so the shift rows need the same hours and delivery
+  // boxes the day row has.
+  const shiftKey = (sh: ShiftRow) => `sh:${sh.id}`;
+
+  function effShiftHours(sh: ShiftRow): number {
+    const raw = edited[shiftKey(sh)];
+    const parsed = raw !== undefined ? parseHoursMinsInput(raw) : null;
+    if (raw !== undefined && parsed !== null && parsed > 0) return parsed;
+    if (sh.approvedHours != null) return sh.approvedHours;
+    return sh.hours;
+  }
+
+  function invalidShiftHoursEdit(sh: ShiftRow): boolean {
+    const raw = edited[shiftKey(sh)];
+    return raw !== undefined && raw.trim() !== "" && parseHoursMinsInput(raw) === null;
+  }
+
+  function storedShiftDelivery(sh: ShiftRow, which: DeliveryField): number {
+    switch (which) {
+      case "short":
+        return sh.short;
+      case "long":
+        return sh.long;
+      case "extraShort":
+        return sh.extraShort;
+      case "extraLong":
+        return sh.extraLong;
+    }
+  }
+
+  function effShiftDelivery(sh: ShiftRow, which: DeliveryField): number {
+    const raw = editedDeliv[`${shiftKey(sh)}:${which}`];
+    const parsed = raw !== undefined ? parseInt(raw, 10) : NaN;
+    if (raw !== undefined && !isNaN(parsed) && parsed >= 0) return parsed;
+    return storedShiftDelivery(sh, which);
+  }
+
+  function shiftDeliveryChanged(sh: ShiftRow, which: DeliveryField): boolean {
+    return effShiftDelivery(sh, which) !== storedShiftDelivery(sh, which);
+  }
+
+  function effShiftExtraReason(sh: ShiftRow, which: "extraShort" | "extraLong"): string {
+    const raw = editedExtraReason[`${shiftKey(sh)}:${which}`];
+    if (raw !== undefined) return raw;
+    return (which === "extraShort" ? sh.extraShortReason : sh.extraLongReason) ?? "";
+  }
+
+  function shiftExtraNeedsReason(
+    sh: ShiftRow,
+    which: "extraShort" | "extraLong",
+  ): boolean {
+    return (
+      effShiftDelivery(sh, which) > 0 && !effShiftExtraReason(sh, which).trim()
+    );
+  }
+
+  function clearShiftEdits(sh: ShiftRow) {
+    const k = shiftKey(sh);
+    setEdited((p) => {
+      const n = { ...p };
+      delete n[k];
+      return n;
+    });
+    setEditedDeliv((p) => {
+      const n = { ...p };
+      for (const w of ["short", "long", "extraShort", "extraLong"]) delete n[`${k}:${w}`];
+      return n;
+    });
+    setEditedExtraReason((p) => {
+      const n = { ...p };
+      delete n[`${k}:extraShort`];
+      delete n[`${k}:extraLong`];
+      return n;
+    });
+  }
+
   async function doShift(row: ApprovalRow, shift: ShiftRow, approve: boolean) {
     if (!onShiftApproval) return;
+    const eff = effShiftHours(shift);
+    const override =
+      approve && Math.abs(eff - shift.hours) > 0.01 ? eff : undefined;
+
+    if (approve && row.is_driver) {
+      if (shiftExtraNeedsReason(shift, "extraShort")) {
+        toast.error("Give a reason for the extra short deliveries on this shift.");
+        return;
+      }
+      if (shiftExtraNeedsReason(shift, "extraLong")) {
+        toast.error("Give a reason for the extra long deliveries on this shift.");
+        return;
+      }
+    }
+
+    // A shift's counts are settled whole, not field by field: the server
+    // rewrites the row from what it is given, so a partial patch would read an
+    // unsent field as zero.
+    const anyChanged =
+      row.is_driver &&
+      (["short", "long", "extraShort", "extraLong"] as DeliveryField[]).some((w) =>
+        shiftDeliveryChanged(shift, w),
+      );
+    const deliveries: DeliveryEdit | undefined =
+      approve && anyChanged
+        ? {
+            short: effShiftDelivery(shift, "short"),
+            long: effShiftDelivery(shift, "long"),
+            extraShort: effShiftDelivery(shift, "extraShort"),
+            extraShortReason: effShiftExtraReason(shift, "extraShort").trim(),
+            extraLong: effShiftDelivery(shift, "extraLong"),
+            extraLongReason: effShiftExtraReason(shift, "extraLong").trim(),
+          }
+        : undefined;
+
     setBusyShift(shift.id);
     try {
-      await onShiftApproval(shift.id, approve);
+      await onShiftApproval(shift.id, approve, override, deliveries);
+      const where = storeName(shift.storeId);
       toast.success(
         approve
-          ? `Approved ${row.name}'s ${shift.label} shift`
+          ? `Approved ${row.name}'s ${shift.label} shift${where ? ` at ${where}` : ""} — ${formatHoursMinsWords(eff)}`
           : `Took ${row.name}'s ${shift.label} shift off the payout`,
       );
+      clearShiftEdits(shift);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -489,10 +653,74 @@ export function DailyHoursApproval({
     [managerSummaries, summaries, coverSummaries],
   );
 
+  // Every store this screen may have to NAME, not just the ones it scopes to.
+  // A manager's `stores` holds their own store alone, and a cross-store day
+  // puts the other store's shift right in front of them.
+  const knownStores = React.useMemo(
+    () => [
+      ...stores,
+      ...(entryStores ?? []).filter((e) => !stores.some((s) => s.id === e.id)),
+    ],
+    [stores, entryStores],
+  );
+
   const storeName = React.useMemo(() => {
-    const m = new Map(stores.map((s) => [s.id, s.name]));
+    const m = new Map(knownStores.map((s) => [s.id, s.name]));
     return (id: string | null) => (id ? m.get(id) ?? null : null);
-  }, [stores]);
+  }, [knownStores]);
+
+  /** The distinct stores a day's shifts were worked at, in order of first use. */
+  function storesOfDay(s: ApprovalRow): string[] {
+    const seen: string[] = [];
+    for (const sess of s.sessions) {
+      const id = sess.store_id ?? null;
+      if (id && !seen.includes(id)) seen.push(id);
+    }
+    return seen;
+  }
+
+  /**
+   * A day worked at more than one store. Its hours and drops belong to
+   * different tills, so nothing about it can be settled as a day total — the
+   * server refuses one outright (Update 224) and the row offers per-shift
+   * controls instead.
+   */
+  function isCrossStore(s: ApprovalRow): boolean {
+    return storesOfDay(s).length > 1;
+  }
+
+  /** Which store a set of coordinates falls inside, if any. */
+  function storeAtPosition(lat: number, lng: number): string | null {
+    for (const st of knownStores) {
+      if (st.latitude == null || st.longitude == null) continue;
+      const distance = haversineMeters(lat, lng, st.latitude, st.longitude);
+      if (isWithinGeofence(distance, st.geofence_radius_m ?? 150)) return st.id;
+    }
+    return null;
+  }
+
+  /**
+   * Shifts that ENDED at another store the day has no shift for.
+   *
+   * Clocking out is deliberately allowed anywhere (Update 96) so a shift
+   * recorded against the wrong store can't strand someone. The cost, now that
+   * a day can span stores, is that someone who drives to the second store and
+   * never clocks out and back in leaves ONE session covering both — billed
+   * whole to where it started, and indistinguishable on this screen from an
+   * ordinary shift.
+   *
+   * Ending at another store is only suspicious when nothing was clocked THERE.
+   * Someone who drives over, closes their morning shift on arrival and opens an
+   * evening one did exactly the right thing, and must not be nagged for it.
+   */
+  function shiftsClockedOutElsewhere(s: ApprovalRow): ClockSessionSpan[] {
+    const worked = new Set(storesOfDay(s));
+    return s.sessions.filter((sess) => {
+      if (sess.clock_out_lat == null || sess.clock_out_lng == null) return false;
+      const endedAt = storeAtPosition(sess.clock_out_lat, sess.clock_out_lng);
+      return endedAt != null && endedAt !== sess.store_id && !worked.has(endedAt);
+    });
+  }
 
   // Manager-confirmed hours for a row: the edited value if valid, else the value
   // approved earlier, else the raw clocked total. The box is typed as H.MM
@@ -514,8 +742,6 @@ export function DailyHoursApproval({
     const raw = edited[rowKey(s)];
     return raw !== undefined && raw.trim() !== "" && parseHoursMinsInput(raw) === null;
   }
-
-  type DeliveryField = "short" | "long" | "extraShort" | "extraLong";
 
   function storedDeliveryValue(s: ApprovalRow, which: DeliveryField): number {
     switch (which) {
@@ -881,7 +1107,13 @@ export function DailyHoursApproval({
       s.approved &&
       s.approved_hours != null &&
       Math.abs(s.approved_hours - s.clocked_hours) > 0.01;
-    const expanded = openShifts.includes(key);
+    // A cross-store day is ALWAYS open: the per-shift controls are the only
+    // ones it has, so collapsing them would leave the row with no way to
+    // approve at all.
+    const crossStore = isCrossStore(s);
+    const dayStores = storesOfDay(s);
+    const strayOuts = shiftsClockedOutElsewhere(s);
+    const expanded = openShifts.includes(key) || crossStore;
     // Only finished shifts can be signed off — one still running isn't
     // outstanding work, it's work happening.
     const pendingShifts = s.shiftRows.filter((r) => !r.approved && !r.open).length;
@@ -950,6 +1182,22 @@ export function DailyHoursApproval({
                 <span className="ml-1">{expanded ? "▾" : "▸"}</span>
               </button>
             )}
+            {crossStore && (
+              <span
+                className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-gold/40 bg-gold/10 text-gold font-medium"
+                title={`Worked at ${dayStores.map((id) => storeName(id) ?? "another store").join(" and ")}. Each store pays its own shift from its own till, so this day is approved shift by shift.`}
+              >
+                {dayStores.length} stores
+              </span>
+            )}
+            {strayOuts.length > 0 && (
+              <span
+                className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-warning/40 bg-warning/10 text-warning font-medium"
+                title={`Clocked out at a store this day has no shift for. If they moved mid-shift and never clocked out and back in, the whole span is billed to ${strayOuts.map((o) => storeName(o.store_id ?? null) ?? "where it started").join(", ")} — split it with a manual clock entry before approving, or the other store pays nothing.`}
+              >
+                Clocked out elsewhere
+              </span>
+            )}
             {missingDeliveries(s) && (
               <span
                 className="ml-2 align-middle text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 border border-warning/40 bg-warning/10 text-warning font-medium"
@@ -984,7 +1232,11 @@ export function DailyHoursApproval({
                 )}
               </>
             )}
-            {store && <> · {store}</>}
+            {crossStore ? (
+              <> · {dayStores.map((id) => storeName(id) ?? "—").join(" → ")}</>
+            ) : (
+              store && <> · {store}</>
+            )}
             {s.kind === "cover" && <> · cash</>}
             {s.kind === "manager" && <> · deliveries only</>}
           </p>
@@ -1001,13 +1253,19 @@ export function DailyHoursApproval({
             <div className="mt-2 rounded-lg border border-border bg-bg/40 divide-y divide-border/60">
               {s.shiftRows.map((sh) => (
                 <div key={sh.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-[10rem]">
                     <p className="text-xs text-text-primary tabular-nums">
                       {sh.label}
                       <span className="text-text-muted">
                         {" "}
                         · {formatHoursMinsWords(sh.approvedHours ?? sh.hours)}
                       </span>
+                      {/* Named on every shift of a cross-store day, not only
+                          where it differs from the row — "which half was
+                          Hitchin" is the whole question being answered. */}
+                      {crossStore && storeName(sh.storeId) && (
+                        <span className="text-gold"> · {storeName(sh.storeId)}</span>
+                      )}
                       {sh.approvedHours != null &&
                         Math.abs(sh.approvedHours - sh.hours) > 0.01 && (
                           <span
@@ -1041,21 +1299,99 @@ export function DailyHoursApproval({
                       </button>
                     </>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      loading={busyShift === sh.id}
-                      onClick={() => doShift(s, sh, true)}
-                      title="Approve this shift on its own — it is added to whatever is already approved for the day."
-                    >
-                      Approve shift
-                    </Button>
+                    <>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <HoursMinsInput
+                          value={edited[shiftKey(sh)] ?? formatHoursMins(sh.hours)}
+                          onChange={(next) =>
+                            setEdited((p) => ({ ...p, [shiftKey(sh)]: next }))
+                          }
+                          invalid={invalidShiftHoursEdit(sh)}
+                          hourAriaLabel={`Hours for ${s.name} on the ${sh.label} shift`}
+                          minAriaLabel={`Minutes for ${s.name} on the ${sh.label} shift`}
+                        />
+                        {invalidShiftHoursEdit(sh) && (
+                          <span className="text-[10px] text-danger">
+                            Invalid — minutes above 59
+                          </span>
+                        )}
+                      </div>
+                      {s.is_driver && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {SHIFT_DELIVERY_FIELDS.map(([which, label, title]) => (
+                            <React.Fragment key={which}>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={
+                                  editedDeliv[`${shiftKey(sh)}:${which}`] ??
+                                  String(storedShiftDelivery(sh, which))
+                                }
+                                onChange={(e) =>
+                                  setEditedDeliv((p) => ({
+                                    ...p,
+                                    [`${shiftKey(sh)}:${which}`]: deliveryDigits(
+                                      e.target.value,
+                                    ),
+                                  }))
+                                }
+                                aria-label={`${title} for ${s.name} on the ${sh.label} shift`}
+                                title={title}
+                                className="w-12 rounded-lg border border-border bg-surface px-1.5 py-1 text-right text-xs tabular-nums outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
+                              />
+                              <span className="text-[11px] text-text-muted">{label}</span>
+                            </React.Fragment>
+                          ))}
+                          {(["extraShort", "extraLong"] as const)
+                            .filter((w) => shiftExtraNeedsReason(sh, w))
+                            .map((w) => (
+                              <input
+                                key={w}
+                                type="text"
+                                value={editedExtraReason[`${shiftKey(sh)}:${w}`] ?? ""}
+                                onChange={(e) =>
+                                  setEditedExtraReason((p) => ({
+                                    ...p,
+                                    [`${shiftKey(sh)}:${w}`]: e.target.value,
+                                  }))
+                                }
+                                placeholder={
+                                  w === "extraShort"
+                                    ? "Reason for extra SD"
+                                    : "Reason for extra LD"
+                                }
+                                aria-label={`Reason for ${
+                                  w === "extraShort" ? "extra short" : "extra long"
+                                } deliveries for ${s.name} on the ${sh.label} shift`}
+                                className="w-full sm:w-36 rounded-lg border border-warning/50 bg-surface px-2 py-1 text-xs outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/30"
+                              />
+                            ))}
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        loading={busyShift === sh.id}
+                        disabled={
+                          !(effShiftHours(sh) > 0) ||
+                          invalidShiftHoursEdit(sh) ||
+                          (s.is_driver &&
+                            (shiftExtraNeedsReason(sh, "extraShort") ||
+                              shiftExtraNeedsReason(sh, "extraLong")))
+                        }
+                        onClick={() => doShift(s, sh, true)}
+                        title="Approve this shift on its own — it is added to whatever is already approved for the day, and paid by the store it was worked at."
+                      >
+                        Approve shift
+                      </Button>
+                    </>
                   )}
                 </div>
               ))}
               <p className="px-3 py-2 text-[11px] text-text-subtle">
-                Each shift is paid only once approved. Approving the whole day above
-                signs off every outstanding shift at once.
+                {crossStore
+                  ? "This day was worked at more than one store. Each shift is approved on its own and paid by the store it was worked at — there is no whole-day figure to set."
+                  : "Each shift is paid only once approved. Approving the whole day above signs off every outstanding shift at once."}
               </p>
             </div>
           )}
@@ -1101,6 +1437,14 @@ export function DailyHoursApproval({
               Undo
             </Button>
           </div>
+        ) : crossStore ? (
+          /* Hours and drops belong to two different tills, and there is no way
+             to guess the split — the server refuses a day total outright
+             (Update 224). The shift rows above carry the real controls. */
+          <p className="w-full sm:w-52 text-[11px] text-text-subtle sm:text-right">
+            Worked at {dayStores.length} stores — approve each shift above, so every
+            store pays its own.
+          </p>
         ) : (
           <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end max-sm:grid max-sm:grid-cols-2 max-sm:rounded-xl max-sm:border max-sm:border-border max-sm:bg-bg/40 max-sm:p-2.5">
             {/* No hours box on a manager row: their pay is a fixed daily wage

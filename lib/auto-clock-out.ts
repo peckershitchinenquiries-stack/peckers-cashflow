@@ -319,7 +319,7 @@ export async function autoCloseOpenClocks(
       const [rotaRes, schedRes] = await Promise.all([
         admin
           .from("rota_shifts")
-          .select("id, employee_id, shift_date, start_time, end_time, is_day_off, manager_notes")
+          .select("id, employee_id, store_id, shift_date, start_time, end_time, is_day_off, manager_notes")
           .in("employee_id", empIds)
           .gte("shift_date", dates[0])
           .lte("shift_date", dates[dates.length - 1]),
@@ -332,6 +332,7 @@ export async function autoCloseOpenClocks(
       type RotaRow = {
         id: string;
         employee_id: string;
+        store_id: string | null;
         shift_date: string;
         start_time: string | null;
         end_time: string | null;
@@ -353,25 +354,40 @@ export async function autoCloseOpenClocks(
       }
 
       /**
-       * Pick the booked shift a still-open SESSION belongs to: the working shift
-       * whose start is latest but not after the session's clock-in, i.e. the one
-       * that was current when the person clocked in. Falls back to the earliest
-       * shift if the clock-in landed before every booked start (e.g. they showed
-       * up early). Day-off rows are never picked here — the caller already
-       * discards a day-off `rota` via `!rota.is_day_off` at the call site, but
-       * filtering here too keeps a single-shift day's existing behaviour exact.
+       * Pick the booked shift a still-open SESSION belongs to.
+       *
+       * The STORE decides first (Update 224). A cross-store day books one shift
+       * per store and their windows sit end to end — Hitchin 11:55–17:00, then
+       * Stevenage 17:00–23:00 — so a clock-in a few minutes before the evening
+       * start matched the MORNING booking on time alone and closed the evening
+       * shift at 17:00. Six minutes early cost eight hours of pay. The open
+       * session already knows which store it is at, so use it.
+       *
+       * Within the chosen store, the rule is unchanged: the working shift whose
+       * start is latest but not after the clock-in, falling back to the earliest
+       * when they arrived before every booked start. Day-off rows are never
+       * picked here — the caller also discards a day-off `rota` via
+       * `!rota.is_day_off`, but filtering here keeps a single-shift day exact.
        */
-      function pickRotaForSession(rows: RotaRow[], clockInAt: string): RotaRow | undefined {
+      function pickRotaForSession(
+        rows: RotaRow[],
+        clockInAt: string,
+        storeId: string | null,
+      ): RotaRow | undefined {
         const working = rows.filter((r) => !r.is_day_off && r.start_time);
-        if (working.length <= 1) return working[0];
+        const sameStore = storeId ? working.filter((r) => r.store_id === storeId) : [];
+        // Only narrow when this store actually has a booking. A shift picked up
+        // at a store nobody rostered still deserves the day's best guess.
+        const pool = sameStore.length > 0 ? sameStore : working;
+        if (pool.length <= 1) return pool[0];
         const clockInParts = londonParts(new Date(clockInAt));
         const clockInMin = clockInParts.hour * 60 + clockInParts.minute;
         const startMin = (r: RotaRow) => timeToMinutes(r.start_time);
-        const notAfter = working
+        const notAfter = pool
           .filter((r) => startMin(r) <= clockInMin)
           .sort((a, b) => startMin(b) - startMin(a));
         if (notAfter.length) return notAfter[0];
-        return [...working].sort((a, b) => startMin(a) - startMin(b))[0];
+        return [...pool].sort((a, b) => startMin(a) - startMin(b))[0];
       }
       const tmplByKey = new Map<string, { start_time: string | null; end_time: string | null }>();
       for (const s of (schedRes.data ?? []) as Array<{
@@ -409,9 +425,14 @@ export async function autoCloseOpenClocks(
         // a pre-029 row, or a manual entry that failed before writing its shift.
         const sessionClockInAt = openSess?.clock_in_at ?? row.clock_in_at;
 
+        // The session's own store, not the day header's — the header carries
+        // the LATEST shift's store, which on a cross-store day is the one being
+        // closed only by coincidence.
+        const sessionStoreId = openSess?.store_id ?? row.store_id ?? null;
         const rota = pickRotaForSession(
           rotaByKey.get(`${row.employee_id}:${row.event_date}`) ?? [],
           sessionClockInAt,
+          sessionStoreId,
         );
         const tmpl = tmplByKey.get(
           `${row.employee_id}:${weekdayIndex(parseISODate(row.event_date))}`,
@@ -425,7 +446,7 @@ export async function autoCloseOpenClocks(
           // inheriting the morning's finish time.
           rota: rota && !rota.is_day_off ? { start: rota.start_time, end: rota.end_time } : null,
           template: tmpl ? { start: tmpl.start_time, end: tmpl.end_time } : null,
-          storeClose: row.store_id ? storeClose.get(row.store_id) ?? null : null,
+          storeClose: sessionStoreId ? storeClose.get(sessionStoreId) ?? null : null,
         });
         if (now.getTime() < resolved.at.getTime() + graceMs) {
           waiting += 1;
