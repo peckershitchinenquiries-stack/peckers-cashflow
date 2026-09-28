@@ -1,6 +1,6 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
-import { AnalyticsView } from "@/components/analytics/AnalyticsView";
+import { AnalyticsView, type AnalyticsEmployee } from "@/components/analytics/AnalyticsView";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +9,12 @@ export default async function AnalyticsPage() {
   const supabase = createServerSupabase();
   const [{ data: stores }, { data: employees }] = await Promise.all([
     supabase.from("stores").select("id, name").order("name"),
-    supabase.from("employees").select("id, store_id"),
+    // The whole estate, with rates: cash is owed by the store each shift was
+    // worked at, and the NI allowance is a rule over the employee's FULL week.
+    supabase
+      .from("employees")
+      .select("id, name, store_id, hourly_cash_rate, bank_weekly_hours_limit"),
   ]);
-
-  const employeesByStore: Record<string, string[]> = {};
-  for (const e of employees ?? []) {
-    if (e.store_id) (employeesByStore[e.store_id] ??= []).push(e.id);
-  }
 
   return (
     <>
@@ -25,7 +24,7 @@ export default async function AnalyticsPage() {
       />
       <AnalyticsView
         stores={stores ?? []}
-        employeesByStore={employeesByStore}
+        employees={(employees ?? []) as AnalyticsEmployee[]}
         isAdmin
         defaultStoreId={stores?.[0]?.id ?? ""}
       />

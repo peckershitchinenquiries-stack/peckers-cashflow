@@ -2,7 +2,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveActiveStoreId } from "@/lib/types";
-import { AnalyticsView } from "@/components/analytics/AnalyticsView";
+import { AnalyticsView, type AnalyticsEmployee } from "@/components/analytics/AnalyticsView";
 
 export const dynamic = "force-dynamic";
 
@@ -24,12 +24,13 @@ export default async function ManagerAnalyticsPage() {
   const supabase = createServerSupabase();
   const [{ data: store }, { data: employees }] = await Promise.all([
     supabase.from("stores").select("id, name").eq("id", storeId).maybeSingle(),
-    supabase.from("employees").select("id").eq("store_id", storeId),
+    // Estate-wide, not this store's roster: someone whose home store is the
+    // other one still has to be priced when they cover a shift here, and their
+    // NI allowance is a rule over their whole week wherever it was worked.
+    supabase
+      .from("employees")
+      .select("id, name, store_id, hourly_cash_rate, bank_weekly_hours_limit"),
   ]);
-
-  const employeesByStore: Record<string, string[]> = {
-    [storeId]: (employees ?? []).map((e) => e.id),
-  };
 
   return (
     <>
@@ -39,7 +40,7 @@ export default async function ManagerAnalyticsPage() {
       />
       <AnalyticsView
         stores={store ? [store] : []}
-        employeesByStore={employeesByStore}
+        employees={(employees ?? []) as AnalyticsEmployee[]}
         isAdmin={false}
         defaultStoreId={storeId}
       />

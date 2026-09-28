@@ -239,18 +239,6 @@ export function CrewClockApp({
   const currentPhase: "in" | "out" = clockedIn ? "out" : "in";
   const finishedShiftToday = !clockedIn && (completedTodayCount > 0 || !!todayClock?.clock_out_at);
 
-  // The booked start today's clock-in is measured against, in London wall-clock
-  // minutes. Only a BOOKING counts — `weekShifts` is rota_shifts, and the
-  // recurring `schedules` template above is availability, which never creates
-  // one. Earliest booked shift of the day, matching what findShiftForClockIn
-  // resolves to server-side.
-  const todayBookedStartMinutes = React.useMemo(() => {
-    const booked = weekShifts
-      .filter((s) => s.shift_date === today && !s.is_day_off && s.start_time)
-      .sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""))[0];
-    return bookableStartMinutes(booked ?? null);
-  }, [weekShifts, today]);
-
   const { geo, refresh: requestLocation, acquireForSubmit } = useGeoFix({
     enabled: locatedStores.length > 0,
     // A tab backgrounded overnight renders yesterday's date, shift and hours
@@ -260,23 +248,6 @@ export function CrewClockApp({
       if (!busy) router.refresh();
     },
   });
-
-  const [nowMs, setNowMs] = React.useState(() => Date.now());
-  const isEarlyAt = (ms: number) =>
-    isEarlyClockIn({
-      nowMinutes: timeToMinutes(londonHHMM(new Date(ms))),
-      scheduledStartMinutes: todayBookedStartMinutes,
-      hasSessionToday: todaySessions.length > 0,
-    });
-  const tooEarly = currentPhase === "in" && isEarlyAt(nowMs);
-
-  // Re-evaluated while they wait, so the button unlocks at the booked minute
-  // without the employee having to reload.
-  React.useEffect(() => {
-    if (!tooEarly) return;
-    const t = setInterval(() => setNowMs(Date.now()), 15_000);
-    return () => clearInterval(t);
-  }, [tooEarly]);
 
   // Distance to every clockable store from the current position, nearest first.
   const storeDistances = React.useMemo(
@@ -313,6 +284,46 @@ export function CrewClockApp({
     targetDistance = detected?.distance ?? storeDistances[0]?.distance ?? null;
     inRange = !!detected;
   }
+
+  // The booked start today's clock-in is measured against, in London wall-clock
+  // minutes. Only a BOOKING counts — `weekShifts` is rota_shifts, and the
+  // recurring `schedules` template above is availability, which never creates
+  // one.
+  //
+  // Scoped to the store they're standing in, mirroring findShiftForClockIn
+  // (Update 225). With Hitchin booked 11:00 and Stevenage 17:00, the day's
+  // earliest booking is Hitchin's — so someone starting at Stevenage was
+  // unlocked from 11:00 and the refusal named the wrong time. A convertible
+  // booking (day off / no start time) at any store is the fallback, because the
+  // server moves that cell to wherever they turn up.
+  const todayBookedStartMinutes = React.useMemo(() => {
+    const todays = weekShifts.filter((s) => s.shift_date === today);
+    const convertible = todays.find((s) => s.is_day_off || !s.start_time);
+    const here = targetStore
+      ? todays.filter((s) => s.store_id === targetStore.id)
+      : todays;
+    const booked = here
+      .filter((s) => !s.is_day_off && s.start_time)
+      .sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""))[0];
+    return bookableStartMinutes(booked ?? convertible ?? null);
+  }, [weekShifts, today, targetStore]);
+
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  const isEarlyAt = (ms: number) =>
+    isEarlyClockIn({
+      nowMinutes: timeToMinutes(londonHHMM(new Date(ms))),
+      scheduledStartMinutes: todayBookedStartMinutes,
+      hasSessionToday: todaySessions.length > 0,
+    });
+  const tooEarly = currentPhase === "in" && isEarlyAt(nowMs);
+
+  // Re-evaluated while they wait, so the button unlocks at the booked minute
+  // without the employee having to reload.
+  React.useEffect(() => {
+    if (!tooEarly) return;
+    const t = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [tooEarly]);
 
   async function doClockIn() {
     if (geo.status !== "ok") {

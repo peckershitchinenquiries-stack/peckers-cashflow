@@ -689,6 +689,26 @@ export function DailyHoursApproval({
     return storesOfDay(s).length > 1;
   }
 
+  /**
+   * A shift worked at another store than the one this screen is being run for
+   * (Update 225). Approval releases money and each store pays from its own till,
+   * so its own manager signs it off — the server refuses it either way. The shift
+   * is still SHOWN, because "which half was Hitchin, and has it been paid" is a
+   * question the manager holding the other half needs answered.
+   *
+   * `entryStoreId` is the manager's active store and is unset for an admin, who
+   * signs off across the estate.
+   */
+  function isForeignShift(sh: ShiftRow): boolean {
+    return !!entryStoreId && !!sh.storeId && sh.storeId !== entryStoreId;
+  }
+
+  /** A whole day worked at a single store that isn't this manager's. */
+  function isForeignDay(row: ApprovalRow): boolean {
+    const dayStores = storesOfDay(row);
+    return !!entryStoreId && dayStores.length === 1 && dayStores[0] !== entryStoreId;
+  }
+
   /** Which store a set of coordinates falls inside, if any. */
   function storeAtPosition(lat: number, lng: number): string | null {
     for (const st of knownStores) {
@@ -1283,6 +1303,14 @@ export function DailyHoursApproval({
                   </div>
                   {sh.open ? (
                     <span className="text-[11px] text-text-subtle">On shift</span>
+                  ) : isForeignShift(sh) ? (
+                    <span
+                      className="text-[11px] text-text-subtle"
+                      title={`This shift was worked at ${storeName(sh.storeId) ?? "another store"}, which pays it from its own till. Its manager signs it off.`}
+                    >
+                      {sh.approved ? "Paid by " : "For "}
+                      {storeName(sh.storeId) ?? "another store"}
+                    </span>
                   ) : sh.approved ? (
                     <>
                       <Badge variant="success">
@@ -1444,6 +1472,13 @@ export function DailyHoursApproval({
           <p className="w-full sm:w-52 text-[11px] text-text-subtle sm:text-right">
             Worked at {dayStores.length} stores — approve each shift above, so every
             store pays its own.
+          </p>
+        ) : isForeignDay(s) ? (
+          /* Worked wholly at the other store. Shown so a manager can see it has
+             been dealt with, but it is that store's money (Update 225). */
+          <p className="w-full sm:w-52 text-[11px] text-text-subtle sm:text-right">
+            Worked at {storeName(dayStores[0]) ?? "another store"} — its manager signs
+            this day off.
           </p>
         ) : (
           <div className="flex w-full sm:w-auto items-center gap-2 flex-wrap justify-start sm:justify-end max-sm:grid max-sm:grid-cols-2 max-sm:rounded-xl max-sm:border max-sm:border-border max-sm:bg-bg/40 max-sm:p-2.5">

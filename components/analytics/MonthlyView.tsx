@@ -15,6 +15,15 @@ import {
 } from "@/components/ui/icons";
 import { createClient } from "@/lib/supabase";
 import { StatTile } from "./StatTile";
+import type { AnalyticsEmployee } from "./AnalyticsView";
+import {
+  approvedHoursByEmployeeStore,
+  cashHoursFromStoreTotal,
+  PAY_CLOCK_SESSION_COLUMNS,
+  round2,
+  type StoreClockRow,
+  type StoreClockSessionRow,
+} from "@/lib/cash-flow";
 import { useChartColors } from "./useChartColors";
 import {
   endOfISOWeek,
@@ -48,6 +57,10 @@ type WeeklyAgg = {
   net: number;
 };
 
+/** Everything a week's cash needs: the day headers and the shifts under them. */
+const CLOCK_COLUMNS =
+  "employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count";
+
 function getMonthWeeks(year: number, monthIdx: number) {
   // Returns array of {start, end} for ISO weeks that overlap this month, indexed by Monday.
   const firstOfMonth = new Date(year, monthIdx, 1);
@@ -66,15 +79,18 @@ function getMonthWeeks(year: number, monthIdx: number) {
 
 export function MonthlyView({
   storeId,
-  employeeIds,
+  employees,
 }: {
   storeId: string;
-  employeeIds: string[];
+  employees: AnalyticsEmployee[];
 }) {
   const supabase = React.useMemo(() => createClient(), []);
   const colors = useChartColors();
   const now = new Date();
-  const empKey = employeeIds.join(",");
+  // Stable key so the effect re-runs when the roster or its rates change.
+  const empKey = employees
+    .map((e) => `${e.id}:${e.store_id}:${e.hourly_cash_rate}:${e.bank_weekly_hours_limit}`)
+    .join(",");
   const [year, setYear] = React.useState(now.getFullYear());
   const [month, setMonth] = React.useState(now.getMonth()); // 0-11
   const [loading, setLoading] = React.useState(true);
@@ -132,14 +148,13 @@ export function MonthlyView({
         const prevWeeks = getMonthWeeks(prevTarget.getFullYear(), prevTarget.getMonth());
         const prevWeekStarts = prevWeeks.map((w) => toISODate(w.start));
 
-        const empFilter = employeeIds.length
-          ? employeeIds
-          : ["00000000-0000-0000-0000-000000000000"];
         const [
           entriesRes,
-          hoursRes,
+          clocksRes,
+          sessionsRes,
           prevEntriesRes,
-          prevHoursRes,
+          prevClocksRes,
+          prevSessionsRes,
           coverRes,
           prevCoverRes,
         ] = await Promise.all([
@@ -149,11 +164,22 @@ export function MonthlyView({
             .eq("store_id", storeId)
             .gte("entry_date", toISODate(fetchStart))
             .lte("entry_date", toISODate(fetchEnd)),
+          // Estate-wide and NOT store-filtered, deliberately. Cash is owed by the
+          // store each SHIFT was worked at, and the home-store NI allowance is a
+          // rule over the employee's whole week — both need every row. Reading
+          // employee_hours_computed.cash_amount_due instead billed a split week's
+          // cash wholly to the home store and NI-limited the away hours, which is
+          // the bug Update 218 fixed everywhere else (Update 225).
           supabase
-            .from("employee_hours_computed")
-            .select("week_start_date, cash_amount_due, employee_id")
-            .in("week_start_date", monthWeekStarts)
-            .in("employee_id", empFilter),
+            .from("clock_events")
+            .select(CLOCK_COLUMNS)
+            .gte("event_date", toISODate(fetchStart))
+            .lte("event_date", toISODate(fetchEnd)),
+          supabase
+            .from("clock_sessions")
+            .select(PAY_CLOCK_SESSION_COLUMNS)
+            .gte("event_date", toISODate(fetchStart))
+            .lte("event_date", toISODate(fetchEnd)),
           supabase
             .from("daily_cash_entries")
             .select("entry_date, vita_mojo_sales, supermarket_expenses")
@@ -161,10 +187,15 @@ export function MonthlyView({
             .gte("entry_date", toISODate(fetchPrevStart))
             .lte("entry_date", toISODate(fetchPrevEnd)),
           supabase
-            .from("employee_hours_computed")
-            .select("week_start_date, cash_amount_due, employee_id")
-            .in("week_start_date", prevWeekStarts.length ? prevWeekStarts : ["1970-01-01"])
-            .in("employee_id", empFilter),
+            .from("clock_events")
+            .select(CLOCK_COLUMNS)
+            .gte("event_date", toISODate(fetchPrevStart))
+            .lte("event_date", toISODate(fetchPrevEnd)),
+          supabase
+            .from("clock_sessions")
+            .select(PAY_CLOCK_SESSION_COLUMNS)
+            .gte("event_date", toISODate(fetchPrevStart))
+            .lte("event_date", toISODate(fetchPrevEnd)),
           // Cover drivers are cash-only and paid from the same till. Keyed per
           // DAY, so they're bucketed into weeks below rather than joined on
           // week_start_date. Approved days only — that's money actually owed.
@@ -186,10 +217,35 @@ export function MonthlyView({
 
         if (!active) return;
 
+        // One week's staff cash at THIS store. The NI allowance is a weekly rule,
+        // so each week is priced on its own rather than the month being summed
+        // and split once.
+        const staffCashForWeek = (
+          clocks: StoreClockRow[],
+          sessions: StoreClockSessionRow[],
+          startISO: string,
+          endISO: string,
+        ): number => {
+          const inWeek = <T extends { event_date: string }>(rows: T[]) =>
+            rows.filter((r) => r.event_date >= startISO && r.event_date <= endISO);
+          const hoursByEmpStore = approvedHoursByEmployeeStore(
+            inWeek(clocks),
+            inWeek(sessions),
+          );
+          return round2(
+            employees.reduce((sum, emp) => {
+              const hoursHere = hoursByEmpStore.get(`${emp.id}:${storeId}`) ?? 0;
+              const cashHours = cashHoursFromStoreTotal(hoursHere, storeId, emp);
+              return sum + cashHours * (Number(emp.hourly_cash_rate) || 0);
+            }, 0),
+          );
+        };
+
         const aggregateForWeeks = (
           weekDefs: { start: Date; end: Date }[],
           entries: Array<{ entry_date: string; vita_mojo_sales: number; supermarket_expenses: number }>,
-          hours: Array<{ week_start_date: string; cash_amount_due: number }>,
+          clocks: StoreClockRow[],
+          sessions: StoreClockSessionRow[],
           cover: Array<{ work_date: string; total_pay: number }>,
         ): WeeklyAgg[] => {
           return weekDefs.map((w, idx) => {
@@ -203,9 +259,7 @@ export function MonthlyView({
               (s, r) => s + Number(r.supermarket_expenses || 0),
               0,
             );
-            const staffCash = hours
-              .filter((h) => h.week_start_date === startISO)
-              .reduce((s, r) => s + Number(r.cash_amount_due || 0), 0);
+            const staffCash = staffCashForWeek(clocks, sessions, startISO, endISO);
             const coverCash = cover
               .filter((c) => c.work_date >= startISO && c.work_date <= endISO)
               .reduce((s, r) => s + Number(r.total_pay || 0), 0);
@@ -224,14 +278,16 @@ export function MonthlyView({
         const computed = aggregateForWeeks(
           monthWeeks,
           (entriesRes.data ?? []) as any[],
-          (hoursRes.data ?? []) as any[],
+          (clocksRes.data ?? []) as unknown as StoreClockRow[],
+          (sessionsRes.data ?? []) as unknown as StoreClockSessionRow[],
           (coverRes.data ?? []) as any[],
         );
 
         const prevAgg = aggregateForWeeks(
           prevWeeks,
           (prevEntriesRes.data ?? []) as any[],
-          (prevHoursRes.data ?? []) as any[],
+          (prevClocksRes.data ?? []) as unknown as StoreClockRow[],
+          (prevSessionsRes.data ?? []) as unknown as StoreClockSessionRow[],
           (prevCoverRes.data ?? []) as any[],
         );
         const prev = prevAgg.reduce(
@@ -254,6 +310,9 @@ export function MonthlyView({
     return () => {
       active = false;
     };
+    // `employees` is read inside but keyed by empKey, so a new array identity
+    // with the same roster doesn't refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, year, month, storeId, empKey]);
 
   const yearOptions = React.useMemo(() => {

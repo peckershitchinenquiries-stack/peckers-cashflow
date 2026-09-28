@@ -1,7 +1,7 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveActiveStoreId } from "@/lib/types";
-import { RotaView } from "@/components/rota/RotaView";
+import { RotaView, type RotaClockSession } from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
 import {
   addDays,
@@ -27,6 +27,7 @@ import type {
 import {
   COVER_SCHEDULE_COLUMNS,
   ROTA_CLOCK_COLUMNS,
+  ROTA_CLOCK_SESSION_COLUMNS,
   ROTA_EMPLOYEE_COLUMNS,
   ROTA_HISTORY_SHIFT_COLUMNS,
   ROTA_SHIFT_COLUMNS,
@@ -67,6 +68,7 @@ export default async function ManagerRotaPage({
     shiftsRes,
     shiftHistoryRes,
     clocksRes,
+    clockSessionsRes,
     deliveriesRes,
     schedulesRes,
     coverDriversRes,
@@ -95,6 +97,11 @@ export default async function ManagerRotaPage({
       supabase
         .from("clock_events")
         .select(ROTA_CLOCK_COLUMNS)
+        .gte("event_date", startIso)
+        .lte("event_date", clockEndIso),
+      supabase
+        .from("clock_sessions")
+        .select(ROTA_CLOCK_SESSION_COLUMNS)
         .gte("event_date", startIso)
         .lte("event_date", clockEndIso),
       supabase
@@ -137,6 +144,7 @@ export default async function ManagerRotaPage({
         shifts={(shiftsRes.data ?? []) as RotaShift[]}
         historyShifts={(shiftHistoryRes.data ?? []) as RotaHistoryShift[]}
         clocks={(clocksRes.data ?? []) as ClockEvent[]}
+        clockSessions={(clockSessionsRes.data ?? []) as RotaClockSession[]}
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
         coverDrivers={(coverDriversRes.data ?? []) as CoverDriver[]}

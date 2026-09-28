@@ -27,6 +27,7 @@ import {
   recomputeDayHeader,
   sessionsForEvent,
   setSessionDeliveries,
+  storesWorkedOnDay,
   type DeliveryInput,
 } from "@/lib/clock-sessions";
 // The clock-IN routine and the helpers it shares with the manager-entry path
@@ -40,7 +41,7 @@ import {
   performClockIn,
   requireAllowed,
   revalidateClockPaths,
-  stampAutoShiftWindow,
+  stampAutoShiftsForDay,
   type ClockInFix,
 } from "@/lib/clock-core";
 import { hasRole, resolveActiveStoreId, type ActionResult } from "@/lib/types";
@@ -177,15 +178,17 @@ async function performClockOut(input: ClockOutInput) {
   // come from the sessions.
   const { workedHours, lastOut } = await recomputeDayHeader(supabase, existing.id);
 
-  // If the shift was auto-created at clock-in, stamp the real worked window on
-  // it. The end is the day's LATEST clock-out and the hours are the SUM of its
-  // shifts, so a split day neither bills the gap nor ends at the wrong time.
-  await stampAutoShiftWindow(
-    supabase,
-    existing.shift_id,
-    londonHHMM(lastOut ? new Date(lastOut) : nowDate),
-    workedHours,
-  );
+  // If a shift was auto-created at clock-in, stamp the real worked window on its
+  // cell — one cell per store, each carrying only that store's latest clock-out
+  // and summed hours. Resolved from the day's shifts rather than the header's
+  // shift_id, which names only the cell of the store last clocked into: on a
+  // cross-store day that put the whole day's hours on one store's Rota and left
+  // the other reading zero (Update 225).
+  await stampAutoShiftsForDay(supabase, {
+    employeeId: employee.id,
+    eventDate: session.event_date,
+    sessions: await sessionsForEvent(supabase, existing.id),
+  });
 
   await writeAudit({
     action: "clock_out",
@@ -331,10 +334,24 @@ async function performSetClockDeliveries(input: SetClockDeliveriesInput) {
   // Managers are limited to their own store: they can edit a driver's deliveries
   // for any day that driver worked AT the manager's store. When no clock row
   // exists yet, a manager creates one at their own store.
+  //
+  // "Worked at your store" is asked of the day's SHIFTS, not its header. The
+  // header names only the store last clocked into, so on a cross-store day the
+  // manager holding the MORNING was told the day wasn't theirs — for a day worked
+  // at their store (Update 225). Both managers now get past this check and hit
+  // assertSingleStoreDay inside applyDayDeliveryTotal, which refuses a day-level
+  // total on a split day for the right reason and points them at the per-shift
+  // controls.
   const managerStoreId = user.allowed!.role === "manager" ? resolveActiveStoreId(user.allowed) : null;
+  const dayStores = existing ? storesWorkedOnDay(await sessionsForEvent(supabase, existing.id)) : [];
   const eventStoreId = existing?.store_id ?? managerStoreId ?? employee.store_id ?? null;
-  if (user.allowed!.role === "manager" && eventStoreId !== managerStoreId) {
-    throw new Error("You can only edit drivers for days they worked at your store.");
+  if (user.allowed!.role === "manager") {
+    const workedHere = dayStores.length > 0
+      ? dayStores.includes(managerStoreId ?? "")
+      : eventStoreId === managerStoreId;
+    if (!workedHere) {
+      throw new Error("You can only edit drivers for days they worked at your store.");
+    }
   }
 
   const shortCount = Math.max(0, Number(input.short_deliveries_count) || 0);
@@ -675,16 +692,20 @@ async function performManualClockEntry(input: ManualClockEntryInput) {
     );
   }
 
-  const shift = await findShiftForClockIn(supabase, employee.id, input.event_date);
+  const shift = await findShiftForClockIn(supabase, employee.id, input.event_date, storeId);
 
-  // The rota cell starts when the day's EARLIEST shift did — by clock time, not
-  // by which shift was recorded first. A manager filling in a forgotten morning
-  // after the evening is the case that breaks any entry-order assumption.
-  const earliestIn = otherSessions.reduce(
-    (min, s) =>
-      new Date(s.clock_in_at).getTime() < min.getTime() ? new Date(s.clock_in_at) : min,
-    clockInAt,
-  );
+  // The rota cell starts when the day's EARLIEST shift AT THIS STORE did — by
+  // clock time, not by which shift was recorded first. A manager filling in a
+  // forgotten morning after the evening is the case that breaks any entry-order
+  // assumption; the store filter is what keeps a Hitchin cell from opening at
+  // the Stevenage morning's time on a cross-store day.
+  const earliestIn = otherSessions
+    .filter((s) => (s.store_id ?? null) === storeId)
+    .reduce(
+      (min, s) =>
+        new Date(s.clock_in_at).getTime() < min.getTime() ? new Date(s.clock_in_at) : min,
+      clockInAt,
+    );
 
   const shiftId = await applyAutoShiftForClockIn({
     employeeId: employee.id,
@@ -787,17 +808,14 @@ async function performManualClockEntry(input: ManualClockEntryInput) {
     sessionSeq = session.seq;
   }
 
-  const { workedHours, lastOut } = await recomputeDayHeader(supabase, clockEventId);
-  // Stamp the day's LATEST clock-out, not the one just typed — adding a
+  await recomputeDayHeader(supabase, clockEventId);
+  // Stamp each store's LATEST clock-out, not the one just typed — adding a
   // forgotten morning shift must not pull the cell's end back to 13:00.
-  if (lastOut) {
-    await stampAutoShiftWindow(
-      supabase,
-      shiftId,
-      londonHHMM(new Date(lastOut)),
-      workedHours,
-    );
-  }
+  await stampAutoShiftsForDay(supabase, {
+    employeeId: employee.id,
+    eventDate: input.event_date,
+    sessions: await sessionsForEvent(supabase, clockEventId),
+  });
 
   await writeAudit({
     action: openOnDay

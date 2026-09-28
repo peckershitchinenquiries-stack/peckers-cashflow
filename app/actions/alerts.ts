@@ -21,6 +21,7 @@ import {
   weekdayIndex,
 } from "@/lib/utils";
 import { autoCloseOpenClocks } from "@/lib/auto-clock-out";
+import { matchSessionsToShifts, shiftActual } from "@/lib/shift-session-match";
 import { mergeSettings, type AppSettings } from "@/lib/settings";
 import {
   buildCoverDriverWageLines,
@@ -328,6 +329,7 @@ async function runScan(
     managersRes,
     managerClocksRes,
     paySessionsRes,
+    todaySessionsRes,
   ] = await Promise.all([
       supabase
         .from("rota_shifts")
@@ -401,6 +403,16 @@ async function runScan(
         .select(PAY_CLOCK_SESSION_COLUMNS)
         .gte("event_date", payWeek.start)
         .lte("event_date", payWeek.end),
+      // TODAY's shifts, for the attendance checks below. A day header answers
+      // "what did this person do all day" — first in, last out, summed hours —
+      // which on a split day matches no single booking. The bookings are judged
+      // against the shifts that served them instead (Update 225). Separate from
+      // the pay-week read above: the pay week is the PREVIOUS Mon–Sun and never
+      // contains today.
+      supabase
+        .from("clock_sessions")
+        .select("employee_id, store_id, event_date, clock_in_at, clock_out_at")
+        .eq("event_date", today),
     ]);
 
   const shifts = shiftsRes.data ?? [];
@@ -656,80 +668,130 @@ async function runScan(
   const todayClocks = new Map(
     clocks.filter((c) => c.event_date === today).map((c) => [c.employee_id, c]),
   );
+
+  // Today's shifts, per employee. Attendance is judged BOOKING BY BOOKING against
+  // the shift that served it, never against the day header: on a cross-store day
+  // the header's first-in, last-out and summed hours describe the whole day, so a
+  // 6h booking read as an 11h variance, a missed evening shift raised nothing
+  // (the morning had set clock_in_at), and an early finish on the morning half
+  // could not be seen at all (Update 225).
+  const todaySessionsByEmp = new Map<
+    string,
+    Array<{ store_id: string | null; clock_in_at: string; clock_out_at: string | null }>
+  >();
+  for (const s of (todaySessionsRes.data ?? []) as Array<{
+    employee_id: string;
+    store_id: string | null;
+    clock_in_at: string;
+    clock_out_at: string | null;
+  }>) {
+    const arr = todaySessionsByEmp.get(s.employee_id) ?? [];
+    arr.push({ store_id: s.store_id, clock_in_at: s.clock_in_at, clock_out_at: s.clock_out_at });
+    todaySessionsByEmp.set(s.employee_id, arr);
+  }
+
+  const shiftsByEmp = new Map<string, EffShift[]>();
   for (const s of effectiveToday) {
     if (!s.start_time) continue;
-    const emp = employeeById.get(s.employee_id);
+    const arr = shiftsByEmp.get(s.employee_id) ?? [];
+    arr.push(s);
+    shiftsByEmp.set(s.employee_id, arr);
+  }
+
+  for (const [employeeId, empShifts] of Array.from(shiftsByEmp.entries())) {
+    const emp = employeeById.get(employeeId);
     if (!emp) continue;
-    const diffMin = nowMinutes - timeToMinutes(s.start_time);
-    const clk = todayClocks.get(s.employee_id);
+    const clk = todayClocks.get(employeeId);
+    const daySessions = todaySessionsByEmp.get(employeeId) ?? [];
 
-    if (!clk?.clock_in_at) {
-      if (diffMin > t.absence_min && !s.same_day_edit_reason) {
-        await raise({
-          alert_type: "unexpected_absence",
-          severity: "critical",
-          store_id: s.store_id,
-          employee_id: emp.id,
-          shift_id: s.id,
-          title: `${emp.name}: unexpected absence`,
-          message: `Scheduled at ${s.start_time} but not clocked in (${Math.round(diffMin)}m late). No reason recorded.`,
-          payload: { scheduled_start: s.start_time, late_minutes: diffMin },
-        });
-      } else if (diffMin > t.late_clock_in_min) {
-        await raise({
-          alert_type: "late_clock_in",
-          severity: "warning",
-          store_id: s.store_id,
-          employee_id: emp.id,
-          shift_id: s.id,
-          title: `${emp.name}: late clock-in`,
-          message: `Scheduled at ${s.start_time} — ${Math.round(diffMin)}m late.`,
-          payload: { scheduled_start: s.start_time, late_minutes: diffMin },
-        });
-      }
-    } else if (clk.clock_out_at && s.end_time && s.start_time) {
-      // Both sides in London minutes-from-shift-start, so an overnight shift
-      // unrolls past midnight the way shiftHours does -- 22:00–02:00 clocked out
-      // at 02:00 is on time, not 20 hours early.
-      const startMin = timeToMinutes(s.start_time);
-      const endMin = timeToMinutes(s.end_time);
-      const scheduledEndMin = endMin < startMin ? endMin + 1440 : endMin;
-      let actualEndMin = timeToMinutes(londonHHMM(new Date(clk.clock_out_at)));
-      if (actualEndMin < startMin) actualEndMin += 1440;
-      const earlyMin = scheduledEndMin - actualEndMin;
-      if (earlyMin > t.early_clock_out_min && !s.same_day_edit_reason) {
-        await raise({
-          alert_type: "early_clock_out",
-          severity: "warning",
-          store_id: s.store_id,
-          employee_id: emp.id,
-          shift_id: s.id,
-          title: `${emp.name}: early clock-out`,
-          message: `Clocked out ${Math.round(earlyMin)}m before scheduled end (${s.end_time}). No reason entered.`,
-          payload: { scheduled_end: s.end_time, early_minutes: earlyMin },
-        });
-      }
-    }
+    // A pre-029 day carries no sessions at all. It can only ever have held one
+    // shift, so the header IS that shift — keep reading it exactly as before
+    // rather than reporting the day as an absence.
+    const perShift =
+      daySessions.length > 0
+        ? matchSessionsToShifts(empShifts, daySessions).map((m) => ({
+            s: m.shift,
+            ...shiftActual(m.sessions),
+          }))
+        : empShifts.map((s) => ({
+            s,
+            firstIn: clk?.clock_in_at ?? null,
+            lastOut: clk?.clock_out_at ?? null,
+            hours: clk ? dayWorkedHours(clk) : 0,
+          }));
 
-    // scheduled vs actual variance (only for completed shifts)
-    if (clk?.clock_in_at && clk.clock_out_at) {
-      // Summed shifts: a day worked 09:00–13:00 and 17:00–21:00 is 8h against
-      // an 8h rota, not the 12h variance the raw span would report.
-      const actualHours = dayWorkedHours(clk);
-      const scheduled = Number(s.scheduled_hours ?? shiftHours(s.start_time, s.end_time));
-      if (scheduled > 0) {
-        const delta = percentDelta(actualHours, scheduled);
-        if (Math.abs(delta) > t.scheduled_vs_actual_pct) {
+    for (const { s, firstIn, lastOut, hours } of perShift) {
+      if (!s.start_time) continue;
+      const diffMin = nowMinutes - timeToMinutes(s.start_time);
+
+      if (!firstIn) {
+        // A booking whose start is still in the future is not yet a no-show —
+        // diffMin is negative and both thresholds are positive, so the evening
+        // half of a split day stays quiet until its own start time passes.
+        if (diffMin > t.absence_min && !s.same_day_edit_reason) {
           await raise({
-            alert_type: "scheduled_vs_actual",
-            severity: "info",
+            alert_type: "unexpected_absence",
+            severity: "critical",
             store_id: s.store_id,
             employee_id: emp.id,
             shift_id: s.id,
-            title: `${emp.name}: scheduled vs actual variance`,
-            message: `Worked ${formatHoursMinsWords(actualHours)} vs ${formatHoursMinsWords(scheduled)} scheduled (${delta > 0 ? "+" : ""}${delta.toFixed(0)}%).`,
-            payload: { actual: actualHours, scheduled, delta_percent: delta },
+            title: `${emp.name}: unexpected absence`,
+            message: `Scheduled at ${s.start_time} but not clocked in (${Math.round(diffMin)}m late). No reason recorded.`,
+            payload: { scheduled_start: s.start_time, late_minutes: diffMin },
           });
+        } else if (diffMin > t.late_clock_in_min) {
+          await raise({
+            alert_type: "late_clock_in",
+            severity: "warning",
+            store_id: s.store_id,
+            employee_id: emp.id,
+            shift_id: s.id,
+            title: `${emp.name}: late clock-in`,
+            message: `Scheduled at ${s.start_time} — ${Math.round(diffMin)}m late.`,
+            payload: { scheduled_start: s.start_time, late_minutes: diffMin },
+          });
+        }
+      } else if (lastOut && s.end_time) {
+        // Both sides in London minutes-from-shift-start, so an overnight shift
+        // unrolls past midnight the way shiftHours does -- 22:00–02:00 clocked out
+        // at 02:00 is on time, not 20 hours early.
+        const startMin = timeToMinutes(s.start_time);
+        const endMin = timeToMinutes(s.end_time);
+        const scheduledEndMin = endMin < startMin ? endMin + 1440 : endMin;
+        let actualEndMin = timeToMinutes(londonHHMM(new Date(lastOut)));
+        if (actualEndMin < startMin) actualEndMin += 1440;
+        const earlyMin = scheduledEndMin - actualEndMin;
+        if (earlyMin > t.early_clock_out_min && !s.same_day_edit_reason) {
+          await raise({
+            alert_type: "early_clock_out",
+            severity: "warning",
+            store_id: s.store_id,
+            employee_id: emp.id,
+            shift_id: s.id,
+            title: `${emp.name}: early clock-out`,
+            message: `Clocked out ${Math.round(earlyMin)}m before scheduled end (${s.end_time}). No reason entered.`,
+            payload: { scheduled_end: s.end_time, early_minutes: earlyMin },
+          });
+        }
+      }
+
+      // scheduled vs actual variance (only for completed shifts)
+      if (firstIn && lastOut) {
+        const scheduled = Number(s.scheduled_hours ?? shiftHours(s.start_time, s.end_time));
+        if (scheduled > 0) {
+          const delta = percentDelta(hours, scheduled);
+          if (Math.abs(delta) > t.scheduled_vs_actual_pct) {
+            await raise({
+              alert_type: "scheduled_vs_actual",
+              severity: "info",
+              store_id: s.store_id,
+              employee_id: emp.id,
+              shift_id: s.id,
+              title: `${emp.name}: scheduled vs actual variance`,
+              message: `Worked ${formatHoursMinsWords(hours)} vs ${formatHoursMinsWords(scheduled)} scheduled (${delta > 0 ? "+" : ""}${delta.toFixed(0)}%).`,
+              payload: { actual: hours, scheduled, delta_percent: delta },
+            });
+          }
         }
       }
     }

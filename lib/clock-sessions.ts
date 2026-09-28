@@ -361,6 +361,30 @@ export async function sessionsForEvent(
 }
 
 /**
+ * The earliest clock-in recorded at ONE store on a day (Update 225).
+ *
+ * A day's rota cell per store starts when that STORE's first shift did. The
+ * day's own earliest clock-in is the other store's, so stamping a new Hitchin
+ * cell with it opened Hitchin at the Stevenage morning's 11:00.
+ */
+export async function earliestSessionInAtStore(
+  supabase: SupabaseClient,
+  employeeId: string,
+  eventDate: string,
+  storeId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("clock_sessions")
+    .select("clock_in_at")
+    .eq("employee_id", employeeId)
+    .eq("event_date", eventDate)
+    .eq("store_id", storeId)
+    .order("clock_in_at", { ascending: true })
+    .limit(1);
+  return (data ?? [])[0]?.clock_in_at ?? null;
+}
+
+/**
  * Write one shift's delivery counts. The caller recomputes the day header
  * afterwards — this never touches clock_events itself, so recomputeDayHeader
  * stays the single writer of the day's totals.

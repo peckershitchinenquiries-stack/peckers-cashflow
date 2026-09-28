@@ -69,6 +69,19 @@ function dayOffTone(onLeave: boolean | undefined, past: boolean): string {
     : "bg-danger/10 border-danger/30 text-danger";
 }
 
+/** One clocked shift, as the Rota needs it: store, day and worked window. */
+export type RotaClockSession = {
+  employee_id: string;
+  store_id: string | null;
+  event_date: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  short_deliveries_count: number | null;
+  long_deliveries_count: number | null;
+  extra_short_deliveries: number | null;
+  extra_long_deliveries: number | null;
+};
+
 type Props = {
   stores: Store[];
   employees: RotaEmployee[];
@@ -77,6 +90,9 @@ type Props = {
   /** The 4 weeks before the range, for the rolling average — never rendered. */
   historyShifts?: RotaHistoryShift[];
   clocks: ClockEvent[];
+  /** The SHIFTS under those days (migration 029). A day header can only name one
+   *  store, so every per-store figure on the employee rows resolves from these. */
+  clockSessions?: RotaClockSession[];
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
   /** Manager rota section shown above the employee rota (admin Rota page only). */
@@ -104,6 +120,7 @@ export function RotaView({
   shifts,
   historyShifts = [],
   clocks,
+  clockSessions = [],
   weeklyDeliveries,
   schedules = [],
   managers = [],
@@ -452,31 +469,96 @@ export function RotaView({
     return m;
   }, [schedules]);
 
-  // Live deliveries logged at clock-out, summed per driver for the shown week.
+  // This store's shifts, indexed by employee+date. A day header names only ONE
+  // store — the last one clocked into — so every per-store employee figure below
+  // resolves from the shifts instead (Update 225). Drops and the shift badge were
+  // reading the day total, which showed all 7 of a split day's drops on BOTH
+  // stores' rotas.
+  const storeSessionsByEmpDay = React.useMemo(() => {
+    const m = new Map<string, RotaClockSession[]>();
+    for (const x of clockSessions) {
+      if ((x.store_id ?? null) !== activeStoreId) continue;
+      const k = `${x.employee_id}:${x.event_date}`;
+      m.set(k, [...(m.get(k) ?? []), x]);
+    }
+    return m;
+  }, [clockSessions, activeStoreId]);
+
+  // Whether a day has ANY shift rows. A pre-029 day has none, and its header is
+  // the only record of the single shift it held — so those keep reading the
+  // header rather than reporting zero.
+  const daysWithSessions = React.useMemo(
+    () => new Set(clockSessions.map((x) => `${x.employee_id}:${x.event_date}`)),
+    [clockSessions],
+  );
+
+  /** What the employee worked at the ACTIVE store on one day. */
+  function storeDayAttendance(employeeId: string, dateIso: string, clk?: ClockEvent | null) {
+    const key = `${employeeId}:${dateIso}`;
+    if (!daysWithSessions.has(key)) {
+      return {
+        sessionCount: Number(clk?.session_count ?? 0),
+        workedHours: clk?.worked_hours != null ? Number(clk.worked_hours) : null,
+      };
+    }
+    const mine = storeSessionsByEmpDay.get(key) ?? [];
+    const closed = mine.filter((x) => x.clock_out_at);
+    const hours = closed.reduce((sum, x) => {
+      const ms = new Date(x.clock_out_at!).getTime() - new Date(x.clock_in_at).getTime();
+      return sum + (ms > 0 ? ms / 3_600_000 : 0);
+    }, 0);
+    return {
+      sessionCount: mine.length,
+      workedHours: closed.length > 0 ? hours : null,
+    };
+  }
+
+  // Live deliveries logged at clock-out, summed per driver for the shown week —
+  // AT THIS STORE only. A day worked across two stores splits its drops between
+  // them; a pre-029 day with no shift rows still counts off its header.
   const liveDeliveriesByEmp = React.useMemo(() => {
     const weekSet = new Set(weekDays.map((d) => toISODate(d)));
     const m = new Map<string, number>();
+    for (const x of clockSessions) {
+      if ((x.store_id ?? null) !== activeStoreId) continue;
+      if (!weekSet.has(x.event_date)) continue;
+      if (x.short_deliveries_count == null && x.long_deliveries_count == null) continue;
+      const total =
+        (Number(x.short_deliveries_count) || 0) + (Number(x.long_deliveries_count) || 0);
+      m.set(x.employee_id, (m.get(x.employee_id) ?? 0) + total);
+    }
     for (const c of clocks) {
+      if (daysWithSessions.has(`${c.employee_id}:${c.event_date}`)) continue;
+      if (c.store_id !== activeStoreId) continue;
       if (c.short_deliveries_count == null && c.long_deliveries_count == null) continue;
       if (!weekSet.has(c.event_date)) continue;
       const total = (Number(c.short_deliveries_count) || 0) + (Number(c.long_deliveries_count) || 0);
       m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + total);
     }
     return m;
-  }, [clocks, weekDays]);
+  }, [clocks, clockSessions, daysWithSessions, weekDays, activeStoreId]);
 
   // Extra deliveries (beyond the normal round) summed per driver for the week.
   const liveExtraByEmp = React.useMemo(() => {
     const weekSet = new Set(weekDays.map((d) => toISODate(d)));
     const m = new Map<string, number>();
+    for (const x of clockSessions) {
+      if ((x.store_id ?? null) !== activeStoreId) continue;
+      if (!weekSet.has(x.event_date)) continue;
+      const extra =
+        (Number(x.extra_short_deliveries) || 0) + (Number(x.extra_long_deliveries) || 0);
+      if (extra) m.set(x.employee_id, (m.get(x.employee_id) ?? 0) + extra);
+    }
     for (const c of clocks) {
+      if (daysWithSessions.has(`${c.employee_id}:${c.event_date}`)) continue;
+      if (c.store_id !== activeStoreId) continue;
       const extra = (Number(c.extra_short_deliveries) || 0) + (Number(c.extra_long_deliveries) || 0);
       if (!extra) continue;
       if (!weekSet.has(c.event_date)) continue;
       m.set(c.employee_id, (m.get(c.employee_id) ?? 0) + extra);
     }
     return m;
-  }, [clocks, weekDays]);
+  }, [clocks, clockSessions, daysWithSessions, weekDays, activeStoreId]);
 
   // 4-week rolling avg per employee (across all stores) using prior weeks.
   // History rows arrive separately from the visible range's bookings but feed
@@ -851,6 +933,7 @@ export function RotaView({
         : null;
     // Ghost defaults are only actionable on editable days.
     const showGhost = ghost && !isPast;
+    const storeAttendance = storeDayAttendance(emp.id, dateIso, clk);
     const cellInner = (
       <>
         {localShifts.length > 0 ? (
@@ -881,15 +964,17 @@ export function RotaView({
             in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
             {/* Labelled as WORKED, on its own line: the row
                 above is the scheduled shift, and the two are
-                different things on a split day. */}
-            {Number(clk.session_count) > 1 && (
+                different things on a split day. Counted AT THIS
+                STORE — a cross-store day's other half belongs on
+                the other store's rota, not this cell. */}
+            {storeAttendance.sessionCount > 1 && (
               <span
                 className="block text-gold"
-                title={`Attendance, not the schedule: ${clk.session_count} separate shifts worked this day, ${formatHoursMinsWords(Number(clk.worked_hours ?? 0))} in total excluding the gap between them.`}
+                title={`Attendance, not the schedule: ${storeAttendance.sessionCount} separate shifts worked at ${activeStore?.name ?? "this store"} this day, ${formatHoursMinsWords(storeAttendance.workedHours ?? 0)} in total excluding the gap between them.`}
               >
-                {clk.session_count} shifts worked
-                {clk.worked_hours != null && (
-                  <> · {formatHoursMinsWords(Number(clk.worked_hours))}</>
+                {storeAttendance.sessionCount} shifts worked
+                {storeAttendance.workedHours != null && (
+                  <> · {formatHoursMinsWords(storeAttendance.workedHours)}</>
                 )}
               </span>
             )}

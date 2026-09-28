@@ -12,6 +12,12 @@ export const ROTA_HISTORY_SHIFT_COLUMNS =
 export const ROTA_CLOCK_COLUMNS =
   "id, employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, session_count, auto_clocked_out, manual_entry, manual_entry_reason, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
 
+/** The SHIFTS under those days. Every per-store employee figure on the Rota —
+ *  drops, the "N shifts worked" badge — resolves from these, because a day header
+ *  names only the store last clocked into. */
+export const ROTA_CLOCK_SESSION_COLUMNS =
+  "employee_id, store_id, event_date, clock_in_at, clock_out_at, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
+
 // The rota needs each employee's identity, store, rates and DOB (for min-wage
 // checks) — but never their bank details. Both pages load every store's staff
 // (to schedule visitors), so the sensitive payment columns are deliberately

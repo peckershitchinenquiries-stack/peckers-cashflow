@@ -26,6 +26,7 @@ import { findEmployeeForUser } from "@/lib/employee-lookup";
 import {
   addSession,
   adoptHeaderIntoSession,
+  earliestSessionInAtStore,
   findOpenSession,
   hasSessionOnDate,
   recomputeDayHeader,
@@ -76,6 +77,7 @@ export type ClockInShiftCandidate = {
   id: string;
   is_day_off: boolean;
   start_time: string | null;
+  store_id: string | null;
 };
 
 /**
@@ -85,31 +87,46 @@ export type ClockInShiftCandidate = {
  * second shift exists for the day, which would break clock-in outright for
  * anyone with a split shift booked.
  *
+ * STORE FIRST (Update 225). The day's bookings can be at different stores —
+ * Hitchin 11:00–17:00 then Stevenage 17:00–23:00 — and only the booking at the
+ * store they are standing in describes the shift they are starting. Picking the
+ * day's earliest booking regardless of store got two things wrong:
+ *   - the early clock-in gate measured the Stevenage shift against Hitchin's
+ *     11:00, so someone who skipped the morning could start at 11:00 and the
+ *     refusal named the wrong time;
+ *   - a second store with NO booking resolved to the first store's cell, so
+ *     `applyAutoShiftForClockIn` saw a real booking and created nothing — store
+ *     A's Rota then absorbed both halves and store B showed zero.
+ *
  * Picks, in order:
- *   1. A shift still needing conversion (day off / no start time) — the
- *      "clocked in without a real booking yet" case `applyAutoShiftForClockIn`
- *      exists to handle, unchanged from before.
- *   2. Otherwise the EARLIEST booked shift by start time, so a fresh clock-in
- *      links to the first of the day's real shifts. Which one it lands on
- *      barely matters functionally: `stampAutoShiftWindow` only ever touches a
- *      shift carrying AUTO_SHIFT_NOTE, so a real manager-booked shift (this
- *      case) is never rewritten regardless of which one gets linked here.
+ *   1. At `storeId`: a shift needing conversion (day off / no start time) first
+ *      — the "clocked in without a real booking yet" case — else the earliest
+ *      booked one there.
+ *   2. A convertible shift at ANY store: it has no times of its own to lose and
+ *      `applyAutoShiftForClockIn` moves it to where they actually turned up,
+ *      which is what it always did.
+ *   3. Otherwise NULL — every booking today belongs to another store, so this is
+ *      unbooked cover and needs a cell of its own at `storeId`.
  */
 export async function findShiftForClockIn(
   supabase: ReturnType<typeof createServerSupabase>,
   employeeId: string,
   date: string,
+  storeId: string | null,
 ): Promise<ClockInShiftCandidate | null> {
   const { data } = await supabase
     .from("rota_shifts")
-    .select("id, is_day_off, start_time")
+    .select("id, is_day_off, start_time, store_id")
     .eq("employee_id", employeeId)
     .eq("shift_date", date)
     .order("start_time", { ascending: true, nullsFirst: true });
   const rows = (data ?? []) as ClockInShiftCandidate[];
   if (rows.length === 0) return null;
-  if (rows.length === 1) return rows[0];
-  return rows.find((s) => s.is_day_off || !s.start_time) ?? rows[0];
+
+  const convertible = (s: ClockInShiftCandidate) => s.is_day_off || !s.start_time;
+  const here = storeId ? rows.filter((s) => s.store_id === storeId) : rows;
+  if (here.length > 0) return here.find(convertible) ?? here[0];
+  return rows.find(convertible) ?? null;
 }
 
 /**
@@ -191,45 +208,69 @@ export async function applyAutoShiftForClockIn(input: {
 }
 
 /**
- * Stamp an auto-created rota cell with the day's real window.
+ * Stamp EVERY auto-created rota cell the day owns, one per store (Update 225).
  *
- * `scheduled_hours` is the SUMMED session hours, not end − start: on a day
- * worked 09:00–13:00 and 17:00–21:00 the cell reads 09:00–21:00 but must total
- * 8h, or the Rota (and every wage forecast built on it) pays for the afternoon
- * off as well.
+ * A cross-store day has a cell at each store, and each must read only its own
+ * store's window — end at that store's latest clock-out, total that store's
+ * summed hours. The single-cell version stamped whichever cell the day header's
+ * `shift_id` happened to point at (the LAST store clocked into) with the whole
+ * day's hours, so store B's Rota billed store A's morning as well.
  *
- * `manager_notes` is left as exactly AUTO_SHIFT_NOTE even on a multi-shift day.
- * Three modules compare that string with strict equality to decide whether a
- * cell is system-managed — the auto clock-out sweep among them — so appending
- * a shift count here would quietly stop them recognising their own cells. The
- * shift count is shown from session data instead.
+ * A manager-booked cell is still never touched: only AUTO_SHIFT_NOTE cells are
+ * system-managed, which is why an unbooked cover day is the only one this bites.
  *
- * Best-effort throughout: needs the service-role client, and must never block
- * a clock action.
+ * Best-effort throughout: needs the service-role client, and must never block a
+ * clock action.
  */
-export async function stampAutoShiftWindow(
+export async function stampAutoShiftsForDay(
   supabase: ReturnType<typeof createServerSupabase>,
-  shiftId: string | null,
-  endHHMM: string,
-  workedHours: number,
+  input: {
+    employeeId: string;
+    eventDate: string;
+    sessions: Array<{
+      store_id?: string | null;
+      clock_in_at: string;
+      clock_out_at: string | null;
+    }>;
+  },
 ) {
-  if (!shiftId || !isProvisioningConfigured()) return;
+  if (!isProvisioningConfigured()) return;
   try {
-    const { data: shift } = await supabase
+    const { data: cells } = await supabase
       .from("rota_shifts")
-      .select("id, start_time, manager_notes")
-      .eq("id", shiftId)
-      .maybeSingle();
-    if (!shift?.start_time || shift.manager_notes !== AUTO_SHIFT_NOTE) return;
+      .select("id, store_id, start_time, manager_notes")
+      .eq("employee_id", input.employeeId)
+      .eq("shift_date", input.eventDate);
+    const autoCells = (cells ?? []).filter(
+      (c) => c.start_time && c.manager_notes === AUTO_SHIFT_NOTE,
+    );
+    if (autoCells.length === 0) return;
 
     const admin = createAdminClient();
-    await admin
-      .from("rota_shifts")
-      .update({
-        end_time: endHHMM,
-        scheduled_hours: roundHoursToMinute(workedHours),
-      })
-      .eq("id", shift.id);
+    for (const cell of autoCells) {
+      const mine = input.sessions.filter(
+        (x) => (x.store_id ?? null) === cell.store_id && x.clock_out_at,
+      );
+      // Nothing finished at this store yet — leave the cell open rather than
+      // writing a zero over a window a previous shift already stamped.
+      if (mine.length === 0) continue;
+      const lastOut = mine.reduce(
+        (max, x) =>
+          new Date(x.clock_out_at!).getTime() > new Date(max).getTime() ? x.clock_out_at! : max,
+        mine[0].clock_out_at!,
+      );
+      const hours = mine.reduce((sum, x) => {
+        const ms = new Date(x.clock_out_at!).getTime() - new Date(x.clock_in_at).getTime();
+        return sum + (ms > 0 ? ms / 3_600_000 : 0);
+      }, 0);
+      await admin
+        .from("rota_shifts")
+        .update({
+          end_time: londonHHMM(new Date(lastOut)),
+          scheduled_hours: roundHoursToMinute(hours),
+        })
+        .eq("id", cell.id);
+    }
   } catch (err) {
     console.error(
       "[clock] auto-shift end-stamp failed (clock action continues):",
@@ -396,7 +437,10 @@ export async function performClockIn(ctx: ClockInFix): Promise<ClockInOutcome> {
   // staff can clock in whenever they're on-site, with or without a shift on the
   // rota (covering a colleague, picking up an extra shift, etc.). A scheduled
   // shift simply gets attached so the Live board can compare planned vs actual.
-  const shift = await findShiftForClockIn(supabase, employee.id, today);
+  // Scoped to the store they're standing in: the day's other booking may be at
+  // the other store, and both the early gate below and the rota cell must judge
+  // THIS shift (Update 225).
+  const shift = await findShiftForClockIn(supabase, employee.id, today, workedStoreId);
 
   await assertNotEarlyClockIn(supabase, employee.id, today, shift);
 
@@ -410,13 +454,21 @@ export async function performClockIn(ctx: ClockInFix): Promise<ClockInOutcome> {
   const nowDate = new Date();
   const now = nowDate.toISOString();
 
+  // Later shifts must not move the rota cell's start time — the cell began when
+  // this STORE's first shift did. The day header's clock_in_at is the earliest
+  // across every store, so on a cross-store day it would open a fresh Hitchin
+  // cell at the Stevenage morning's time.
+  const storeFirstIn = await earliestSessionInAtStore(
+    supabase,
+    employee.id,
+    today,
+    workedStoreId,
+  );
   const shiftId = await applyAutoShiftForClockIn({
     employeeId: employee.id,
     storeId: workedStoreId,
     eventDate: today,
-    // Later shifts must not move the rota cell's start time — the day began
-    // when the FIRST shift did.
-    startTime: londonHHMM(existing?.clock_in_at ? new Date(existing.clock_in_at) : nowDate),
+    startTime: londonHHMM(storeFirstIn ? new Date(storeFirstIn) : nowDate),
     shift,
   });
 

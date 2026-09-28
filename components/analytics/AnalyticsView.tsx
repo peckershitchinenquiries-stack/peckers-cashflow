@@ -8,24 +8,37 @@ import { MonthlyView } from "./MonthlyView";
 type StoreOpt = { id: string; name: string };
 
 /**
+ * The whole estate's roster, with the rates needed to price a week. Not grouped
+ * by home store (Update 225): an employee's cash is owed by the store each shift
+ * was worked at, and the home-store NI rule needs their FULL week to know which
+ * hours fall inside the bank allowance.
+ */
+export type AnalyticsEmployee = {
+  id: string;
+  name: string;
+  store_id: string | null;
+  hourly_cash_rate: number | null;
+  bank_weekly_hours_limit: number | null;
+};
+
+/**
  * Analytics is always scoped to a single store — the two stores are separate
  * businesses and their figures are never combined. Admins switch stores with
  * the toggle; managers see only their own store.
  */
 export function AnalyticsView({
   stores,
-  employeesByStore,
+  employees,
   isAdmin,
   defaultStoreId,
 }: {
   stores: StoreOpt[];
-  employeesByStore: Record<string, string[]>;
+  employees: AnalyticsEmployee[];
   isAdmin: boolean;
   defaultStoreId: string;
 }) {
   const [tab, setTab] = React.useState<"weekly" | "monthly">("weekly");
   const [storeId, setStoreId] = React.useState(defaultStoreId || stores[0]?.id || "");
-  const employeeIds = employeesByStore[storeId] ?? [];
 
   if (!storeId) {
     return <p className="text-sm text-text-muted">No store available.</p>;
@@ -81,9 +94,9 @@ export function AnalyticsView({
       </div>
 
       {tab === "weekly" ? (
-        <WeeklyView storeId={storeId} employeeIds={employeeIds} />
+        <WeeklyView storeId={storeId} employees={employees} />
       ) : (
-        <MonthlyView storeId={storeId} employeeIds={employeeIds} />
+        <MonthlyView storeId={storeId} employees={employees} />
       )}
     </div>
   );

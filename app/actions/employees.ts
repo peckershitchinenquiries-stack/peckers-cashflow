@@ -20,8 +20,10 @@ import {
   approveDaySessions,
   normaliseDeliveryInput,
   recomputeDayHeader,
+  sessionsForEvent,
   setSessionApproval,
   setSessionDeliveries,
+  storesWorkedOnDay,
   unapproveDaySessions,
 } from "@/lib/clock-sessions";
 import type { DeliveryInput } from "@/lib/clock-sessions";
@@ -620,6 +622,58 @@ function normaliseDeliveryCount(
   return n;
 }
 
+/**
+ * Which stores a day's work sits at — its SHIFTS, falling back to the header for
+ * a pre-029 day that has none.
+ */
+async function storesForClockDay(
+  supabase: ReturnType<typeof createServerSupabase>,
+  clockEventId: string,
+  headerStoreId: string | null,
+): Promise<string[]> {
+  const stores = storesWorkedOnDay(await sessionsForEvent(supabase, clockEventId));
+  if (stores.length > 0) return stores;
+  return headerStoreId ? [headerStoreId] : [];
+}
+
+/**
+ * A manager signs off only work done at the store they're running (Update 225).
+ *
+ * Approval is what releases money, and each store pays from its own till — so a
+ * Hitchin manager re-houring a Stevenage shift moves cash between tills. Daily
+ * Approval deliberately shows the other store's half of a cross-store day now,
+ * which removed visibility as the de-facto guard.
+ *
+ * A DAY-level action on a day split across stores has no single owner, so it is
+ * refused outright and the manager uses the per-shift controls, each of which
+ * carries its own store. Admins are never restricted.
+ *
+ * Returns false instead of throwing when `soft` — the bulk approve skips a day
+ * that isn't the manager's rather than failing the whole batch.
+ */
+async function managerMayApproveDay(
+  user: Awaited<ReturnType<typeof requireAllowed>>,
+  supabase: ReturnType<typeof createServerSupabase>,
+  day: { id: string; store_id?: string | null },
+  what: string,
+  soft = false,
+): Promise<boolean> {
+  if (user.allowed!.role !== "manager") return true;
+  const activeStore = resolveActiveStoreId(user.allowed);
+  if (!activeStore) throw new Error("No store assigned to your account.");
+  const stores = await storesForClockDay(supabase, day.id, day.store_id ?? null);
+  // A day with no store on record anywhere predates store attribution; leave it
+  // to the manager rather than making it unapprovable by anyone.
+  if (stores.length === 0) return true;
+  if (stores.length === 1 && stores[0] === activeStore) return true;
+  if (soft) return false;
+  throw new Error(
+    stores.length > 1
+      ? `This day was worked at more than one store, so ${what} for the day as a whole isn't yours to give — sign off each shift on its own row instead.`
+      : `That day was worked at another store, so its own manager signs it off — each store pays from its own till.`,
+  );
+}
+
 export async function approveDailyHours(input: {
   employee_id: string;
   event_date: string;
@@ -653,7 +707,7 @@ export async function approveDailyHours(input: {
   const { data: ce, error: ceErr } = await supabase
     .from("clock_events")
     .select(
-      "id, clock_in_at, clock_out_at, worked_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason",
+      "id, store_id, clock_in_at, clock_out_at, worked_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason",
     )
     .eq("employee_id", input.employee_id)
     .eq("event_date", input.event_date)
@@ -661,6 +715,7 @@ export async function approveDailyHours(input: {
   if (ceErr) throw new Error(ceErr.message);
   if (!ce || !ce.clock_in_at || !ce.clock_out_at)
     throw new Error("No completed clock-in/out for this day.");
+  await managerMayApproveDay(user, supabase, ce, "approving it");
 
   // Summed shifts, so a day worked 09:00–13:00 and 17:00–21:00 approves at 8h
   // rather than the 12h the first-in-to-last-out span would suggest.
@@ -851,11 +906,12 @@ export async function unapproveDailyHours(input: {
 
   const { data: ce } = await supabase
     .from("clock_events")
-    .select("id")
+    .select("id, store_id")
     .eq("employee_id", input.employee_id)
     .eq("event_date", input.event_date)
     .maybeSingle();
   if (!ce) throw new Error("Clock record not found.");
+  await managerMayApproveDay(user, supabase, ce, "withdrawing its approval");
 
   // Withdraw every shift's sign-off, then let the header re-derive. Undoing a
   // whole day is the blunt instrument; unapproveShift takes back ONE shift and
@@ -930,13 +986,28 @@ export async function setShiftApproval(input: {
 
   const { data: session, error: sErr } = await supabase
     .from("clock_sessions")
-    .select("id, clock_event_id, employee_id, event_date, clock_in_at, clock_out_at")
+    .select("id, clock_event_id, employee_id, event_date, clock_in_at, clock_out_at, store_id")
     .eq("id", input.session_id)
     .maybeSingle();
   if (sErr) throw new Error(sErr.message);
   if (!session) throw new Error("That shift no longer exists.");
   if (input.approved && !session.clock_out_at) {
     throw new Error("That shift is still open — it can be approved once it ends.");
+  }
+  // A manager signs off only what was worked at the store they're running
+  // (Update 225). Visibility used to be the de-facto guard; now that Daily
+  // Approval deliberately shows the other store's half of a cross-store day, an
+  // unguarded action let a Hitchin manager re-hour a Stevenage shift and land it
+  // on Stevenage's Tuesday payout. Mirrors assertClockEntryStore on the entry
+  // side, and never restricts an admin.
+  if (user.allowed!.role === "manager" && session.store_id) {
+    const activeStore = resolveActiveStoreId(user.allowed);
+    if (!activeStore) throw new Error("No store assigned to your account.");
+    if (session.store_id !== activeStore) {
+      throw new Error(
+        "That shift was worked at another store, so its own manager signs it off — each store pays from its own till.",
+      );
+    }
   }
 
   let approvedHours: number | null = null;
@@ -998,7 +1069,7 @@ export async function approveDailyHoursForDate(input: {
   const { data: events } = await supabase
     .from("clock_events")
     .select(
-      "id, employee_id, clock_in_at, clock_out_at, worked_hours, hours_approved, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
+      "id, employee_id, store_id, clock_in_at, clock_out_at, worked_hours, hours_approved, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries",
     )
     .eq("event_date", input.event_date)
     .in("employee_id", ids);
@@ -1011,6 +1082,9 @@ export async function approveDailyHoursForDate(input: {
     if (!e.clock_in_at || !e.clock_out_at) continue;
     const rawHours = roundHoursToMinute(dayWorkedHours(e));
     if (rawHours <= 0) continue;
+    // Skipped rather than refused: one day belonging to the other store must not
+    // fail the whole batch. It stays in the queue for its own manager.
+    if (!(await managerMayApproveDay(user, supabase, e, "approving it", true))) continue;
 
     // No day total is passed: a bulk approve confirms what was clocked, so each
     // shift keeps its own duration rather than a share of one typed figure.

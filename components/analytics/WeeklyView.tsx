@@ -9,6 +9,15 @@ import { ChartIcon, ChevronLeftIcon, ChevronRightIcon } from "@/components/ui/ic
 import { createClient } from "@/lib/supabase";
 import { HoursMinsDisplay } from "@/components/ui/HoursMinsDisplay";
 import { StatTile } from "./StatTile";
+import type { AnalyticsEmployee } from "./AnalyticsView";
+import {
+  approvedHoursByEmployeeStore,
+  cashHoursFromStoreTotal,
+  PAY_CLOCK_SESSION_COLUMNS,
+  round2,
+  type StoreClockRow,
+  type StoreClockSessionRow,
+} from "@/lib/cash-flow";
 import { useChartColors } from "./useChartColors";
 import {
   addDays,
@@ -45,15 +54,20 @@ type EmpPay = {
   employee_name: string;
   cash_hours: number;
   cash_amount_due: number;
+  /** Hours worked AT THIS STORE, not the employee's week total. */
   total_hours_worked: number;
 };
 
+/** Everything a week's cash needs: the day headers and the shifts under them. */
+const CLOCK_COLUMNS =
+  "employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count";
+
 export function WeeklyView({
   storeId,
-  employeeIds,
+  employees,
 }: {
   storeId: string;
-  employeeIds: string[];
+  employees: AnalyticsEmployee[];
 }) {
   const supabase = React.useMemo(() => createClient(), []);
   const colors = useChartColors();
@@ -64,8 +78,10 @@ export function WeeklyView({
   const [coverPay, setCoverPay] = React.useState<Array<{ total_pay: number }>>([]);
 
   const weekEnd = React.useMemo(() => endOfISOWeek(weekStart), [weekStart]);
-  // Stable key so the effect re-runs when the store's employee set changes.
-  const empKey = employeeIds.join(",");
+  // Stable key so the effect re-runs when the roster or its rates change.
+  const empKey = employees
+    .map((e) => `${e.id}:${e.store_id}:${e.hourly_cash_rate}:${e.bank_weekly_hours_limit}`)
+    .join(",");
 
   const totals = React.useMemo(() => {
     const sales = daily.reduce((s, r) => s + r.sales, 0);
@@ -92,20 +108,29 @@ export function WeeklyView({
         const startISO = toISODate(weekStart);
         const endISO = toISODate(weekEnd);
 
-        const [entries, hours, coverHours] = await Promise.all([
+        const [entries, clocks, sessions, coverHours] = await Promise.all([
           supabase
             .from("daily_cash_entries")
             .select("entry_date, vita_mojo_sales, supermarket_expenses")
             .eq("store_id", storeId)
             .gte("entry_date", startISO)
             .lte("entry_date", endISO),
+          // Estate-wide and NOT store-filtered, deliberately. Cash is owed by the
+          // store each SHIFT was worked at, and the home-store NI allowance is a
+          // rule over the employee's whole week — both need every row. Reading
+          // employee_hours_computed.cash_amount_due instead billed a split week's
+          // cash wholly to the home store and NI-limited the away hours, which is
+          // the bug Update 218 fixed everywhere else (Update 225).
           supabase
-            .from("employee_hours_computed")
-            .select(
-              "employee_id, employee_name, cash_hours, cash_amount_due, total_hours_worked, week_start_date",
-            )
-            .eq("week_start_date", startISO)
-            .in("employee_id", employeeIds.length ? employeeIds : ["00000000-0000-0000-0000-000000000000"]),
+            .from("clock_events")
+            .select(CLOCK_COLUMNS)
+            .gte("event_date", startISO)
+            .lte("event_date", endISO),
+          supabase
+            .from("clock_sessions")
+            .select(PAY_CLOCK_SESSION_COLUMNS)
+            .gte("event_date", startISO)
+            .lte("event_date", endISO),
           // Cover drivers are keyed per DAY, not per week, and only approved
           // days represent money actually owed.
           supabase
@@ -134,7 +159,26 @@ export function WeeklyView({
           }
         }
         setDaily(days);
-        setEmpPay((hours.data ?? []) as unknown as EmpPay[]);
+
+        const hoursByEmpStore = approvedHoursByEmployeeStore(
+          (clocks.data ?? []) as unknown as StoreClockRow[],
+          (sessions.data ?? []) as unknown as StoreClockSessionRow[],
+        );
+        setEmpPay(
+          employees
+            .map((emp): EmpPay => {
+              const hoursHere = hoursByEmpStore.get(`${emp.id}:${storeId}`) ?? 0;
+              const cashHours = cashHoursFromStoreTotal(hoursHere, storeId, emp);
+              return {
+                employee_id: emp.id,
+                employee_name: emp.name,
+                cash_hours: cashHours,
+                cash_amount_due: round2(cashHours * (Number(emp.hourly_cash_rate) || 0)),
+                total_hours_worked: hoursHere,
+              };
+            })
+            .filter((r) => r.total_hours_worked > 0),
+        );
         setCoverPay((coverHours.data ?? []) as unknown as Array<{ total_pay: number }>);
       } finally {
         if (active) setLoading(false);
@@ -144,6 +188,9 @@ export function WeeklyView({
     return () => {
       active = false;
     };
+    // `employees` is read inside but keyed by empKey, so a new array identity
+    // with the same roster doesn't refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, weekStart, weekEnd, storeId, empKey]);
 
   const isCurrent = isSameDay(weekStart, startOfISOWeek(new Date()));
@@ -255,7 +302,9 @@ export function WeeklyView({
         <CardHeader>
           <CardTitle>Employee Cash Payments</CardTitle>
           <CardDescription>
-            Hours over 20/week paid in cash · for week of {formatDDMMYYYY(weekStart)}
+            Hours worked at this store · home-store hours over the weekly bank limit
+            are cash, hours covered away are cash in full · week of{" "}
+            {formatDDMMYYYY(weekStart)}
           </CardDescription>
         </CardHeader>
 
@@ -273,7 +322,7 @@ export function WeeklyView({
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-text-muted">
                   <th className="px-3 py-2 font-medium">Employee</th>
-                  <th className="px-3 py-2 font-medium text-right">Total hrs</th>
+                  <th className="px-3 py-2 font-medium text-right">Hrs here</th>
                   <th className="px-3 py-2 font-medium text-right">Cash hrs</th>
                   <th className="px-3 py-2 font-medium text-right">Cash due</th>
                 </tr>
@@ -287,7 +336,7 @@ export function WeeklyView({
                       className={`${i % 2 === 0 ? "" : "bg-bg/50"} border-t border-border/60`}
                     >
                       <td className="px-3 py-3" data-label="">{p.employee_name}</td>
-                      <td className="px-3 py-3 text-right tabular-nums" data-label="Total hrs">
+                      <td className="px-3 py-3 text-right tabular-nums" data-label="Hrs here">
                         <HoursMinsDisplay hours={Number(p.total_hours_worked)} />
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums" data-label="Cash hrs">

@@ -37,6 +37,7 @@ import {
   type PushPayload,
 } from "@/lib/push";
 import { parseISODate, timeToMinutes, weekdayIndex } from "@/lib/utils";
+import { matchSessionsToShifts, shiftActual } from "@/lib/shift-session-match";
 import { autoCloseOpenClocks } from "@/lib/auto-clock-out";
 import type { ReminderType } from "@/lib/types";
 
@@ -161,8 +162,16 @@ async function maybeRemind(opts: {
           reminder_date: dateIso,
           reminder_type: c.type,
           store_id: eff.storeId,
+          // Part of the dedup key since migration 060. A day can hold a booked
+          // morning at one store and a booked evening at another, and each needs
+          // its own reminder — keyed per DAY, the morning's claim swallowed the
+          // evening's for good.
+          shift_start: eff.start,
         },
-        { onConflict: `${opts.idColumn},reminder_date,reminder_type`, ignoreDuplicates: true },
+        {
+          onConflict: `${opts.idColumn},reminder_date,reminder_type,shift_start`,
+          ignoreDuplicates: true,
+        },
       )
       .select("id");
 
@@ -228,7 +237,7 @@ async function handle(req: Request) {
 
   // ---------------- Employees ----------------
   if (employeeIds.length > 0) {
-    const [employeesRes, rotaRes, schedRes, clocksRes] = await Promise.all([
+    const [employeesRes, rotaRes, schedRes, clocksRes, sessionsRes] = await Promise.all([
       admin
         .from("employees")
         .select("id, name, store_id, employment_status")
@@ -248,56 +257,103 @@ async function handle(req: Request) {
         .select("employee_id, clock_in_at, clock_out_at")
         .eq("event_date", dateIso)
         .in("employee_id", employeeIds),
+      // The SHIFTS under those days — what each booking is actually judged
+      // against below.
+      admin
+        .from("clock_sessions")
+        .select("employee_id, store_id, clock_in_at, clock_out_at")
+        .eq("event_date", dateIso)
+        .in("employee_id", employeeIds),
     ]);
 
-    // First rota row / schedule row per employee (one shift per day in practice).
-    const rotaByEmp = new Map<string, NonNullable<typeof rotaRes.data>[number]>();
-    for (const r of rotaRes.data ?? []) if (!rotaByEmp.has(r.employee_id)) rotaByEmp.set(r.employee_id, r);
+    // ALL of today's rota rows per employee, not the first one: a day can hold a
+    // booked morning at one store and a booked evening at another, and each needs
+    // its own reminder. The query has no ORDER BY, so "first row wins" also made
+    // WHICH shift got reminded arbitrary (Update 225).
+    const rotaByEmp = new Map<string, NonNullable<typeof rotaRes.data>>();
+    for (const r of rotaRes.data ?? []) {
+      rotaByEmp.set(r.employee_id, [...(rotaByEmp.get(r.employee_id) ?? []), r]);
+    }
     const schedByEmp = new Map<string, NonNullable<typeof schedRes.data>[number]>();
     for (const s of schedRes.data ?? []) if (!schedByEmp.has(s.employee_id)) schedByEmp.set(s.employee_id, s);
     const clockByEmp = new Map<string, NonNullable<typeof clocksRes.data>[number]>();
     for (const c of clocksRes.data ?? []) if (!clockByEmp.has(c.employee_id)) clockByEmp.set(c.employee_id, c);
+    const sessionsByEmp = new Map<string, NonNullable<typeof sessionsRes.data>>();
+    for (const x of sessionsRes.data ?? []) {
+      sessionsByEmp.set(x.employee_id, [...(sessionsByEmp.get(x.employee_id) ?? []), x]);
+    }
 
-    // Effective shift for today: published rota row first, else the recurring
+    // Effective shifts for today: published rota rows first, else the recurring
     // weekly template. Mirrors the crew screen's effFor().
-    function effFor(empId: string, homeStoreId: string | null): EffShift | null {
-      const real = rotaByEmp.get(empId);
-      if (real) {
-        if (real.is_day_off || !real.start_time) return null;
-        return { start: real.start_time, end: real.end_time, storeId: real.store_id ?? homeStoreId };
+    function effFor(empId: string, homeStoreId: string | null): EffShift[] {
+      const real = rotaByEmp.get(empId) ?? [];
+      if (real.length > 0) {
+        return real
+          .filter((r) => !r.is_day_off && r.start_time)
+          .map((r) => ({
+            start: r.start_time as string,
+            end: r.end_time,
+            storeId: r.store_id ?? homeStoreId,
+          }));
       }
       const tmpl = schedByEmp.get(empId);
       if (tmpl && tmpl.is_working && tmpl.start_time) {
-        return { start: tmpl.start_time, end: tmpl.end_time, storeId: homeStoreId };
+        return [{ start: tmpl.start_time, end: tmpl.end_time, storeId: homeStoreId }];
       }
-      return null;
+      return [];
     }
 
     for (const emp of employeesRes.data ?? []) {
       if (emp.employment_status === "left" || emp.employment_status === "inactive") continue;
-      const eff = effFor(emp.id, emp.store_id ?? null);
-      if (!eff) continue;
+      const effs = effFor(emp.id, emp.store_id ?? null);
+      if (effs.length === 0) continue;
       const clk = clockByEmp.get(emp.id);
+      const daySessions = sessionsByEmp.get(emp.id) ?? [];
 
-      const r = await maybeRemind({
-        admin,
-        kind: "employee",
-        id: emp.id,
-        name: emp.name,
-        eff,
-        clockedIn: !!clk?.clock_in_at,
-        clockedOut: !!clk?.clock_out_at,
-        storeName: eff.storeId ? storeName.get(eff.storeId) ?? null : null,
-        dateIso,
-        nowMin,
-        remindersTable: "push_reminders",
-        idColumn: "employee_id",
-        clockHref: "/employee/attendance",
-        send: sendPushToEmployee,
-      });
-      sent += r.sent;
-      skipped += r.skipped;
-      detail.push(...r.detail);
+      // Whether they're clocked is asked PER SHIFT, off the shift that served it.
+      // Read from the day header, the morning's clock-in suppressed the evening
+      // shift's reminder entirely. A pre-029 day carries no shift rows and can
+      // only ever have held one shift, so it still reads its header.
+      const perShift =
+        daySessions.length > 0
+          ? matchSessionsToShifts(
+              effs.map((e) => ({ eff: e, store_id: e.storeId, start_time: e.start })),
+              daySessions,
+            ).map((m) => {
+              const actual = shiftActual(m.sessions);
+              return {
+                eff: m.shift.eff,
+                clockedIn: !!actual.firstIn,
+                clockedOut: !!actual.lastOut,
+              };
+            })
+          : effs.map((eff) => ({
+              eff,
+              clockedIn: !!clk?.clock_in_at,
+              clockedOut: !!clk?.clock_out_at,
+            }));
+
+      for (const { eff, clockedIn, clockedOut } of perShift) {
+        const r = await maybeRemind({
+          admin,
+          kind: "employee",
+          id: emp.id,
+          name: emp.name,
+          eff,
+          clockedIn,
+          clockedOut,
+          storeName: eff.storeId ? storeName.get(eff.storeId) ?? null : null,
+          dateIso,
+          nowMin,
+          remindersTable: "push_reminders",
+          idColumn: "employee_id",
+          clockHref: "/employee/attendance",
+          send: sendPushToEmployee,
+        });
+        sent += r.sent;
+        skipped += r.skipped;
+        detail.push(...r.detail);
+      }
     }
   }
 
