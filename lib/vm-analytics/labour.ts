@@ -21,6 +21,7 @@ import {
   getExecMulti,
   getWeekdays,
 } from "@/lib/vm-analytics/queries";
+import { labourTotal, type WeeklyReportLabourLine } from "@/lib/weekly-report";
 import { canonicalStore } from "@/lib/vm-analytics/constants";
 import { londonHHMM, londonISODate } from "@/lib/utils";
 import {
@@ -77,6 +78,17 @@ export type LabourWeekRow = {
 
   net_sales: number | null;
   revenue_source: "vm" | "cash_sheet" | null;
+
+  /**
+   * What the approved-hours computation prices the week at. `total_cost` is
+   * this UNLESS the store's Weekly Report carries its own labour figure, in
+   * which case the report wins and the gap shows as an adjustment.
+   */
+  derived_cost: number;
+  /** The Weekly Report's `Labour Cost`!K20 for the week, null without a report. */
+  report_cost: number | null;
+  cost_source: "weekly_report" | "approved_hours";
+
   /** NULL when revenue is missing or zero — never 0, which reads as perfect. */
   labour_pct: number | null;
 };
@@ -179,6 +191,9 @@ function emptyRow(store: StoreRow, weekStart: string): LabourWeekRow {
     unapproved_days: 0,
     net_sales: null,
     revenue_source: null,
+    derived_cost: 0,
+    report_cost: null,
+    cost_source: "approved_hours",
     labour_pct: null,
   };
 }
@@ -327,6 +342,10 @@ export async function getLabourByStoreWeek(
     vmError = err instanceof Error ? err.message : "VM sales unavailable";
   }
 
+  // The Weekly Report's own labour figure, which outranks the computation below
+  // wherever a report exists — see resolveReportLabour.
+  const reportLabour = await getWeeklyReportLabour(weeks);
+
   const managerById = new Map(managers.map((m) => [m.id, m]));
   const rows: LabourWeekRow[] = [];
 
@@ -463,6 +482,19 @@ export async function getLabourByStoreWeek(
         row.ni_hours + row.cash_hours + row.cover_driver_hours + row.manager_hours,
       );
 
+      // ---- cost: the Weekly Report wins where one exists --------------------
+      // The report's labour lines start as a prefill of this same computation,
+      // but a manager corrects them and adds ad-hoc lines. Recomputing here
+      // would put a different labour cost on this page than on the sheet the
+      // week is actually reported on.
+      row.derived_cost = row.total_cost;
+      const reported = reportLabour.get(`${storeId}|${weekStart}`)?.labour_cost ?? null;
+      if (reported != null) {
+        row.report_cost = round2(reported);
+        row.total_cost = row.report_cost;
+        row.cost_source = "weekly_report";
+      }
+
       // ---- revenue: VM net sales, cash sheet only as a fallback ------------
       const vmNet = store.vm_store_name
         ? vmNetByStoreWeek.get(`${store.vm_store_name}|${weekStart}`)
@@ -545,6 +577,83 @@ export async function getLabourWeeks(
     .map((w) => ({ week_start: w, week_end: weekEndOf(w), week_start_iso: w }));
 }
 
+export type ReportLabour = {
+  /** PERCENTAGE (30, not 0.30). Null where the report leaves it unset. */
+  budget_pct: number | null;
+  /** `Labour Cost`!K20. Null where the report has no labour lines at all. */
+  labour_cost: number | null;
+  frozen: boolean;
+};
+
+/**
+ * Each store-week's Weekly Report labour: the budget percentage and the cost
+ * the sheet itself reports.
+ *
+ * The cost is read, not recomputed. `prefillLabour` seeds those lines from the
+ * same approved hours this module prices, but a manager then corrects them and
+ * adds ad-hoc lines — so the sheet is the answer, and a locked report answers
+ * with the figure frozen at lock rather than one a later rate change restates.
+ */
+export async function getWeeklyReportLabour(
+  weekStartIsos: string[],
+): Promise<Map<string, ReportLabour>> {
+  const out = new Map<string, ReportLabour>();
+  if (weekStartIsos.length === 0) return out;
+  const sb = getCashflowSupabaseServer();
+  const { data: reports } = await sb
+    .from("weekly_reports")
+    .select("id, store_id, week_start, labour_budget_pct, status, snapshot")
+    .in("week_start", weekStartIsos);
+
+  type ReportRow = {
+    id: string;
+    store_id: string;
+    week_start: string;
+    labour_budget_pct: number | string | null;
+    status: string | null;
+    snapshot: { labour_total?: number | null } | null;
+  };
+  const rows = (reports ?? []) as ReportRow[];
+  if (rows.length === 0) return out;
+
+  const liveIds = rows
+    .filter((r) => !(r.status && r.status !== "draft" && r.snapshot))
+    .map((r) => r.id);
+
+  const linesByReport = new Map<string, WeeklyReportLabourLine[]>();
+  if (liveIds.length > 0) {
+    const { data: lines } = await sb
+      .from("weekly_report_labour_lines")
+      .select("*")
+      .in("report_id", liveIds);
+    for (const l of (lines ?? []) as WeeklyReportLabourLine[]) {
+      const list = linesByReport.get(l.report_id) ?? [];
+      list.push(l);
+      linesByReport.set(l.report_id, list);
+    }
+  }
+
+  for (const r of rows) {
+    const weekIso = String(r.week_start).slice(0, 10);
+    const decimal = num(r.labour_budget_pct);
+    const frozenTotal =
+      r.status && r.status !== "draft" && r.snapshot ? r.snapshot.labour_total : null;
+    const lines = linesByReport.get(r.id);
+    const labour_cost =
+      frozenTotal != null
+        ? round2(num(frozenTotal))
+        : lines && lines.length > 0
+          ? labourTotal(lines)
+          : null;
+    out.set(`${r.store_id}|${weekIso}`, {
+      budget_pct: decimal > 0 ? round2(decimal * 100) : null,
+      labour_cost,
+      frozen: frozenTotal != null,
+    });
+  }
+  return out;
+}
+
 /**
  * Each store-week's own labour budget, as a PERCENTAGE (30, not 0.30).
  * `weekly_reports.labour_budget_pct` is stored as a decimal fraction.
@@ -553,19 +662,8 @@ export async function getLabourTargets(
   weekStartIsos: string[],
 ): Promise<Map<string, number>> {
   const targets = new Map<string, number>();
-  if (weekStartIsos.length === 0) return targets;
-  const sb = getCashflowSupabaseServer();
-  const { data } = await sb
-    .from("weekly_reports")
-    .select("store_id, week_start, labour_budget_pct")
-    .in("week_start", weekStartIsos);
-  for (const r of (data ?? []) as Array<{
-    store_id: string;
-    week_start: string;
-    labour_budget_pct: number | string | null;
-  }>) {
-    const decimal = num(r.labour_budget_pct);
-    if (decimal > 0) targets.set(`${r.store_id}|${r.week_start}`, round2(decimal * 100));
+  for (const [key, v] of await getWeeklyReportLabour(weekStartIsos)) {
+    if (v.budget_pct != null) targets.set(key, v.budget_pct);
   }
   return targets;
 }

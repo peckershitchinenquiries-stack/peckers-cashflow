@@ -25,6 +25,9 @@ const TREND_WEEKS = 13;
 
 const hrs = (v: number) => `${v.toFixed(1)}h`;
 const pp = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}pp`;
+/** The budget block quotes 2dp throughout, so its variance must not read 12.8
+ *  against 37.77 − 25.00. */
+const pp2 = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}pp`;
 
 /** The three causes as one plain sentence, biggest first. */
 function bridgeSentence(b: LabourBridge): string | null {
@@ -70,6 +73,7 @@ function combine(rows: LabourWeekRow[]) {
     cover_driver_hours: add("cover_driver_hours"),
     total_cost,
     total_hours,
+    derived_cost: add("derived_cost"),
     unapproved_days: add("unapproved_days"),
     net_sales: net,
     labour_pct: net != null && net > 0 ? (total_cost / net) * 100 : null,
@@ -81,11 +85,24 @@ function combine(rows: LabourWeekRow[]) {
   };
 }
 
+/** One line of the Actual / Budget / Variance block, pre-formatted. */
+type BudgetRow = {
+  measure: string;
+  actual: string;
+  budget: string;
+  variance: string;
+  /** True when the variance is an overspend, so the cell reads red. */
+  over: boolean | null;
+};
+
 type StoreCompareRow = {
   store: string;
   labour_pct: number | null;
+  budget_pct: number;
   gap: number | null;
-  over: number | null;
+  cost: number;
+  budget: number | null;
+  variance: number | null;
   splh: number | null;
   plan_variance: number | null;
   cost_per_drop: number | null;
@@ -187,6 +204,7 @@ export default async function LaborCostPage({
 
   const cashSheetStores = weekRows.filter((r) => r.revenue_source === "cash_sheet");
   const noRevenueStores = weekRows.filter((r) => r.net_sales == null);
+  const reportedStores = weekRows.filter((r) => r.cost_source === "weekly_report");
 
   // ---- Band 1 -------------------------------------------------------------
   const labourGap = cur.labour_pct != null ? cur.labour_pct - scopeTarget : null;
@@ -198,9 +216,33 @@ export default async function LaborCostPage({
   const splhWow =
     prev && prev.splh != null && cur.splh != null ? wow(cur.splh, prev.splh) : null;
 
-  // The percentage says how far off target; the money says how much it cost.
+  // Actual / Budget / Variance, exactly as the Weekly Summary workbook states
+  // it: budget is the target percentage OF NET SALES, and variance is
+  // budget − actual, so NEGATIVE means over budget. The page used to report the
+  // opposite sign, which read as the same number with the wrong colour logic.
   const budgetAllowance = cur.net_sales != null ? cur.net_sales * (scopeTarget / 100) : null;
-  const overspend = budgetAllowance != null ? cur.total_cost - budgetAllowance : null;
+  const costVariance = budgetAllowance != null ? budgetAllowance - cur.total_cost : null;
+  const pctVariance = cur.labour_pct != null ? scopeTarget - cur.labour_pct : null;
+
+  const budgetRows: BudgetRow[] = [
+    {
+      measure: "Labour cost",
+      actual: gbp(cur.total_cost),
+      budget: budgetAllowance == null ? "—" : gbp(budgetAllowance),
+      variance:
+        costVariance == null
+          ? "—"
+          : `${costVariance < 0 ? "−" : "+"}${gbp(Math.abs(costVariance))}`,
+      over: costVariance == null ? null : costVariance < 0,
+    },
+    {
+      measure: "% of net sales",
+      actual: cur.labour_pct == null ? "—" : pct(cur.labour_pct, 2),
+      budget: `${scopeTarget.toFixed(2)}%`,
+      variance: pctVariance == null ? "—" : pp2(pctVariance),
+      over: pctVariance == null ? null : pctVariance < 0,
+    },
+  ];
 
   const bridge = prev ? labourBridge(prev, cur) : null;
   const bridgeText = bridge ? bridgeSentence(bridge) : null;
@@ -216,9 +258,12 @@ export default async function LaborCostPage({
           return {
             store: shortStore(r.store),
             labour_pct: r.labour_pct,
-            gap: r.labour_pct == null ? null : r.labour_pct - target,
-            over:
-              r.net_sales == null ? null : r.total_cost - r.net_sales * (target / 100),
+            budget_pct: target,
+            gap: r.labour_pct == null ? null : target - r.labour_pct,
+            cost: r.total_cost,
+            budget: r.net_sales == null ? null : r.net_sales * (target / 100),
+            variance:
+              r.net_sales == null ? null : r.net_sales * (target / 100) - r.total_cost,
             splh:
               r.net_sales != null && r.total_hours > 0 ? r.net_sales / r.total_hours : null,
             plan_variance: r.rota_hours > 0 ? employeeHours - r.rota_hours : null,
@@ -226,37 +271,70 @@ export default async function LaborCostPage({
           };
         });
 
+  const budgetColumns: Column<BudgetRow>[] = [
+    {
+      key: "measure",
+      header: "Labour",
+      render: (r) => <span className="font-medium">{r.measure}</span>,
+    },
+    { key: "actual", header: "Actual", align: "right", render: (r) => r.actual },
+    { key: "budget", header: "Budget", align: "right", render: (r) => r.budget },
+    {
+      key: "variance",
+      header: "Variance",
+      align: "right",
+      render: (r) => (
+        <span className={r.over == null ? undefined : r.over ? "text-danger" : "text-success"}>
+          {r.variance}
+        </span>
+      ),
+    },
+  ];
+
   const compareColumns: Column<StoreCompareRow>[] = [
     { key: "store", header: "Store", render: (r) => <span className="font-medium">{r.store}</span> },
+    { key: "cost", header: "Actual", align: "right", render: (r) => gbp(r.cost) },
+    {
+      key: "budget",
+      header: "Budget",
+      align: "right",
+      render: (r) => (r.budget == null ? "—" : gbp(r.budget)),
+    },
+    {
+      key: "variance",
+      header: "Variance",
+      align: "right",
+      render: (r) =>
+        r.variance == null ? (
+          "—"
+        ) : (
+          <span className={r.variance < 0 ? "text-danger" : "text-success"}>
+            {r.variance < 0 ? "−" : "+"}
+            {gbp(Math.abs(r.variance))}
+          </span>
+        ),
+    },
     {
       key: "labour_pct",
-      header: "Labour %",
+      header: "Actual %",
       align: "right",
       render: (r) => (r.labour_pct == null ? "—" : pct(r.labour_pct, 1)),
     },
     {
+      key: "budget_pct",
+      header: "Budget %",
+      align: "right",
+      render: (r) => `${r.budget_pct.toFixed(0)}%`,
+    },
+    {
       key: "gap",
-      header: "Vs target",
+      header: "Variance %",
       align: "right",
       render: (r) =>
         r.gap == null ? (
           "—"
         ) : (
-          <span className={r.gap > 0 ? "text-danger" : "text-success"}>{pp(r.gap)}</span>
-        ),
-    },
-    {
-      key: "over",
-      header: "Over budget",
-      align: "right",
-      render: (r) =>
-        r.over == null ? (
-          "—"
-        ) : (
-          <span className={r.over > 0 ? "text-danger" : "text-success"}>
-            {r.over > 0 ? "+" : "−"}
-            {gbp(Math.abs(r.over))}
-          </span>
+          <span className={r.gap < 0 ? "text-danger" : "text-success"}>{pp(r.gap)}</span>
         ),
     },
     {
@@ -358,6 +436,24 @@ export default async function LaborCostPage({
         isTotal: false,
       });
     });
+    // The five lines above price approved hours; the total is the Weekly
+    // Report's. Without this line the column would not add up, and the gap —
+    // a manager's correction or an ad-hoc line — is the interesting part.
+    const adjustment = Math.round((r.total_cost - r.derived_cost) * 100) / 100;
+    if (r.cost_source === "weekly_report" && adjustment !== 0) {
+      compositionRows.push({
+        store: shortStore(r.store),
+        showStore: false,
+        label: "Weekly Report adjustments",
+        cost: adjustment,
+        delta: null,
+        units: "manual",
+        share: r.total_cost > 0 ? (adjustment / r.total_cost) * 100 : null,
+        shareOfSales:
+          r.net_sales != null && r.net_sales > 0 ? (adjustment / r.net_sales) * 100 : null,
+        isTotal: false,
+      });
+    }
     compositionRows.push({
       store: shortStore(r.store),
       showStore: false,
@@ -483,7 +579,7 @@ export default async function LaborCostPage({
     <div className="space-y-7">
       <PageTitle
         title="Labour Cost Performance"
-        subtitle={`Approved hours costed against net sales · ${scopeLabel} · ${weekRange(weekIso, match.week_end)}`}
+        subtitle={`Labour costed against net sales · ${scopeLabel} · ${weekRange(weekIso, match.week_end)}`}
       />
 
       {labour.load_error && <ErrorState message={labour.load_error} />}
@@ -509,6 +605,12 @@ export default async function LaborCostPage({
         </p>
       )}
 
+      <p className="text-xs text-tertiary">
+        {reportedStores.length > 0
+          ? `Labour for ${reportedStores.map((r) => shortStore(r.store)).join(" and ")} is the figure on the Weekly Report, so this page and that sheet quote one number. The breakdown below prices approved hours; any gap is a correction made on the report.`
+          : "No Weekly Report covers this week yet, so labour is priced from approved hours. Once the report's labour lines are filled in, this page follows them."}
+      </p>
+
       <KpiGrid>
         <KpiCard
           label="Labour % of net sales"
@@ -530,21 +632,6 @@ export default async function LaborCostPage({
         />
 
         <KpiCard
-          label="Vs labour budget"
-          value={
-            overspend == null
-              ? "—"
-              : `${overspend > 0 ? "+" : "−"}${gbp(Math.abs(overspend))}`
-          }
-          tone={overspend == null ? undefined : overspend > 0 ? "bad" : "good"}
-          hint={
-            overspend == null || budgetAllowance == null
-              ? "no sales figure for this week"
-              : `${overspend > 0 ? "over" : "under"} the ${gbp(budgetAllowance)} the target allows`
-          }
-        />
-
-        <KpiCard
           label="Sales per labour hour"
           value={cur.splh == null ? "—" : `${gbp(cur.splh)}/h`}
           delta={splhWow}
@@ -557,6 +644,13 @@ export default async function LaborCostPage({
           hint={`${gbp(cur.fixed_cost)} is fixed manager wage`}
         />
       </KpiGrid>
+
+      <Section
+        title="Labour vs budget"
+        description="Actual against the budget percentage of net sales, laid out as the Weekly Report's Summary states it. A negative variance is an overspend."
+      >
+        <DataTable columns={budgetColumns} rows={budgetRows} />
+      </Section>
 
       {bridgeText && (
         <p className="text-sm text-secondary">

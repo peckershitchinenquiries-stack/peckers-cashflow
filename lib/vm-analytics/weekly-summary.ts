@@ -99,6 +99,10 @@ export function calculateGrossMargin(
  * Budget % = Budget / NET SALES
  * Variance = Budget - Actual
  * Variance % = Budget% - Labour%
+ *
+ * NET, matching the workbook and the VM Analytics Labour Cost dashboard. The
+ * two screens must agree on the basis as well as the figure — measuring one on
+ * gross is how the same week read 37.66% on one and 32.88% on the other.
  */
 export function calculateLabour(
   netSales: number,
