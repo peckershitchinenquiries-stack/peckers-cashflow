@@ -21,9 +21,11 @@ import {
   type ManagerPayRow,
 } from "@/lib/cash-flow";
 import {
+  defaultSeedRows,
   labourTotal,
   latestReportWeekStart,
   num,
+  reportDefaults,
   rollUpInputs,
   round2,
   round4,
@@ -125,15 +127,20 @@ export async function loadWeeklyReport(input: {
   store_id: string;
   week_start: string;
 }): Promise<WeeklyReportBundle> {
-  await requireStaff();
   const supabase = createServerSupabase();
 
-  const { data: reportRow, error: reportErr } = await supabase
-    .from("weekly_reports")
-    .select("*")
-    .eq("store_id", input.store_id)
-    .eq("week_start", input.week_start)
-    .maybeSingle();
+  // The read is RLS-gated by the caller's own JWT, so asking for it alongside
+  // the session check costs nothing and saves a serial round trip on a render
+  // that already has three of them. The check still decides what is returned.
+  const [, { data: reportRow, error: reportErr }] = await Promise.all([
+    requireStaff(),
+    supabase
+      .from("weekly_reports")
+      .select("*")
+      .eq("store_id", input.store_id)
+      .eq("week_start", input.week_start)
+      .maybeSingle(),
+  ]);
 
   const report = (reportRow ?? null) as WeeklyReport | null;
 
@@ -217,15 +224,18 @@ async function countUnapprovedDays(
 /**
  * Open a store's week, creating the draft if it does not exist yet.
  *
- * `seed_from_previous` copies the PREVIOUS week's structure — every label,
- * unit_rate and sort_order, with quantities and amounts blank. Exactly what
- * duplicating the spreadsheet does today, and self-maintaining: a supplier added
- * once carries forward without anyone maintaining a template.
+ * A new report is ALWAYS seeded with a structure — there is no blank option.
+ * Managers enter the same suppliers and the same occupancy costs every week, so
+ * an empty sheet was fifteen names to retype before the first amount could go
+ * in. What it is seeded from, in order: the most recent earlier week this store
+ * has lines on, else the store's built-in defaults.
+ *
+ * Only labels, unit rates and sort order carry — every quantity and amount
+ * starts blank, exactly as duplicating the spreadsheet does.
  */
 export async function ensureWeeklyReport(input: {
   store_id: string;
   week_start: string;
-  seed_from_previous?: boolean;
 }): Promise<{ ok: true; report_id: string; seeded: number }> {
   const user = await requireStaff();
   assertStoreAccess(user, input.store_id);
@@ -243,15 +253,16 @@ export async function ensureWeeklyReport(input: {
 
   let reportId = existing.data?.id as string | undefined;
 
-  if (!reportId) {
-    // The standing Meppershall credit is per-store data, not a constant — only
-    // the store that supplies it carries one (migration 051).
-    const { data: store } = await supabase
-      .from("stores")
-      .select("meppershall_default")
-      .eq("id", input.store_id)
-      .maybeSingle();
+  // The standing Meppershall credit is per-store data, not a constant — only
+  // the store that supplies it carries one (migration 051). The name decides
+  // which set of default lines a first-ever report opens with.
+  const { data: store } = await supabase
+    .from("stores")
+    .select("name, meppershall_default")
+    .eq("id", input.store_id)
+    .maybeSingle();
 
+  if (!reportId) {
     const { data, error } = await supabase
       .from("weekly_reports")
       .insert({
@@ -266,60 +277,93 @@ export async function ensureWeeklyReport(input: {
     reportId = data.id as string;
   }
 
-  let seeded = 0;
-  if (input.seed_from_previous) seeded = await seedFromPreviousWeek(supabase, reportId, input);
+  const seeded = await seedNewReport(supabase, reportId, input, store?.name ?? "");
 
   revalidateWeeklyReport();
   return { ok: true, report_id: reportId, seeded };
 }
 
-async function seedFromPreviousWeek(
+/** The newest earlier week of this store that holds carryable lines, if any. */
+async function previousStructure(
+  supabase: SupabaseClient,
+  input: { store_id: string; week_start: string },
+): Promise<{ report: Record<string, unknown>; lines: WeeklyReportLine[] } | null> {
+  const { data: candidates } = await supabase
+    .from("weekly_reports")
+    .select("id, week_start, packaging_costs, marketing, meppershall, gross_margin_budget_pct, labour_budget_pct")
+    .eq("store_id", input.store_id)
+    .lt("week_start", input.week_start)
+    .order("week_start", { ascending: false })
+    .limit(12);
+  if (!candidates?.length) return null;
+
+  // Looking back further than one week is what makes this self-healing: a week
+  // nobody opened must not reset the sheet to the built-in defaults and lose
+  // every supplier added since.
+  const { data: rows } = await supabase
+    .from("weekly_report_lines")
+    .select(LINE_COLUMNS)
+    .in("report_id", candidates.map((c) => c.id));
+  const byReport = new Map<string, WeeklyReportLine[]>();
+  for (const line of (rows ?? []) as WeeklyReportLine[]) {
+    // Expenses are dated one-offs, not a structure — deliberately not carried,
+    // so a week holding nothing else does not count as a structure to copy.
+    if (line.section === "expense") continue;
+    const list = byReport.get(line.report_id) ?? [];
+    list.push(line);
+    byReport.set(line.report_id, list);
+  }
+  for (const candidate of candidates) {
+    const lines = byReport.get(candidate.id as string);
+    if (lines?.length) return { report: candidate, lines };
+  }
+  return null;
+}
+
+async function seedNewReport(
   supabase: SupabaseClient,
   reportId: string,
   input: { store_id: string; week_start: string },
+  storeName: string,
 ): Promise<number> {
-  // Never seed on top of existing lines — carry-forward is an offer made to an
-  // empty week, not a merge.
+  // Never seed on top of existing lines — this is the shape an EMPTY week
+  // opens in, not a merge into one already being typed.
   const { count } = await supabase
     .from("weekly_report_lines")
     .select("id", { count: "exact", head: true })
     .eq("report_id", reportId);
   if ((count ?? 0) > 0) return 0;
 
-  const prevWeek = toISODate(addDays(parseISODate(input.week_start), -7));
-  const { data: prevReport } = await supabase
-    .from("weekly_reports")
-    .select("id, packaging_costs, marketing, meppershall, gross_margin_budget_pct, labour_budget_pct")
-    .eq("store_id", input.store_id)
-    .eq("week_start", prevWeek)
-    .maybeSingle();
-  if (!prevReport) return 0;
+  const previous = await previousStructure(supabase, input);
 
-  const { data: prevLines } = await supabase
-    .from("weekly_report_lines")
-    .select(LINE_COLUMNS)
-    .eq("report_id", prevReport.id);
-
-  // Expenses are dated one-offs, not a structure — deliberately not carried.
-  const payload = ((prevLines ?? []) as WeeklyReportLine[])
-    .filter((l) => l.section !== "expense")
-    .map((l) => ({
-      report_id: reportId,
-      section: l.section,
-      label: l.label,
-      sort_order: l.sort_order,
-      unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
-    }));
+  const payload = previous
+    ? previous.lines.map((l) => ({
+        report_id: reportId,
+        section: l.section,
+        label: l.label,
+        sort_order: l.sort_order,
+        unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
+      }))
+    : defaultSeedRows(storeName).map((r) => ({
+        report_id: reportId,
+        section: r.section,
+        label: r.label,
+        sort_order: r.sort_order,
+        unit_rate: SECTION_DEFS[r.section].defaultUnitRate ?? null,
+      }));
 
   // The budget percentages are a standing target, not a weekly figure, so they
   // carry across even though every amount is blanked. So is Meppershall, which
   // is the same £ every week until someone changes the arrangement.
+  const defaults = reportDefaults(storeName);
+  const prevMeppershall = previous?.report.meppershall;
   await supabase
     .from("weekly_reports")
     .update({
-      gross_margin_budget_pct: prevReport.gross_margin_budget_pct,
-      labour_budget_pct: prevReport.labour_budget_pct,
-      ...(prevReport.meppershall == null ? {} : { meppershall: prevReport.meppershall }),
+      gross_margin_budget_pct:
+        previous?.report.gross_margin_budget_pct ?? defaults.gross_margin_budget_pct,
+      labour_budget_pct: previous?.report.labour_budget_pct ?? defaults.labour_budget_pct,
+      ...(prevMeppershall == null ? {} : { meppershall: prevMeppershall }),
     })
     .eq("id", reportId);
 

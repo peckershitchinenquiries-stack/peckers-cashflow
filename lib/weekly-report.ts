@@ -232,6 +232,140 @@ export const FILLINGS_SECTIONS: ReportSection[] = [
 
 export const VAT_RATE = 0.2;
 
+// ---------------- the default sheet ----------------
+
+/**
+ * The lines a store enters EVERY week — its suppliers, its occupancy costs, the
+ * sites it sends fillings to — plus the standing budget percentages.
+ *
+ * Taken from each store's week of 2026-09-14. A manager should be typing
+ * AMOUNTS, not retyping fifteen supplier names, so a report opened for a store
+ * with no history starts in this shape rather than empty.
+ *
+ * Only the starting shape: every grid still adds and removes rows freely, and
+ * from the second week on the carry-forward copies whatever the manager
+ * actually kept. So a supplier dropped once stays dropped without this list
+ * ever being edited — the same reason the carry-forward has no template.
+ *
+ * One row per supplier, not one per invoice. The Cost of Goods grid is a column
+ * per invoice and opens MIN_INVOICE_COLUMNS wide, so the cells are already
+ * there to type into.
+ */
+export type ReportDefaults = {
+  lines: Partial<Record<ReportSection, string[]>>;
+  gross_margin_budget_pct: number;
+  labour_budget_pct: number;
+};
+
+const STEVENAGE_DEFAULTS: ReportDefaults = {
+  lines: {
+    cogs_supplier: [
+      "Magna",
+      "MS Foods",
+      "Bidfood",
+      "T Quality",
+      "JJ's",
+      "Oil",
+      "Hulses",
+      "Soft Drinks",
+      "Lovely Singh",
+      "Edwards Wine",
+      "Costco",
+      "Amazon + Nisbets",
+      "One Stop",
+      "Samosa",
+      "Blue Rolls & Gloves",
+    ],
+    occupancy: [
+      "Go Big",
+      "Sporting Ads",
+      "Accountancy Fees",
+      "Business Rates",
+      "Cleaning Supplies",
+      "Trade Bins",
+      "Equipment",
+      "NI Employers",
+      "Insurance",
+      "Software",
+      "Lighting Power",
+      "Rent",
+      "Repairs",
+      "Subscriptions",
+      "Telephone",
+    ],
+    cogs_walkern: ["Bidfood"],
+    fillings: ["Walkern", "Watton At Stone"],
+  },
+  gross_margin_budget_pct: 0.7,
+  labour_budget_pct: 0.26,
+};
+
+const HITCHIN_DEFAULTS: ReportDefaults = {
+  lines: {
+    cogs_supplier: [
+      "MS Foods",
+      "Magna",
+      "Blue Rolls & Napkins",
+      "T Quality",
+      "JJ's",
+      "Oil",
+      "Hulses",
+      "Soft Drinks",
+      "Lovely Singh",
+      "NISA",
+      "Costco",
+    ],
+    occupancy: [
+      "Go Big",
+      "Accountancy Fees",
+      "Rates",
+      "Cleaning Supplies",
+      "Trade Bins",
+      "Equipment",
+      "NI Employers",
+      "Insurance",
+      "Software",
+      "Lighting Power",
+      "Rent",
+      "Repairs",
+      "Subscriptions",
+      "Telephone",
+    ],
+  },
+  gross_margin_budget_pct: 0.7,
+  labour_budget_pct: 0.25,
+};
+
+/** Matched on the name, like `otherStoreName` — there are two stores, not a table. */
+export function reportDefaults(storeName: string): ReportDefaults {
+  return /hitchin/i.test(storeName) ? HITCHIN_DEFAULTS : STEVENAGE_DEFAULTS;
+}
+
+/**
+ * Aggregator lines are NOT seeded: `aggregatorRows` already renders all three
+ * platforms whether a commission has been entered or not.
+ *
+ * Expenses are not seeded either — they are dated one-off receipts, not a
+ * structure, which is also why the carry-forward skips them.
+ */
+export function defaultSeedRows(
+  storeName: string,
+): { section: ReportSection; label: string; sort_order: number }[] {
+  const rows: { section: ReportSection; label: string; sort_order: number }[] = [];
+  for (const [section, labels] of Object.entries(reportDefaults(storeName).lines)) {
+    (labels ?? []).forEach((label, index) => {
+      rows.push({
+        section: section as ReportSection,
+        label,
+        // Suppliers are spaced so each one's invoices sort together, matching
+        // what SupplierInvoiceGrid writes back.
+        sort_order: section === "cogs_supplier" ? index * MAX_INVOICE_COLUMNS : index,
+      });
+    });
+  }
+  return rows;
+}
+
 // ---------------- number helpers ----------------
 
 export function num(v: unknown): number {

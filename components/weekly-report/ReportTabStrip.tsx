@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import type { ReportTab } from "@/lib/weekly-report";
@@ -36,12 +37,21 @@ export function ReportTabStrip({
   const pathname = usePathname();
   const search = useSearchParams();
 
+  // Every tab is a server round trip, so the strip moved its highlight only
+  // once the new sheet had loaded — a second or more after the click, which
+  // reads as a dead button. The selection is the one thing we already know.
+  const [pending, startTransition] = React.useTransition();
+  const [clicked, setClicked] = React.useState<ReportTab | null>(null);
+  React.useEffect(() => setClicked(null), [active]);
+  const shown = pending && clicked ? clicked : active;
+
   function go(tab: ReportTab) {
     const params = new URLSearchParams(search.toString());
     if (tab === "summary") params.delete("tab");
     else params.set("tab", tab);
     const qs = params.toString();
-    router.push(qs ? `${pathname}?${qs}` : pathname);
+    setClicked(tab);
+    startTransition(() => router.push(qs ? `${pathname}?${qs}` : pathname));
   }
 
   return (
@@ -54,11 +64,11 @@ export function ReportTabStrip({
         <button
           key={t.id}
           role="tab"
-          aria-selected={t.id === active}
+          aria-selected={t.id === shown}
           onClick={() => go(t.id)}
           className={cn(
             "h-9 whitespace-nowrap rounded-lg px-3 text-sm font-medium transition-colors",
-            t.id === active
+            t.id === shown
               ? "bg-gold text-black shadow-sm"
               : "text-text-subtle hover:bg-surface-hover hover:text-text-primary",
           )}

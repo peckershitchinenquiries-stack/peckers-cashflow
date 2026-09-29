@@ -51,7 +51,9 @@ function toSheet(lines: WeeklyReportLine[]): Sheet {
       label: g.label,
       invoices: g.invoices.map((l) => ({
         id: l.id,
-        amount: String(lineAmount(l)),
+        // A seeded row carries a name and no figure — that must read as an
+        // empty cell to type into, never as an invoice of £0.00.
+        amount: l.amount == null ? "" : String(lineAmount(l)),
         note: l.note,
       })),
     })),
@@ -190,10 +192,12 @@ export function SupplierInvoiceGrid({
     drafts.forEach((d, index) => {
       const label = d.label.trim();
       if (!label) return;
+      let entered = 0;
       for (let column = 0; column < columns; column++) {
         const invoice = d.invoices[column];
         if (!invoice || invoice.amount === "") continue;
         if (invoice.id) kept.add(invoice.id);
+        entered += 1;
         payload.push({
           key: `${d.key}:${column}`,
           id: invoice.id,
@@ -204,6 +208,22 @@ export function SupplierInvoiceGrid({
           sort_order: index * MAX_INVOICE_COLUMNS + column,
           amount: round2(num(invoice.amount)),
           note: invoice.note,
+        });
+      }
+      // A supplier nobody invoiced this week keeps ONE amount-less row, so the
+      // name is still here after a save and still carries into next week. Only
+      // an explicit Remove drops a supplier.
+      if (entered === 0) {
+        const held = d.invoices.find((i) => i.id);
+        if (held?.id) kept.add(held.id);
+        payload.push({
+          key: `${d.key}:0`,
+          id: held?.id ?? null,
+          section: def.key,
+          label,
+          sort_order: index * MAX_INVOICE_COLUMNS,
+          amount: null,
+          note: held?.note ?? null,
         });
       }
     });

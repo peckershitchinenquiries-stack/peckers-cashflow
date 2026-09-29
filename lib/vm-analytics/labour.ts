@@ -14,6 +14,8 @@
 // Read-only. It writes nothing and is safe to call from any server component.
 // =============================================================
 
+import { cache } from "react";
+import { unstable_cache } from "next/cache";
 import { getCashflowSupabaseServer } from "@/lib/supabase-cashflow";
 import {
   getDailyNetSalesByDay,
@@ -21,7 +23,11 @@ import {
   getExecMulti,
   getWeekdays,
 } from "@/lib/vm-analytics/queries";
-import { labourTotal, type WeeklyReportLabourLine } from "@/lib/weekly-report";
+import {
+  labourLineTotals,
+  labourTotal,
+  type WeeklyReportLabourLine,
+} from "@/lib/weekly-report";
 import { canonicalStore } from "@/lib/vm-analytics/constants";
 import { londonHHMM, londonISODate } from "@/lib/utils";
 import {
@@ -88,6 +94,8 @@ export type LabourWeekRow = {
   /** The Weekly Report's `Labour Cost`!K20 for the week, null without a report. */
   report_cost: number | null;
   cost_source: "weekly_report" | "approved_hours";
+  /** The report's own lines, split for the breakdown table. Null without one. */
+  composition: LabourComposition | null;
 
   /** NULL when revenue is missing or zero — never 0, which reads as perfect. */
   labour_pct: number | null;
@@ -194,6 +202,7 @@ function emptyRow(store: StoreRow, weekStart: string): LabourWeekRow {
     derived_cost: 0,
     report_cost: null,
     cost_source: "approved_hours",
+    composition: null,
     labour_pct: null,
   };
 }
@@ -487,12 +496,40 @@ export async function getLabourByStoreWeek(
       // but a manager corrects them and adds ad-hoc lines. Recomputing here
       // would put a different labour cost on this page than on the sheet the
       // week is actually reported on.
+      //
+      // The BREAKDOWN follows the same lines, not just the total. Costing the
+      // parts from approved hours under a reported total left the column not
+      // adding up, and the gap had to be shown as an adjustment nobody made.
       row.derived_cost = row.total_cost;
-      const reported = reportLabour.get(`${storeId}|${weekStart}`)?.labour_cost ?? null;
-      if (reported != null) {
-        row.report_cost = round2(reported);
+      const report = reportLabour.get(`${storeId}|${weekStart}`);
+      if (report?.labour_cost != null) {
+        row.report_cost = round2(report.labour_cost);
         row.total_cost = row.report_cost;
         row.cost_source = "weekly_report";
+      }
+      if (report?.composition) {
+        const c = report.composition;
+        row.composition = c;
+        row.ni_cost = c.employee_ni;
+        row.ni_hours = c.ni_hours;
+        row.cash_cost = round2(c.employee_cash + c.adhoc);
+        row.cash_hours = c.cash_hours;
+        row.delivery_cost = round2(
+          c.employee_delivery + c.manager_cash + c.cover_driver_delivery,
+        );
+        row.deliveries = round2(
+          c.employee_deliveries + c.manager_deliveries + c.cover_driver_deliveries,
+        );
+        row.manager_cost = c.manager_ni;
+        row.manager_hours = c.manager_hours;
+        row.cover_driver_cost = c.cover_driver_cash;
+        row.cover_driver_hours = c.cover_driver_hours;
+        // The parts are the total. A locked report whose snapshot predates its
+        // own lines would otherwise leave the rows short of their sum.
+        row.total_cost = c.total;
+        row.total_hours = round2(
+          c.ni_hours + c.cash_hours + c.cover_driver_hours + c.manager_hours,
+        );
       }
 
       // ---- revenue: VM net sales, cash sheet only as a fallback ------------
@@ -539,8 +576,23 @@ export async function getLabourByStoreWeek(
  * in-progress week has days nobody has approved yet, so costing it would read
  * as a collapse in labour spend rather than as a week still in flight.
  */
-export async function getLabourWeeks(
-  lookbackWeeks = 52,
+/**
+ * Every VM Analytics page renders the week picker, so this scan of a year of
+ * clock days ran on all of them — including the nine dashboards that never
+ * offer it. It is a LIST OF WEEKS, which changes at most once a day, so it is
+ * held for a few minutes rather than re-scanned per navigation.
+ */
+export const getLabourWeeks = cache(
+  (lookbackWeeks = 52) =>
+    unstable_cache(
+      () => scanLabourWeeks(lookbackWeeks),
+      ["labour-weeks", String(lookbackWeeks)],
+      { revalidate: 300 },
+    )(),
+);
+
+async function scanLabourWeeks(
+  lookbackWeeks: number,
 ): Promise<{ week_start: string; week_end: string; week_start_iso: string }[]> {
   const now = new Date();
   const day = now.getUTCDay();
@@ -583,7 +635,112 @@ export type ReportLabour = {
   /** `Labour Cost`!K20. Null where the report has no labour lines at all. */
   labour_cost: number | null;
   frozen: boolean;
+  /** The same lines split into the five cost types. Null without any lines. */
+  composition: LabourComposition | null;
 };
+
+/**
+ * The Weekly Report's labour split by WHO was paid and by WHICH of the sheet's
+ * money columns paid them. The eight costs add up to `labourTotal` exactly.
+ */
+export type LabourComposition = {
+  employee_ni: number;
+  employee_cash: number;
+  employee_delivery: number;
+  /** A manager's fixed daily wage, which the sheet carries on the NI columns. */
+  manager_ni: number;
+  /** Everything else a manager earned — their drops, and cash hours if any. */
+  manager_cash: number;
+  cover_driver_cash: number;
+  cover_driver_delivery: number;
+  /** Lines belonging to no employee, manager or driver — outsourced cover. */
+  adhoc: number;
+  total: number;
+
+  employee_deliveries: number;
+  manager_deliveries: number;
+  cover_driver_deliveries: number;
+
+  ni_hours: number;
+  cash_hours: number;
+  manager_hours: number;
+  cover_driver_hours: number;
+};
+
+/**
+ * The report's labour lines regrouped for this page.
+ *
+ * Every line is priced by `labourLineTotals` — the same call the Labour Cost tab
+ * renders — so a typed override or an outsourced line is carried exactly as the
+ * sheet carries it, and the parts always add up to `labourTotal`.
+ *
+ * Routing is by the line's SOURCE, not by which column holds the money: a
+ * manager's fixed daily wage rides the NI columns as an effective hourly rate
+ * (see `prefillLabour`), so reading NI as employee NI would move a manager's
+ * wage onto the crew. A cover driver's pay is all cash for the same reason.
+ */
+export function labourCompositionFromLines(
+  lines: WeeklyReportLabourLine[],
+): LabourComposition {
+  const c: LabourComposition = {
+    employee_ni: 0,
+    employee_cash: 0,
+    employee_delivery: 0,
+    manager_ni: 0,
+    manager_cash: 0,
+    cover_driver_cash: 0,
+    cover_driver_delivery: 0,
+    adhoc: 0,
+    total: 0,
+    employee_deliveries: 0,
+    manager_deliveries: 0,
+    cover_driver_deliveries: 0,
+    ni_hours: 0,
+    cash_hours: 0,
+    manager_hours: 0,
+    cover_driver_hours: 0,
+  };
+  for (const l of lines) {
+    const t = labourLineTotals(l);
+    const drops = l.deliveries ?? 0;
+    if (l.source === "manager") {
+      c.manager_ni += t.ni_total;
+      c.manager_cash += t.cash_total + t.delivery_pay;
+      c.manager_deliveries += drops;
+      c.manager_hours += t.hours;
+    } else if (l.source === "cover_driver") {
+      c.cover_driver_cash += t.ni_total + t.cash_total;
+      c.cover_driver_delivery += t.delivery_pay;
+      c.cover_driver_deliveries += drops;
+      c.cover_driver_hours += t.hours;
+    } else if (l.source === "adhoc") {
+      // One row, whichever column the sheet used: an outsourced job has no
+      // hours behind it, so splitting it across NI and cash says nothing.
+      c.adhoc += t.ni_total + t.cash_total + t.delivery_pay;
+      c.ni_hours += num(l.ni_hours);
+      c.cash_hours += num(l.cash_hours);
+    } else {
+      c.employee_ni += t.ni_total;
+      c.employee_cash += t.cash_total;
+      c.employee_delivery += t.delivery_pay;
+      c.employee_deliveries += drops;
+      c.ni_hours += num(l.ni_hours);
+      c.cash_hours += num(l.cash_hours);
+    }
+  }
+  for (const k of Object.keys(c) as (keyof LabourComposition)[]) c[k] = round2(c[k]);
+  c.total = round2(
+    c.employee_ni +
+      c.employee_cash +
+      c.employee_delivery +
+      c.manager_ni +
+      c.manager_cash +
+      c.cover_driver_cash +
+      c.cover_driver_delivery +
+      c.adhoc,
+  );
+  return c;
+}
 
 /**
  * Each store-week's Weekly Report labour: the budget percentage and the cost
@@ -616,21 +773,22 @@ export async function getWeeklyReportLabour(
   const rows = (reports ?? []) as ReportRow[];
   if (rows.length === 0) return out;
 
-  const liveIds = rows
-    .filter((r) => !(r.status && r.status !== "draft" && r.snapshot))
-    .map((r) => r.id);
-
+  // Every report's lines, a locked one included: lock makes them read-only, so
+  // they still state the frozen week person by person. Without them a locked
+  // week could only be broken down by recomputing approved hours, which is the
+  // very disagreement this page exists to remove.
   const linesByReport = new Map<string, WeeklyReportLabourLine[]>();
-  if (liveIds.length > 0) {
-    const { data: lines } = await sb
-      .from("weekly_report_labour_lines")
-      .select("*")
-      .in("report_id", liveIds);
-    for (const l of (lines ?? []) as WeeklyReportLabourLine[]) {
-      const list = linesByReport.get(l.report_id) ?? [];
-      list.push(l);
-      linesByReport.set(l.report_id, list);
-    }
+  const { data: lines } = await sb
+    .from("weekly_report_labour_lines")
+    .select("*")
+    .in(
+      "report_id",
+      rows.map((r) => r.id),
+    );
+  for (const l of (lines ?? []) as WeeklyReportLabourLine[]) {
+    const list = linesByReport.get(l.report_id) ?? [];
+    list.push(l);
+    linesByReport.set(l.report_id, list);
   }
 
   for (const r of rows) {
@@ -639,6 +797,8 @@ export async function getWeeklyReportLabour(
     const frozenTotal =
       r.status && r.status !== "draft" && r.snapshot ? r.snapshot.labour_total : null;
     const lines = linesByReport.get(r.id);
+    const composition =
+      lines && lines.length > 0 ? labourCompositionFromLines(lines) : null;
     const labour_cost =
       frozenTotal != null
         ? round2(num(frozenTotal))
@@ -649,6 +809,7 @@ export async function getWeeklyReportLabour(
       budget_pct: decimal > 0 ? round2(decimal * 100) : null,
       labour_cost,
       frozen: frozenTotal != null,
+      composition,
     });
   }
   return out;

@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
 import { getCashflowSupabaseServer } from "@/lib/supabase-cashflow";
 import type {
@@ -58,7 +59,9 @@ function currentWeekMondayIso(now = new Date()): string {
   return monday.toISOString().slice(0, 10);
 }
 
-export async function getWeeks(): Promise<WeekOption[]> {
+// Asked for by the layout, the page and often a query below it, all in one
+// render. cache() collapses those into a single round trip per request.
+export const getWeeks = cache(async function getWeeks(): Promise<WeekOption[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
     .from("vm_v_available_weeks")
@@ -66,7 +69,7 @@ export async function getWeeks(): Promise<WeekOption[]> {
     .order("week_start", { ascending: false });
   if (error) throw new Error(`getWeeks: ${error.message}`);
   return (data ?? []) as WeekOption[];
-}
+});
 
 export async function resolveWeek(weekIso?: string): Promise<string | null> {
   if (weekIso) return weekIso;
@@ -82,10 +85,10 @@ export async function previousWeek(weekIso: string): Promise<string | null> {
   return weeks[idx + 1]?.week_start_iso ?? null;
 }
 
-export async function getExec(weekIso: string): Promise<ExecRow[]> {
+export const getExec = cache(async function getExec(weekIso: string): Promise<ExecRow[]> {
   // Single-week is just the one-element multi-week case (`.in([x])` == `.eq(x)`).
   return getExecMulti([weekIso]);
-}
+});
 
 // Current-year exec rows for one or more weeks at once. Powers both the
 // single-week path (via getExec) and the 4/12-week Executive modes: buildBreakdown
@@ -112,9 +115,11 @@ export async function getLatestWeeks(count: number): Promise<WeekOption[]> {
 // Channel-level net sales + orders for a week, merged from the two raw tables
 // on (store, channel). The Executive view (vm_v_exec_dashboard) only exposes
 // bucketed totals, so we read the raw tables to get per-channel granularity.
-export async function getExecChannels(weekIso: string): Promise<ExecChannelRow[]> {
+export const getExecChannels = cache(async function getExecChannels(
+  weekIso: string,
+): Promise<ExecChannelRow[]> {
   return getExecChannelsMulti([weekIso]);
-}
+});
 
 // Same as getExecChannels but summed across several weeks — one row per
 // (store, channel) with net_sales and orders totalled over the period. Amounts
@@ -160,7 +165,9 @@ export async function getExecChannelsMulti(weekIsos: string[]): Promise<ExecChan
 // Per (store, channel) GROSS sales for a week, from the raw vm_sales_store_channel
 // ingest. One store is ingested per-week (hour null) and the other per-HOUR, so
 // always SUM per key rather than reading a single row. Amounts are TEXT.
-export async function getGrossSalesByChannel(weekIso: string): Promise<ChannelGrossRow[]> {
+export const getGrossSalesByChannel = cache(async function getGrossSalesByChannel(
+  weekIso: string,
+): Promise<ChannelGrossRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
     .from("vm_sales_store_channel")
@@ -177,7 +184,7 @@ export async function getGrossSalesByChannel(weekIso: string): Promise<ChannelGr
     merged.set(k, cur);
   }
   return Array.from(merged.values());
-}
+});
 
 // Every week of one store's GROSS per-channel sales up to `throughWeekIso`, as
 // week -> channel -> amount. Paged: PostgREST caps a response at 1000 rows, and
@@ -548,7 +555,9 @@ export async function getWeekdays(weekIso: string): Promise<WeekdayRow[]> {
   return (data ?? []) as WeekdayRow[];
 }
 
-export async function getDelivery(weekIso: string): Promise<DeliveryRow[]> {
+export const getDelivery = cache(async function getDelivery(
+  weekIso: string,
+): Promise<DeliveryRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
     .from("vm_v_delivery_mix")
@@ -557,9 +566,11 @@ export async function getDelivery(weekIso: string): Promise<DeliveryRow[]> {
     .order("gross_sales", { ascending: false });
   if (error) throw new Error(`getDelivery: ${error.message}`);
   return (data ?? []) as DeliveryRow[];
-}
+});
 
-export async function getComparison(weekIso: string): Promise<ComparisonRow[]> {
+export const getComparison = cache(async function getComparison(
+  weekIso: string,
+): Promise<ComparisonRow[]> {
   const sb = getVMSupabaseServer();
   const { data, error } = await sb
     .from("vm_v_store_comparison")
@@ -567,7 +578,7 @@ export async function getComparison(weekIso: string): Promise<ComparisonRow[]> {
     .eq("week_start", weekIso);
   if (error) throw new Error(`getComparison: ${error.message}`);
   return (data ?? []) as ComparisonRow[];
-}
+});
 
 // Per-item attachment rates (share of orders containing the item) with WoW
 // delta. Used by the Weekly Exception Report for falling-attachment risks and

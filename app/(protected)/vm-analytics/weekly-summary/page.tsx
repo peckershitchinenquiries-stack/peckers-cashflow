@@ -44,7 +44,15 @@ export default async function WeeklySummaryPage({
   // reportWeekOptions. A failure there is not fatal: the local Mondays stand in.
   // ?week= is SHARED with the other dashboards, whose lists differ, so it is
   // resolved against this one rather than trusted.
-  const vmWeeks = await getWeeks().catch(() => []);
+  const supabase = createServerSupabase();
+  const [vmWeeks, { data: storeRows, error: storesError }] = await Promise.all([
+    getWeeks().catch(() => []),
+    supabase
+      .from("stores")
+      .select("id, code, name, vm_store_name, meppershall_default")
+      .order("name"),
+  ]);
+
   const weeks = reportWeekOptions(vmWeeks);
   const weekIso = resolveReportWeek(weeks, searchParams.week);
   if (!weekIso) return <ErrorState message="No weeks available." />;
@@ -52,14 +60,11 @@ export default async function WeeklySummaryPage({
   const weekOption = weeks.find((w) => w.week_start_iso === weekIso);
   const weekLabel = weekRange(weekIso, weekOption?.week_end);
   const selectedVmStore = resolveStoreParam(searchParams.store);
-
-  const supabase = createServerSupabase();
-  const { data: storeRows, error: storesError } = await supabase
-    .from("stores")
-    .select("id, code, name, vm_store_name")
-    .order("name");
   if (storesError) return <ErrorState message={storesError.message} />;
-  const stores = (storeRows ?? []) as Pick<Store, "id" | "code" | "name" | "vm_store_name">[];
+  const stores = (storeRows ?? []) as Pick<
+    Store,
+    "id" | "code" | "name" | "vm_store_name" | "meppershall_default"
+  >[];
 
   if (selectedVmStore) {
     const store = stores.find((s) => s.vm_store_name === selectedVmStore);
@@ -79,6 +84,7 @@ export default async function WeeklySummaryPage({
         weekLabel={weekLabel}
         tab={resolveTab(searchParams.tab)}
         canUnlock
+        meppershallDefault={store.meppershall_default ?? null}
       />
     );
   }
@@ -95,7 +101,7 @@ async function CombinedView({
   weekIso,
   weekLabel,
 }: {
-  stores: Pick<Store, "id" | "code" | "name" | "vm_store_name">[];
+  stores: Pick<Store, "id" | "code" | "name" | "vm_store_name" | "meppershall_default">[];
   weekIso: string;
   weekLabel: string;
 }) {

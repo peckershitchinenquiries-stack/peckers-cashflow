@@ -1,3 +1,4 @@
+import * as React from "react";
 import { createServerSupabase } from "@/lib/supabase-server";
 import { mergeSettings } from "@/lib/settings";
 import { loadWeeklyReport } from "@/app/actions/weekly-report";
@@ -49,6 +50,7 @@ export async function WeeklyReportScreen({
   weekLabel,
   tab,
   canUnlock,
+  meppershallDefault,
 }: {
   storeId: string;
   storeName: string;
@@ -57,17 +59,18 @@ export async function WeeklyReportScreen({
   weekLabel: string;
   tab: ReportTab;
   canUnlock: boolean;
+  /** Read off the store row the caller already loaded — migration 051. */
+  meppershallDefault: number | null;
 }) {
   const supabase = createServerSupabase();
 
-  const [bundle, sales, platformSales, settingsRes, storeRes] = await Promise.all([
+  const [bundle, sales, platformSales, settingsRes] = await Promise.all([
     loadWeeklyReport({ store_id: storeId, week_start: weekIso }),
     loadVmSales(vmStoreName, weekIso),
     tab === "aggregator"
       ? loadVmPlatformSales(vmStoreName, weekIso)
       : Promise.resolve({ basis: "gross" as const, rows: [] }),
     supabase.from("app_settings").select("key, value"),
-    supabase.from("stores").select("meppershall_default").eq("id", storeId).maybeSingle(),
   ]);
 
   const transferLabel = transferTitle(storeName);
@@ -87,8 +90,7 @@ export async function WeeklyReportScreen({
   // The store that supplies Meppershall carries a standing figure; the other
   // one never sees the field. A report that already holds a value keeps it
   // editable even if the arrangement is later cleared off the store.
-  const showMeppershall =
-    storeRes.data?.meppershall_default != null || report?.meppershall != null;
+  const showMeppershall = meppershallDefault != null || report?.meppershall != null;
 
   return (
     <div className="flex flex-col gap-5">
@@ -112,7 +114,12 @@ export async function WeeklyReportScreen({
       />
 
       {report && (
-        <>
+        // Keyed on the report so switching store or week REPLACES the sheets
+        // rather than re-rendering them. Every grid holds the manager's typing
+        // in local state, and a grid that believes it is mid-edit refuses the
+        // incoming rows — which is how Stevenage arrived showing Hitchin's
+        // typed-in figures until the page was reloaded.
+        <React.Fragment key={report.id}>
           <ReportTabStrip active={tab} transferLabel={transferLabel} />
 
           {tab === "summary" && (
@@ -194,7 +201,7 @@ export async function WeeklyReportScreen({
               showMeppershall={showMeppershall}
             />
           )}
-        </>
+        </React.Fragment>
       )}
     </div>
   );

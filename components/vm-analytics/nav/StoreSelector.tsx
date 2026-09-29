@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { STORES, shortStore } from "@/lib/vm-analytics/constants";
 
@@ -10,7 +11,15 @@ export function StoreSelector() {
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
-  const selected = search.get("store") ?? "";
+  const fromUrl = search.get("store") ?? "";
+
+  // The dashboard below is a server render, so the select sat on the old store
+  // until it came back. Showing the pick straight away is the difference
+  // between "switching" and "nothing happened".
+  const [pending, startTransition] = React.useTransition();
+  const [picked, setPicked] = React.useState<string | null>(null);
+  React.useEffect(() => setPicked(null), [fromUrl]);
+  const selected = pending && picked !== null ? picked : fromUrl;
 
   // Store Comparison is always both stores side by side, so a store filter makes
   // no sense there — hide the selector on that dashboard.
@@ -20,7 +29,8 @@ export function StoreSelector() {
     const params = new URLSearchParams(search.toString());
     if (e.target.value) params.set("store", e.target.value);
     else params.delete("store");
-    router.push(`${pathname}?${params.toString()}`);
+    setPicked(e.target.value);
+    startTransition(() => router.push(`${pathname}?${params.toString()}`));
   }
 
   return (
@@ -29,6 +39,7 @@ export function StoreSelector() {
       <select
         value={selected}
         onChange={onChange}
+        aria-busy={pending}
         className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 text-sm font-medium text-primary shadow-sm focus:border-gold focus:outline-none sm:flex-none"
       >
         <option value="" className="bg-surface text-primary">

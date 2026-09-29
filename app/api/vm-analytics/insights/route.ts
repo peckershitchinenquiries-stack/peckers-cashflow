@@ -43,7 +43,7 @@ export async function POST(req: Request): Promise<Response> {
   // If a summary for this (week, cacheKey) pair already exists, return it
   // immediately — no Claude call, no cost.
   try {
-    const sb = getVMSupabaseServer();
+    const sb = getVMSupabaseServer({ cached: false });
     const { data: cached } = await sb
       .from("vm_generated_insights")
       .select("summary, bullets, source")
@@ -113,7 +113,7 @@ export async function POST(req: Request): Promise<Response> {
   // The next user to open this (week, dashboard) gets the cached result —
   // no API call and no delay regardless of how many times they switch weeks.
   try {
-    const sb = getVMSupabaseServer();
+    const sb = getVMSupabaseServer({ cached: false });
     await sb.from("vm_generated_insights").upsert(
       {
         week_start_iso: input.week,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { WeekOption, ExecMode } from "@/lib/vm-analytics/types";
 import { weekRange } from "@/lib/vm-analytics/format";
@@ -32,7 +32,14 @@ export function WeekSelector({
   const router = useRouter();
   const pathname = usePathname();
   const search = useSearchParams();
-  const selected = search.get("week");
+  const weekInUrl = search.get("week");
+
+  // The picker is above a server-rendered dashboard, so it stayed on the old
+  // week until that came back. Reflect the pick at once.
+  const [pending, startTransition] = useTransition();
+  const [picked, setPicked] = useState<string | null>(null);
+  useEffect(() => setPicked(null), [weekInUrl]);
+  const selected = pending && picked ? picked : weekInUrl;
 
   const isLaborCost = pathname.includes("/labor-cost");
   const isExecutive = pathname.includes("/executive");
@@ -59,7 +66,8 @@ export function WeekSelector({
   function onWeekChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const params = new URLSearchParams(search.toString());
     params.set("week", e.target.value);
-    router.push(`${pathname}?${params.toString()}`);
+    setPicked(e.target.value);
+    startTransition(() => router.push(`${pathname}?${params.toString()}`));
   }
 
   function onModeChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -73,7 +81,7 @@ export function WeekSelector({
       params.set("mode", next);
       params.delete("week");
     }
-    router.push(`${pathname}?${params.toString()}`);
+    startTransition(() => router.push(`${pathname}?${params.toString()}`));
   }
 
   if (list.length === 0) {
@@ -94,7 +102,12 @@ export function WeekSelector({
   const weekPicker = (
     <label className="flex min-w-0 flex-1 items-center gap-2 text-sm sm:flex-none">
       <span className="text-secondary max-sm:sr-only">Week</span>
-      <select value={selected ?? list[0].week_start_iso} onChange={onWeekChange} className={selectClass}>
+      <select
+        value={selected ?? list[0].week_start_iso}
+        onChange={onWeekChange}
+        aria-busy={pending}
+        className={selectClass}
+      >
         {list.map((w) => (
           <option key={w.week_start_iso} value={w.week_start_iso} className="bg-surface text-primary">
             {rangeLabel(w.week_start, w.week_end)}

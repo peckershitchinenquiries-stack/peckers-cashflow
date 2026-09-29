@@ -7,7 +7,7 @@ import {
   type LabourBridge,
   type LabourWeekRow,
 } from "@/lib/vm-analytics/labour";
-import { gbp, int, pct, weekRange } from "@/lib/vm-analytics/format";
+import { gbp, pct, weekRange } from "@/lib/vm-analytics/format";
 import {
   EXCEPTION_THRESHOLDS,
   resolveStore,
@@ -67,13 +67,11 @@ function combine(rows: LabourWeekRow[]) {
     delivery_cost: add("delivery_cost"),
     deliveries: add("deliveries"),
     manager_cost,
-    manager_days: add("manager_days"),
     manager_hours: add("manager_hours"),
     cover_driver_cost: add("cover_driver_cost"),
     cover_driver_hours: add("cover_driver_hours"),
     total_cost,
     total_hours,
-    derived_cost: add("derived_cost"),
     unapproved_days: add("unapproved_days"),
     net_sales: net,
     labour_pct: net != null && net > 0 ? (total_cost / net) * 100 : null,
@@ -115,7 +113,6 @@ type CompositionRow = {
   cost: number;
   /** £ movement on the same line last week. Null when there is no prior week. */
   delta: number | null;
-  units: string;
   share: number | null;
   shareOfSales: number | null;
   isTotal: boolean;
@@ -412,55 +409,60 @@ export default async function LaborCostPage({
   });
 
   // ---- Band 3 -------------------------------------------------------------
+  // Every line is one of the Weekly Report's labour lines, grouped by who was
+  // paid and out of which of the sheet's money columns. Without a report for the
+  // week there are no lines to group, so it falls back to the approved-hours
+  // split — the same five costs, just sourced differently.
+  const breakdownParts = (
+    r: LabourWeekRow,
+  ): Array<[label: string, cost: number]> => {
+    const c = r.composition;
+    if (!c) {
+      return [
+        ["NI", r.ni_cost],
+        ["Cash hours", r.cash_cost],
+        ["Delivery pay", r.delivery_cost],
+        ["Manager NI pay (fixed wage)", r.manager_cost],
+        ["Cover drivers — cash hours", r.cover_driver_cost],
+      ];
+    }
+    return [
+      ["NI", c.employee_ni],
+      ["Cash hours", c.employee_cash],
+      ["Delivery pay", c.employee_delivery],
+      ["Manager NI pay (fixed wage)", c.manager_ni],
+      ["Manager cash pay (deliveries)", c.manager_cash],
+      ["Cover drivers — cash hours", c.cover_driver_cash],
+      ["Cover drivers — delivery pay", c.cover_driver_delivery],
+      // Outsourced cover and the like. Most weeks have none, and a permanent
+      // £0.00 row would read as a cost type the business has rather than one
+      // this week happens not to have used.
+      ...(c.adhoc !== 0 ? ([["Ad-hoc labour", c.adhoc]] as [string, number][]) : []),
+    ];
+  };
+
   const compositionRows: CompositionRow[] = [];
   for (const r of weekRows) {
     const before = prevRows.find((p) => p.store_id === r.store_id) ?? null;
-    const parts: Array<[string, keyof LabourWeekRow, string]> = [
-      ["NI / bank hours (PAYE)", "ni_cost", hrs(r.ni_hours)],
-      ["Cash hours", "cash_cost", hrs(r.cash_hours)],
-      ["Delivery pay", "delivery_cost", `${int(r.deliveries)} drops`],
-      ["Manager fixed wage", "manager_cost", `${int(r.manager_days)} days`],
-      ["Cover drivers", "cover_driver_cost", hrs(r.cover_driver_hours)],
-    ];
-    parts.forEach(([label, key, units], i) => {
-      const cost = Number(r[key]) || 0;
+    const lastWeek = before ? new Map(breakdownParts(before)) : null;
+    breakdownParts(r).forEach(([label, cost], i) => {
       compositionRows.push({
         store: shortStore(r.store),
         showStore: i === 0,
         label,
         cost,
-        delta: before ? cost - (Number(before[key]) || 0) : null,
-        units,
+        delta: lastWeek ? cost - (lastWeek.get(label) ?? 0) : null,
         share: r.total_cost > 0 ? (cost / r.total_cost) * 100 : null,
         shareOfSales: r.net_sales != null && r.net_sales > 0 ? (cost / r.net_sales) * 100 : null,
         isTotal: false,
       });
     });
-    // The five lines above price approved hours; the total is the Weekly
-    // Report's. Without this line the column would not add up, and the gap —
-    // a manager's correction or an ad-hoc line — is the interesting part.
-    const adjustment = Math.round((r.total_cost - r.derived_cost) * 100) / 100;
-    if (r.cost_source === "weekly_report" && adjustment !== 0) {
-      compositionRows.push({
-        store: shortStore(r.store),
-        showStore: false,
-        label: "Weekly Report adjustments",
-        cost: adjustment,
-        delta: null,
-        units: "manual",
-        share: r.total_cost > 0 ? (adjustment / r.total_cost) * 100 : null,
-        shareOfSales:
-          r.net_sales != null && r.net_sales > 0 ? (adjustment / r.net_sales) * 100 : null,
-        isTotal: false,
-      });
-    }
     compositionRows.push({
       store: shortStore(r.store),
       showStore: false,
       label: "Total",
       cost: r.total_cost,
       delta: before ? r.total_cost - before.total_cost : null,
-      units: hrs(r.total_hours),
       share: 100,
       shareOfSales: r.labour_pct,
       isTotal: true,
@@ -509,16 +511,6 @@ export default async function LaborCostPage({
             {gbp(Math.abs(r.delta))}
           </span>
         ),
-    },
-    {
-      key: "units",
-      header: "Hours / units",
-      align: "right",
-      render: (r) => (
-        <span className={r.isTotal ? "font-semibold text-secondary" : "text-secondary"}>
-          {r.units}
-        </span>
-      ),
     },
     {
       key: "share",
@@ -607,7 +599,7 @@ export default async function LaborCostPage({
 
       <p className="text-xs text-tertiary">
         {reportedStores.length > 0
-          ? `Labour for ${reportedStores.map((r) => shortStore(r.store)).join(" and ")} is the figure on the Weekly Report, so this page and that sheet quote one number. The breakdown below prices approved hours; any gap is a correction made on the report.`
+          ? `Labour for ${reportedStores.map((r) => shortStore(r.store)).join(" and ")} comes from the Weekly Report's own labour lines, person by person, so this page and that sheet quote one set of numbers down to each cost type.`
           : "No Weekly Report covers this week yet, so labour is priced from approved hours. Once the report's labour lines are filled in, this page follows them."}
       </p>
 
@@ -693,8 +685,8 @@ export default async function LaborCostPage({
       </Section>
 
       <Section
-        title="What the labour bill is made of"
-        description="The five cost types that make up the P&L labour line. NI/bank hours go through PAYE and never reach the Tuesday payout; everything else is cash. Individual people are on the Employees pages, not here."
+        title="Labour cost breakdown"
+        description="Every figure is totalled from the Weekly Report's own labour lines, grouped by who was paid and out of which column. NI goes through PAYE and never reaches the Tuesday payout; everything else is cash. The people themselves are on the Weekly Report's Labour Cost tab."
       >
         <DataTable columns={compositionColumns} rows={compositionRows} />
       </Section>

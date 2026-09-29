@@ -67,42 +67,22 @@ export function ReportStatusBar({
         <div>
           <p className="text-sm font-medium text-text-primary">No report for this week yet.</p>
           <p className="text-xs text-text-muted">
-            Starting from last week copies every supplier, occupancy line and unit rate across, with
-            the amounts blank.
+            Starting it brings every supplier, occupancy line and unit rate across, with the amounts
+            blank — so there are figures to type and no names to retype.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            loading={busy}
-            onClick={() =>
-              run(
-                () =>
-                  ensureWeeklyReport({
-                    store_id: storeId,
-                    week_start: weekStart,
-                    seed_from_previous: true,
-                  }),
-                "Started from last week",
-              )
-            }
-          >
-            Start from last week
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={busy}
-            onClick={() =>
-              run(
-                () => ensureWeeklyReport({ store_id: storeId, week_start: weekStart }),
-                "Blank report created",
-              )
-            }
-          >
-            Start blank
-          </Button>
-        </div>
+        <Button
+          size="sm"
+          loading={busy}
+          onClick={() =>
+            run(
+              () => ensureWeeklyReport({ store_id: storeId, week_start: weekStart }),
+              "Report started",
+            )
+          }
+        >
+          Start report
+        </Button>
       </div>
     );
   }

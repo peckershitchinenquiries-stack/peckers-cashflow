@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { WeekOption } from "@/lib/vm-analytics/types";
 import { weekRange } from "@/lib/vm-analytics/format";
@@ -20,15 +21,22 @@ export function ReportWeekSelector({
   const pathname = usePathname();
   const search = useSearchParams();
 
+  // Reflect the pick before the server render of the new week comes back.
+  const [pending, startTransition] = React.useTransition();
+  const [picked, setPicked] = React.useState<string | null>(null);
+  React.useEffect(() => setPicked(null), [selected]);
+
   return (
     <label className="flex items-center gap-2 text-sm">
       <span className="text-text-secondary">Week</span>
       <select
-        value={selected}
+        value={pending && picked ? picked : selected}
+        aria-busy={pending}
         onChange={(e) => {
           const params = new URLSearchParams(search.toString());
           params.set("week", e.target.value);
-          router.push(`${pathname}?${params.toString()}`);
+          setPicked(e.target.value);
+          startTransition(() => router.push(`${pathname}?${params.toString()}`));
         }}
         className="rounded-lg border border-border bg-surface px-3 py-1.5 text-sm font-medium text-text-primary shadow-sm focus:border-gold focus:outline-none"
       >

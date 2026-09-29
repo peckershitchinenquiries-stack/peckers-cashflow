@@ -43,15 +43,16 @@ export default async function ManagerWeeklyReportPage({
   if (!storeId) return <ErrorState message="No store is assigned to your account." />;
 
   const supabase = createServerSupabase();
-  const { data: store, error } = await supabase
-    .from("stores")
-    .select("id, name, vm_store_name")
-    .eq("id", storeId)
-    .maybeSingle();
+  const [{ data: store, error }, vmWeeks] = await Promise.all([
+    supabase
+      .from("stores")
+      .select("id, name, vm_store_name, meppershall_default")
+      .eq("id", storeId)
+      .maybeSingle(),
+    getWeeks().catch(() => []),
+  ]);
   if (error) return <ErrorState message={error.message} />;
   if (!store) return <ErrorState message="Your store could not be loaded." />;
-
-  const vmWeeks = await getWeeks().catch(() => []);
   const weeks = reportWeekOptions(vmWeeks);
   const weekIso = resolveReportWeek(weeks, searchParams.week);
   if (!weekIso) return <ErrorState message="No weeks available." />;
@@ -73,6 +74,7 @@ export default async function ManagerWeeklyReportPage({
         weekLabel={weekRange(weekIso, weekOption?.week_end)}
         tab={tab}
         canUnlock={false}
+        meppershallDefault={store.meppershall_default ?? null}
       />
     </div>
   );
