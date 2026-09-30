@@ -289,8 +289,12 @@ export function LiveDashboard({
 
   const isSuperAdmin = userRole === "admin";
 
-  const visibleStores = stores.filter((s) =>
-    isSuperAdmin || !userStoreId ? true : s.id === userStoreId,
+  const visibleStores = React.useMemo(
+    () =>
+      stores.filter((s) =>
+        isSuperAdmin || !userStoreId ? true : s.id === userStoreId,
+      ),
+    [stores, isSuperAdmin, userStoreId],
   );
 
   // Phone-only: one store at a time, so the second store isn't buried below the first.
@@ -306,63 +310,94 @@ export function LiveDashboard({
   // at the same store — 12:00–17:00 at one, 17:00–23:00 at the other. Keyed by
   // employee alone this was a Map that kept only the last row, so half a split
   // day vanished before anything downstream ever saw it.
-  const shiftsByEmp = new Map<string, RotaShift[]>();
-  for (const s of shifts) {
-    const arr = shiftsByEmp.get(s.employee_id) ?? [];
-    arr.push(s);
-    shiftsByEmp.set(s.employee_id, arr);
-  }
-  for (const arr of shiftsByEmp.values())
-    arr.sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""));
-  const shiftsByEmpStore = new Map<string, RotaShift[]>();
-  for (const [empId, arr] of shiftsByEmp)
-    for (const s of arr) {
-      const k = `${empId}:${s.store_id}`;
-      shiftsByEmpStore.set(k, [...(shiftsByEmpStore.get(k) ?? []), s]);
+  const shiftsByEmp = React.useMemo(() => {
+    const m = new Map<string, RotaShift[]>();
+    for (const s of shifts) {
+      const arr = m.get(s.employee_id) ?? [];
+      arr.push(s);
+      m.set(s.employee_id, arr);
     }
-  const clockByEmp = new Map(clocks.map((c) => [c.employee_id, c]));
+    for (const arr of m.values())
+      arr.sort((a, b) => (a.start_time ?? "").localeCompare(b.start_time ?? ""));
+    return m;
+  }, [shifts]);
+  const shiftsByEmpStore = React.useMemo(() => {
+    const m = new Map<string, RotaShift[]>();
+    for (const [empId, arr] of shiftsByEmp)
+      for (const s of arr) {
+        const k = `${empId}:${s.store_id}`;
+        const bucket = m.get(k);
+        if (bucket) bucket.push(s);
+        else m.set(k, [s]);
+      }
+    return m;
+  }, [shiftsByEmp]);
+  const clockByEmp = React.useMemo(
+    () => new Map(clocks.map((c) => [c.employee_id, c])),
+    [clocks],
+  );
   // The day's individual shifts, per employee. The clock row above is the day's
   // header: its In is the FIRST clock-in and its Out the last, so hours have to
   // come from the sessions or a split day would bill the gap between shifts.
-  const sessionsByEmp = new Map<string, LiveClockSession[]>();
-  for (const s of clockSessions) {
-    const arr = sessionsByEmp.get(s.employee_id) ?? [];
-    arr.push(s);
-    sessionsByEmp.set(s.employee_id, arr);
-  }
+  const sessionsByEmp = React.useMemo(() => {
+    const m = new Map<string, LiveClockSession[]>();
+    for (const s of clockSessions) {
+      const arr = m.get(s.employee_id) ?? [];
+      arr.push(s);
+      m.set(s.employee_id, arr);
+    }
   // By clock time, not seq — a shift recorded by a manager after the fact can
   // carry a higher seq than one that happened earlier in the day.
-  for (const arr of sessionsByEmp.values())
-    arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
+    for (const arr of m.values())
+      arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
+    return m;
+  }, [clockSessions]);
   // The header's store_id follows the open/latest shift (Update 98), so it
   // cannot say where the OTHER half of a cross-store day was worked. Each
   // store's card reads its own sessions instead.
-  const sessionsByEmpStore = new Map<string, LiveClockSession[]>();
-  for (const [empId, arr] of sessionsByEmp)
-    for (const s of arr) {
-      if (!s.store_id) continue;
-      const k = `${empId}:${s.store_id}`;
-      sessionsByEmpStore.set(k, [...(sessionsByEmpStore.get(k) ?? []), s]);
-    }
-  const managerClockByMgr = new Map(managerClocks.map((mc) => [mc.manager_id, mc]));
+  const sessionsByEmpStore = React.useMemo(() => {
+    const m = new Map<string, LiveClockSession[]>();
+    for (const [empId, arr] of sessionsByEmp)
+      for (const s of arr) {
+        if (!s.store_id) continue;
+        const k = `${empId}:${s.store_id}`;
+        const bucket = m.get(k);
+        if (bucket) bucket.push(s);
+        else m.set(k, [s]);
+      }
+    return m;
+  }, [sessionsByEmp]);
+  const managerClockByMgr = React.useMemo(
+    () => new Map(managerClocks.map((mc) => [mc.manager_id, mc])),
+    [managerClocks],
+  );
   // Same treatment as employees: the clock row is the day's header, so a
   // manager's worked hours have to come from the sessions or a split day would
   // count the gap between the morning and evening shifts.
-  const managerSessionsByMgr = new Map<string, ManagerClockSession[]>();
-  for (const s of managerClockSessions) {
-    // A deliveries-only row (migration 037) carries drops for a day the manager
-    // never clocked. It is not a shift: counting it would show a "×2 shifts"
-    // marker and a window nobody worked.
-    if (s.deliveries_only) continue;
-    const arr = managerSessionsByMgr.get(s.manager_id) ?? [];
-    arr.push(s);
-    managerSessionsByMgr.set(s.manager_id, arr);
-  }
-  for (const arr of managerSessionsByMgr.values())
-    arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
-  const managerShiftByMgr = new Map(managerShifts.map((s) => [s.manager_id, s]));
+  const managerSessionsByMgr = React.useMemo(() => {
+    const m = new Map<string, ManagerClockSession[]>();
+    for (const s of managerClockSessions) {
+      // A deliveries-only row (migration 037) carries drops for a day the manager
+      // never clocked. It is not a shift: counting it would show a "×2 shifts"
+      // marker and a window nobody worked.
+      if (s.deliveries_only) continue;
+      const arr = m.get(s.manager_id) ?? [];
+      arr.push(s);
+      m.set(s.manager_id, arr);
+    }
+    for (const arr of m.values())
+      arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
+    return m;
+  }, [managerClockSessions]);
+  const managerShiftByMgr = React.useMemo(
+    () => new Map(managerShifts.map((s) => [s.manager_id, s])),
+    [managerShifts],
+  );
 
-  const storeById = new Map(stores.map((s) => [s.id, s]));
+  const storeById = React.useMemo(
+    () => new Map(stores.map((s) => [s.id, s])),
+    [stores],
+  );
 
   /** An HH:MM rota time as today's wall-clock instant, for ordering shifts. */
   const schedTimeMs = (t: string): number => {
@@ -382,43 +417,70 @@ export function LiveDashboard({
   // nothing on today falls back to their home store, so they still show as TBC
   // or Day Off where they belong. Day-off rota cells place nobody: a booking
   // elsewhere is where they actually are.
-  const todayStoresOf = (emp: LiveEmployee): string[] => {
-    const out = new Set<string>();
-    for (const s of sessionsByEmp.get(emp.id) ?? []) if (s.store_id) out.add(s.store_id);
-    const c = clockByEmp.get(emp.id);
-    if (c?.store_id) out.add(c.store_id);
-    for (const s of shiftsByEmp.get(emp.id) ?? [])
-      if (!s.is_day_off) out.add(s.store_id);
-    if (out.size === 0 && emp.store_id) out.add(emp.store_id);
-    return [...out];
-  };
+  //
+  // Computed once per employee and cached: the board asks this three times per
+  // employee per store card, and again inside a sort comparator, so recomputing
+  // the Set on each call was the bulk of the render's work.
+  const todayStoresByEmp = React.useMemo(() => {
+    const byEmp = new Map<string, string[]>();
+    for (const emp of employees) {
+      const out = new Set<string>();
+      for (const s of sessionsByEmp.get(emp.id) ?? []) if (s.store_id) out.add(s.store_id);
+      const c = clockByEmp.get(emp.id);
+      if (c?.store_id) out.add(c.store_id);
+      for (const s of shiftsByEmp.get(emp.id) ?? [])
+        if (!s.is_day_off) out.add(s.store_id);
+      if (out.size === 0 && emp.store_id) out.add(emp.store_id);
+      byEmp.set(emp.id, [...out]);
+    }
+    return byEmp;
+  }, [employees, sessionsByEmp, clockByEmp, shiftsByEmp]);
+  const todayStoresOf = (emp: LiveEmployee): string[] =>
+    todayStoresByEmp.get(emp.id) ?? (emp.store_id ? [emp.store_id] : []);
 
   // Same rule for a manager: the store they clocked in at today (source of truth
   // for where they actually are), else where they're scheduled to cover, else
   // their home store. Lets a manager covering another store show under it.
-  const managerTodayStoreOf = (m: AllowedUser): string | null => {
-    const c = managerClockByMgr.get(m.id);
-    if (c?.store_id) return c.store_id;
-    const s = managerShiftByMgr.get(m.id);
-    if (s?.store_id && !s.is_day_off) return s.store_id;
-    return m.store_id ?? null;
-  };
-  const scheduleByEmpDay = new Map(
-    schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s]),
+  // Cached for the same reason as todayStoresOf above — asked three times per
+  // manager per store card, plus once per comparison in a sort.
+  const managerTodayStoreByMgr = React.useMemo(() => {
+    const byMgr = new Map<string, string | null>();
+    for (const m of managers) {
+      const c = managerClockByMgr.get(m.id);
+      const s = managerShiftByMgr.get(m.id);
+      byMgr.set(
+        m.id,
+        c?.store_id
+          ? c.store_id
+          : s?.store_id && !s.is_day_off
+            ? s.store_id
+            : (m.store_id ?? null),
+      );
+    }
+    return byMgr;
+  }, [managers, managerClockByMgr, managerShiftByMgr]);
+  const managerTodayStoreOf = (m: AllowedUser): string | null =>
+    managerTodayStoreByMgr.get(m.id) ?? m.store_id ?? null;
+  const scheduleByEmpDay = React.useMemo(
+    () => new Map(schedules.map((s) => [`${s.employee_id}:${s.weekday}`, s])),
+    [schedules],
   );
   const todayWeekday = (now.getDay() + 6) % 7;
   // Prefer the server's date so a client in another timezone can't file a
   // manual entry against the wrong day.
   const todayIso = todayIsoProp ?? toISODate(now);
 
-  const coverClockByDriver = new Map(
-    coverDriverClocks.map((c) => [c.cover_driver_id, c]),
+  const coverClockByDriver = React.useMemo(
+    () => new Map(coverDriverClocks.map((c) => [c.cover_driver_id, c])),
+    [coverDriverClocks],
   );
-  const coverShiftByDriver = new Map(
-    coverDriverShifts.map((s) => [s.cover_driver_id, s]),
+  const coverShiftByDriver = React.useMemo(
+    () => new Map(coverDriverShifts.map((s) => [s.cover_driver_id, s])),
+    [coverDriverShifts],
   );
-  const coverScheduleByDriverDay = new Map(
-    coverDriverSchedules.map((s) => [`${s.cover_driver_id}:${s.weekday}`, s]),
+  const coverScheduleByDriverDay = React.useMemo(
+    () => new Map(coverDriverSchedules.map((s) => [`${s.cover_driver_id}:${s.weekday}`, s])),
+    [coverDriverSchedules],
   );
 
   // Same "where are they actually today" rule as staff: the store they clocked
