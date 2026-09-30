@@ -402,6 +402,31 @@ export function buildInsights(input: InsightInput): Insight {
 }
 
 // Prompt fed to Claude: the raw facts + the rule-based draft as a style guide.
+/**
+ * The invariant half of the prompt: role, output shape and rules. Identical on
+ * every call, so it is sent as a cacheable `system` block rather than being
+ * re-sent as user content each time. Wording is unchanged from when it lived
+ * inline in buildClaudePrompt.
+ */
+export const CLAUDE_SYSTEM_PROMPT = [
+  "You are a hospitality operations analyst writing a concise weekly management summary",
+  "for Peckers, a two-site fried-chicken business (Hitchin and Stevenage).",
+  "",
+  "Write the response as JSON only, matching exactly:",
+  '{ "summary": string (2-3 sentences), "bullets": string[] (3-5 short, action-oriented points) }',
+  "Rules:",
+  "- Use GBP (£) and show money to the penny exactly as given — NEVER round (write £14,645.00, not £14,645 or £15k).",
+  "- Show unit/order counts exactly as given; do not round them.",
+  "- Whenever you mention AOV, give Delivery AOV and In-store AOV separately (never a single unlabelled AOV).",
+  "- Write in plain, story-telling English a non-technical owner can act on — not a bare list of numbers.",
+  "- Do not invent figures. Return ONLY the JSON object.",
+].join("\n");
+
+/**
+ * The per-request half: just the facts. The JSON is compact rather than
+ * pretty-printed — the indentation was costing input tokens on every call
+ * without changing what the model reads.
+ */
 export function buildClaudePrompt(input: InsightInput): string {
   const draft = buildInsights(input);
   const scope =
@@ -409,25 +434,13 @@ export function buildClaudePrompt(input: InsightInput): string {
       ? `Only ${shortStore(input.store)} is in scope — write about that store only.`
       : "Both stores (Hitchin and Stevenage) are in scope.";
   return [
-    "You are a hospitality operations analyst writing a concise weekly management summary",
-    "for Peckers, a two-site fried-chicken business (Hitchin and Stevenage).",
-    "",
     `Dashboard: ${input.dashboard}. Week starting: ${input.week}. ${scope}`,
     "",
     "Structured KPI facts (JSON):",
-    JSON.stringify(input, null, 2),
+    JSON.stringify(input),
     "",
     "A deterministic draft of the commentary (use it for tone and to anchor the numbers,",
     "but improve the prose and surface the most decision-useful insight):",
-    JSON.stringify(draft, null, 2),
-    "",
-    "Write the response as JSON only, matching exactly:",
-    '{ "summary": string (2-3 sentences), "bullets": string[] (3-5 short, action-oriented points) }',
-    "Rules:",
-    "- Use GBP (£) and show money to the penny exactly as given — NEVER round (write £14,645.00, not £14,645 or £15k).",
-    "- Show unit/order counts exactly as given; do not round them.",
-    "- Whenever you mention AOV, give Delivery AOV and In-store AOV separately (never a single unlabelled AOV).",
-    "- Write in plain, story-telling English a non-technical owner can act on — not a bare list of numbers.",
-    "- Do not invent figures. Return ONLY the JSON object.",
+    JSON.stringify(draft),
   ].join("\n");
 }

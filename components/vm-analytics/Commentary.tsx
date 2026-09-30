@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Insight } from "@/lib/vm-analytics/types";
 import type { InsightInput } from "@/lib/vm-analytics/insights";
 
@@ -15,6 +15,11 @@ export function Commentary({
 }) {
   const [insight, setInsight] = useState<Insight>(initial);
   const [loading, setLoading] = useState(false);
+
+  // The effect is keyed on the serialized input. Computing it here rather than
+  // inline in the dependency array means it is rebuilt when `input` changes
+  // identity, not on every render of this component.
+  const inputKey = useMemo(() => JSON.stringify(input), [input]);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +48,7 @@ export function Commentary({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(input)]);
+  }, [inputKey]);
 
   const isClaude = insight.source === "claude";
 

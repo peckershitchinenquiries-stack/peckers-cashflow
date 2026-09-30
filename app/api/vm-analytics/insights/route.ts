@@ -1,4 +1,9 @@
-import { buildInsights, buildClaudePrompt, type InsightInput } from "@/lib/vm-analytics/insights";
+import {
+  buildInsights,
+  buildClaudePrompt,
+  CLAUDE_SYSTEM_PROMPT,
+  type InsightInput,
+} from "@/lib/vm-analytics/insights";
 import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
 import type { Insight } from "@/lib/vm-analytics/types";
 
@@ -42,14 +47,25 @@ export async function POST(req: Request): Promise<Response> {
   // ── Step 1: Cache check ────────────────────────────────────────────────────
   // If a summary for this (week, cacheKey) pair already exists, return it
   // immediately — no Claude call, no cost.
+  // One client for both the read here and the write at the end: this route was
+  // building two.
+  const sb = getVMSupabaseServer({ cached: false });
+
   try {
-    const sb = getVMSupabaseServer({ cached: false });
-    const { data: cached } = await sb
+    // maybeSingle, not single: "no rows" is an ordinary cache miss and must not
+    // surface as an error. Anything that IS an error (network, table missing,
+    // permissions) is distinguished below, because treating it as a miss is
+    // what turned a transient blip into a paid Claude call.
+    const { data: cached, error } = await sb
       .from("vm_generated_insights")
       .select("summary, bullets, source")
       .eq("week_start_iso", input.week)
       .eq("dashboard", cacheKey)
-      .single();
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[insights] Cache read failed, generating instead:", error.message);
+    }
 
     if (cached?.summary) {
       return Response.json({
@@ -58,8 +74,8 @@ export async function POST(req: Request): Promise<Response> {
         bullets: cached.bullets as string[],
       } satisfies Insight);
     }
-  } catch {
-    // Table missing or network error — treat as cache miss, continue.
+  } catch (err) {
+    console.warn("[insights] Cache read threw, generating instead:", err);
   }
 
   // ── Step 2: Generate (Claude if key present, otherwise rule-based) ─────────
@@ -77,6 +93,16 @@ export async function POST(req: Request): Promise<Response> {
       const msg = await client.messages.create({
         model,
         max_tokens: 700,
+        // The role/rules preamble is identical on every call, so it belongs in
+        // the system block rather than being re-sent as user content.
+        //
+        // NOT yet marked cache_control: ephemeral -- @anthropic-ai/sdk is
+        // pinned at 0.32.1 here, where prompt caching is only reachable
+        // through the beta namespace (client.beta.promptCaching). Switching
+        // the call onto a beta path was out of scope for a performance pass.
+        // Once the SDK is upgraded, adding cache_control to this block is a
+        // one-line change and lets bursts of regeneration reuse the preamble.
+        system: CLAUDE_SYSTEM_PROMPT,
         messages: [{ role: "user", content: buildClaudePrompt(input) }],
       });
 
@@ -113,7 +139,6 @@ export async function POST(req: Request): Promise<Response> {
   // The next user to open this (week, dashboard) gets the cached result —
   // no API call and no delay regardless of how many times they switch weeks.
   try {
-    const sb = getVMSupabaseServer({ cached: false });
     await sb.from("vm_generated_insights").upsert(
       {
         week_start_iso: input.week,
