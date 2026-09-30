@@ -15,17 +15,18 @@ import { shortStore } from "@/lib/vm-analytics/constants";
 import { truncTo } from "@/lib/vm-analytics/format";
 
 // Money to the penny — no rounding.
-const gbp = (v: number) =>
-  new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(v || 0);
+// Formatter built once at module load rather than per call.
+const GBP_FMT = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const gbp = (v: number) => GBP_FMT.format(v || 0);
 
 // Plain counts (units / orders / customers) — exact, never rounded up or down.
-const num = (v: number) =>
-  new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(v || 0);
+const NUM_FMT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
+const num = (v: number) => NUM_FMT.format(v || 0);
 
 // Signed week-on-week %, e.g. "+8.21%" / "-15.84%". Truncated (never rounded up).
 const pct = (v: number | null | undefined) =>

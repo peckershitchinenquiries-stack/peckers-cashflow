@@ -11,15 +11,16 @@ import type { LiveGrossSalesResponse, LiveSalesStoreRow } from "@/lib/live-sales
 const REFRESH_MS = 30 * 60 * 1000;
 const TICK_MS = 60 * 1000;
 
+const LONDON_HHMM_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 function londonHHMM(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(d);
+  return LONDON_HHMM_FMT.format(d);
 }
 
 const aovText = (v: number | null) => (v == null ? "—" : formatGBP(v));

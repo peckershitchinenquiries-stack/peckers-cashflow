@@ -31,17 +31,18 @@ import type {
 } from "@/lib/vm-analytics/types";
 
 // Money to the penny — no rounding anywhere in this report.
-const money = (v: number) =>
-  new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(v || 0);
+// Formatter built once at module load rather than per call.
+const MONEY_FMT = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const money = (v: number) => MONEY_FMT.format(v || 0);
 
 // Exact counts (units / orders) — never rounded.
-const count = (v: number) =>
-  new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(v || 0);
+const COUNT_FMT = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
+const count = (v: number) => COUNT_FMT.format(v || 0);
 
 export interface KpiTableRow {
   store: string; // "Hitchin" | "Stevenage" | "TOTAL"

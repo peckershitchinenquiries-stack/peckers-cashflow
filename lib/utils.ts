@@ -9,34 +9,40 @@ export function cn(...classes: Array<string | false | null | undefined>) {
 }
 
 // ---------------- currency ----------------
+// Formatters are built once at module load, not per call. Constructing an
+// Intl.NumberFormat is comparatively expensive and these run once per table
+// cell — the payroll and cash-flow tables render hundreds at a time.
+const GBP_FMT = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const GBP_COMPACT_FMT = new Intl.NumberFormat("en-GB", {
+  style: "currency",
+  currency: "GBP",
+  maximumFractionDigits: 1,
+  notation: "compact",
+});
+const GBP_PLAIN_FMT = new Intl.NumberFormat("en-GB", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
 /** Format a value as GBP (£) with 2 decimals. */
 export function formatGBP(value: number | null | undefined, opts?: { compact?: boolean }) {
   const n = Number(value ?? 0);
   if (opts?.compact && Math.abs(n) >= 1000) {
-    return new Intl.NumberFormat("en-GB", {
-      style: "currency",
-      currency: "GBP",
-      maximumFractionDigits: 1,
-      notation: "compact",
-    }).format(n);
+    return GBP_COMPACT_FMT.format(n);
   }
-  return new Intl.NumberFormat("en-GB", {
-    style: "currency",
-    currency: "GBP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return GBP_FMT.format(n);
 }
 
 /** Alias kept for backwards-compat with cash-flow pages. */
 export const formatINR = formatGBP;
 
 export function formatGBPPlain(value: number | null | undefined) {
-  const n = Number(value ?? 0);
-  return new Intl.NumberFormat("en-GB", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return GBP_PLAIN_FMT.format(Number(value ?? 0));
 }
 
 export const formatINRPlain = formatGBPPlain;

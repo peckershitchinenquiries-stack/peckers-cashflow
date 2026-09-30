@@ -66,16 +66,17 @@ function authorized(req: Request): boolean {
  * given instant. Shift times are stored as UK wall-clock time-of-day; the server
  * runs in UTC, so both the date and the time-of-day must be derived in London.
  */
+const LONDON_NOW_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
 function londonNow(d: Date): { dateIso: string; minutes: number } {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(d);
+  const parts = LONDON_NOW_FMT.formatToParts(d);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
   const dateIso = `${get("year")}-${get("month")}-${get("day")}`;
   const minutes = Number(get("hour")) * 60 + Number(get("minute"));

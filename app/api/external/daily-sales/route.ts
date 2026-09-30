@@ -23,13 +23,14 @@ export const dynamic = "force-dynamic";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Today's date in Europe/London — the server clock runs on UTC. */
+const LONDON_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/London",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 function londonToday(): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/London",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  return LONDON_DATE_FMT.format(new Date());
 }
 
 function authorized(req: Request): boolean {
