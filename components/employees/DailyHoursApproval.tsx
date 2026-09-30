@@ -832,14 +832,25 @@ export function DailyHoursApproval({
     return s.kind === "manager" ? true : s.clocked_hours > 0;
   }
 
-  const selectedRows = allRows.filter((s) => s.event_date === selectedDate);
-  const approvedCount = selectedRows.filter((s) => s.approved).length;
-  const pendingCount = selectedRows.filter(
-    (s) => !s.approved && isApprovable(s),
-  ).length;
-  const visibleSelected = hideApproved
-    ? selectedRows.filter((s) => !s.approved)
-    : selectedRows;
+  // One pass for the day's rows and both counts, rather than four sequential
+  // filters over allRows on every keystroke into the edit maps.
+  const selectedRows = React.useMemo(
+    () => allRows.filter((s) => s.event_date === selectedDate),
+    [allRows, selectedDate],
+  );
+  const { approvedCount, pendingCount } = React.useMemo(() => {
+    let approved = 0;
+    let pending = 0;
+    for (const s of selectedRows) {
+      if (s.approved) approved += 1;
+      else if (isApprovable(s)) pending += 1;
+    }
+    return { approvedCount: approved, pendingCount: pending };
+  }, [selectedRows]);
+  const visibleSelected = React.useMemo(
+    () => (hideApproved ? selectedRows.filter((s) => !s.approved) : selectedRows),
+    [selectedRows, hideApproved],
+  );
 
   // Every OTHER date that still has unapproved clocked days, newest first.
   const otherPendingByDate = React.useMemo(() => {

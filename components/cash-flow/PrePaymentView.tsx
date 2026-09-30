@@ -213,6 +213,17 @@ export function PrePaymentView({
       ),
     [lines],
   );
+  // The footer renders these twice each (mobile list + desktop table), so they
+  // were four full passes over `lines` inline in JSX on every render.
+  const weekSums = React.useMemo(() => {
+    let totalPayment = 0;
+    let deliveryWages = 0;
+    for (const l of lines) {
+      totalPayment += l.total_payment;
+      deliveryWages += l.delivery_wages;
+    }
+    return { totalPayment, deliveryWages };
+  }, [lines]);
 
   // Footer split: what a manager signs off (the normal round) vs the extra drops
   // logged beyond it, so both can be read against Vita Mojo's delivery orders.
@@ -781,13 +792,13 @@ export function PrePaymentView({
               <div className="flex items-center justify-between gap-3">
                 <p className="font-semibold text-text-primary">Week total</p>
                 <p className="text-lg font-semibold tabular-nums text-gold">
-                  {formatGBP(lines.reduce((s, l) => s + l.total_payment, 0))}
+                  {formatGBP(weekSums.totalPayment)}
                 </p>
               </div>
               <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs text-text-muted tabular-nums">
                 <span>Delivery £</span>
                 <span className="text-right text-text-primary">
-                  {formatGBP(lines.reduce((s, l) => s + l.delivery_wages, 0))}
+                  {formatGBP(weekSums.deliveryWages)}
                 </span>
                 <span>Drops</span>
                 <span className="text-right">
@@ -945,10 +956,10 @@ export function PrePaymentView({
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums" data-label="Delivery £">
-                    {formatGBP(lines.reduce((s, l) => s + l.delivery_wages, 0))}
+                    {formatGBP(weekSums.deliveryWages)}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-gold" data-label="Total">
-                    {formatGBP(lines.reduce((s, l) => s + l.total_payment, 0))}
+                    {formatGBP(weekSums.totalPayment)}
                   </td>
                   {payout && <td></td>}
                 </tr>

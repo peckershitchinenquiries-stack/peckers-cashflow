@@ -240,34 +240,61 @@ export function StaffWeekSummary({
       ),
     [data, scopeStore],
   );
-  const kindCount = (k: Kind) => inScope.filter((p) => matchesKind(p, k)).length;
-  const visible = inScope.filter((p) => matchesKind(p, kind));
+  // One pass for all four tab counts, instead of a full filter per tab on
+  // every render (including every click that only moves `selectedKey`).
+  const kindCounts = React.useMemo(() => {
+    const counts = new Map<Kind, number>(KINDS.map((k) => [k.id, 0]));
+    for (const p of inScope)
+      for (const k of KINDS)
+        if (matchesKind(p, k.id)) counts.set(k.id, (counts.get(k.id) ?? 0) + 1);
+    return counts;
+  }, [inScope]);
+  const kindCount = (k: Kind) => kindCounts.get(k) ?? 0;
+  const visible = React.useMemo(
+    () => inScope.filter((p) => matchesKind(p, kind)),
+    [inScope, kind],
+  );
   const selected = visible.find((p) => p.key === selectedKey) ?? null;
 
-  const totals = visible.reduce(
-    (acc, p) => ({
-      worked: acc.worked + p.totals.worked,
-      approved: acc.approved + p.totals.approved,
-      ni: acc.ni + p.totals.niHours,
-      cash: acc.cash + p.totals.cashHours,
-      drops: acc.drops + totalDrops(p.totals.payableDrops),
-      due: acc.due + p.totals.cashDue,
-    }),
-    { worked: 0, approved: 0, ni: 0, cash: 0, drops: 0, due: 0 },
+  const totals = React.useMemo(
+    () =>
+      visible.reduce(
+        (acc, p) => ({
+          worked: acc.worked + p.totals.worked,
+          approved: acc.approved + p.totals.approved,
+          ni: acc.ni + p.totals.niHours,
+          cash: acc.cash + p.totals.cashHours,
+          drops: acc.drops + totalDrops(p.totals.payableDrops),
+          due: acc.due + p.totals.cashDue,
+        }),
+        { worked: 0, approved: 0, ni: 0, cash: 0, drops: 0, due: 0 },
+      ),
+    [visible],
   );
   // Everyone in scope, ignoring the kind/name filters, so it can be checked
   // against the store's sheet line for line.
-  const storeSheetTotal = scopeStore
-    ? inScope.reduce(
-        (sum, p) =>
-          sum + p.stores.filter((s) => s.storeId === scopeStore).reduce((a, s) => a + s.total, 0),
-        0,
-      )
-    : null;
+  const storeSheetTotal = React.useMemo(
+    () =>
+      scopeStore
+        ? inScope.reduce(
+            (sum, p) =>
+              sum +
+              p.stores.filter((s) => s.storeId === scopeStore).reduce((a, s) => a + s.total, 0),
+            0,
+          )
+        : null,
+    [inScope, scopeStore],
+  );
 
-  const dates = data
-    ? Array.from({ length: 7 }, (_, i) => toISODate(addDays(parseISODate(data.weekStart), i)))
-    : [];
+  const dates = React.useMemo(
+    () =>
+      data
+        ? Array.from({ length: 7 }, (_, i) =>
+            toISODate(addDays(parseISODate(data.weekStart), i)),
+          )
+        : [],
+    [data],
+  );
   const shownWeek = data?.weekStart ?? week;
   const scopeStoreIds = scopeStore ? [scopeStore] : (data?.stores ?? []).map((s) => s.id);
 
