@@ -11,7 +11,7 @@ import {
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
-import { PieChartCard } from "@/components/vm-analytics/charts/Charts";
+import { PieChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type DeliveryInput } from "@/lib/vm-analytics/insights";
 import type { ExecRow, ExecChannelRow } from "@/lib/vm-analytics/types";

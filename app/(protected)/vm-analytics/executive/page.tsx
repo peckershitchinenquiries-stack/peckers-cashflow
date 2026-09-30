@@ -15,7 +15,7 @@ import { KpiCard, KpiGrid } from "@/components/vm-analytics/KpiCard";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
-import { BarChartCard } from "@/components/vm-analytics/charts/Charts";
+import { BarChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import type { ExecRow, ExecChannelRow, YoyRow, ExecMode } from "@/lib/vm-analytics/types";
 import type { ExecInput } from "@/lib/vm-analytics/insights";

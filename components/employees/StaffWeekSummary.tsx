@@ -35,7 +35,10 @@ import {
   startOfISOWeek,
   toISODate,
 } from "@/lib/utils";
-import { downloadXlsx, type XlsxColumn } from "@/lib/xlsx";
+// Type-only: erased at compile time, so it costs nothing in the bundle. The
+// runtime half (downloadXlsx) is imported on demand in exportExcel below --
+// the spreadsheet writer is only needed once someone clicks Export.
+import type { XlsxColumn } from "@/lib/xlsx";
 
 type Kind = "all" | "employee" | "cover_driver" | "manager";
 
@@ -298,8 +301,9 @@ export function StaffWeekSummary({
   const shownWeek = data?.weekStart ?? week;
   const scopeStoreIds = scopeStore ? [scopeStore] : (data?.stores ?? []).map((s) => s.id);
 
-  function exportExcel() {
+  async function exportExcel() {
     if (!data) return;
+    const { downloadXlsx } = await import("@/lib/xlsx");
     const hrs = (header: string): XlsxColumn => ({ header, width: 11, format: "decimal", sum: true });
     const gbp = (header: string): XlsxColumn => ({ header, width: 12, format: "gbp", sum: true });
     const count = (header: string): XlsxColumn => ({ header, width: 6, format: "int", sum: true });

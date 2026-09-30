@@ -19,7 +19,7 @@ import {
   type NewLaunchDisplayRow,
 } from "@/components/vm-analytics/NewLaunchesTable";
 import { Commentary } from "@/components/vm-analytics/Commentary";
-import { BarChartCard, PieChartCard } from "@/components/vm-analytics/charts/Charts";
+import { BarChartCard, PieChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 import { buildInsights, type ProductInput } from "@/lib/vm-analytics/insights";
 import type {

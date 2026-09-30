@@ -16,7 +16,7 @@ import {
 import { KpiCard, KpiGrid } from "@/components/vm-analytics/KpiCard";
 import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
-import { ComboChartCard } from "@/components/vm-analytics/charts/Charts";
+import { ComboChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
 
 export const dynamic = "force-dynamic";

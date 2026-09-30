@@ -2,8 +2,18 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { WeeklyView } from "./WeeklyView";
-import { MonthlyView } from "./MonthlyView";
+import dynamic from "next/dynamic";
+
+// Only one tab is ever on screen, but a static import of both shipped both
+// subtrees -- and recharts with them -- in the route's initial chunk. Split so
+// each tab's code arrives when that tab is first shown.
+//
+// ssr stays TRUE deliberately: it gives the same saving as ssr:false here, and
+// keeps server rendering and the views' own loading states exactly as they
+// were. ssr:false would have introduced a placeholder that flashes before the
+// view's own skeleton -- a visible change for no extra benefit.
+const WeeklyView = dynamic(() => import("./WeeklyView").then((m) => m.WeeklyView));
+const MonthlyView = dynamic(() => import("./MonthlyView").then((m) => m.MonthlyView));
 
 type StoreOpt = { id: string; name: string };
 

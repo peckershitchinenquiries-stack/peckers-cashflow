@@ -41,7 +41,10 @@ import {
 import { generateWeeklySummary } from "@/lib/vm-analytics/weekly-summary";
 import { loadVmPlatformSales, loadVmSales } from "@/lib/weekly-report-sales";
 import { loadChannelHistory } from "@/lib/weekly-report-channels";
-import { buildWeeklyReportWorkbook, workbookFileName } from "@/lib/weekly-report-excel";
+// Imported on demand at the two call sites below, not at module load.
+// weekly-report-excel pulls in exceljs, which is large; only the two actions
+// that actually build a workbook should pay for loading it, rather than every
+// other action in this 1400-line module.
 import type { Employee } from "@/lib/types";
 
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
@@ -1240,6 +1243,7 @@ async function buildReportWorkbook(
   const loadError = linesRes.error?.message ?? labourRes.error?.message ?? history.error;
   if (loadError) throw new Error(`Couldn't build the Excel attachment: ${loadError}`);
 
+  const { buildWeeklyReportWorkbook } = await import("@/lib/weekly-report-excel");
   return buildWeeklyReportWorkbook({
     storeName: store.storeName,
     weekStart: report.week_start,
@@ -1308,6 +1312,7 @@ export async function sendWeeklyReport(input: {
     showMeppershall: store?.meppershall_default != null || report.meppershall != null,
   });
 
+  const { workbookFileName } = await import("@/lib/weekly-report-excel");
   const result = await sendEmail({
     recipients,
     subject: `Weekly Report — ${storeName} — w/c ${report.week_start}`,
