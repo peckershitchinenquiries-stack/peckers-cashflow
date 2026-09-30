@@ -278,9 +278,6 @@ export default async function WeeklyExceptionPage({
       dayparts: byStore(dayparts),
       delivery: byStore(delivery),
       labour: labourRows,
-      unapprovedDays: labour.rows
-        .filter((r) => r.vm_store_name && (!scope || r.vm_store_name === scope))
-        .reduce((t, r) => t + r.unapproved_days, 0),
       mealDeals: byCanonical(mealDeals),
       activeStore,
     });
@@ -288,7 +285,7 @@ export default async function WeeklyExceptionPage({
     return <ErrorState message={e instanceof Error ? e.message : "Unknown error"} />;
   }
 
-  const { kpi, opportunities, risks, deliveryDependence, labourDataPartial } = report;
+  const { kpi, opportunities, risks, deliveryDependence } = report;
   const itemRanks = buildItemRanks(kpi);
 
   return (
@@ -303,12 +300,6 @@ export default async function WeeklyExceptionPage({
         description="Headline metrics per store. AOV is split into delivery and in-store. Delivery % and In-store % are each channel's share of net sales."
       >
         <DataTable columns={kpiColumns} rows={kpi} />
-        {labourDataPartial && (
-          <p className="mt-2 text-xs text-warning">
-            ⚠ Some completed days this week are still waiting on Daily Approval. Labour is costed
-            from approved hours only, so the labour figures here are a lower bound.
-          </p>
-        )}
       </Section>
 
       <Section

@@ -78,8 +78,6 @@ export interface ExceptionReport {
   risks: Exception[];
   deliveryDependence: DeliveryDependenceRow[];
   platformThreshold: number;
-  /** Days still waiting on Daily Approval, so labour is a lower bound. */
-  labourDataPartial: boolean;
 }
 
 export interface ExceptionInputs {
@@ -94,12 +92,6 @@ export interface ExceptionInputs {
    * priced the rota. The shape is unchanged so nothing else here moves.
    */
   labour: LaborCostRow[];
-  /**
-   * Completed days at those stores still unapproved. Replaces the old
-   * "labour % under 15 means the rota is incomplete" guess with the real
-   * signal: labour is only ever a LOWER BOUND while days are unapproved.
-   */
-  unapprovedDays?: number;
   mealDeals: MealDealRow[];
   // Canonical store name when scoped to one store ("Peckers Hitchin" / …),
   // otherwise null for the combined both-stores view.
@@ -176,11 +168,6 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
       bottom3: bottomProductsAcrossStores(products, 3),
     });
   }
-
-  // Labour is costed from APPROVED hours, so a week with days still sitting on
-  // Daily Approval is understated by exactly those days. That is a fact the
-  // caller can count, not something to infer from a suspiciously low %.
-  const labourDataPartial = (input.unapprovedDays ?? 0) > 0;
 
   // --- OPPORTUNITIES (plain-English) ---------------------------------------
   const opportunities: Exception[] = [];
@@ -282,7 +269,6 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
     risks,
     deliveryDependence,
     platformThreshold: T.platformDependencePct,
-    labourDataPartial,
   };
 }
 
