@@ -16,6 +16,7 @@ import {
   shortStore,
   isThirdPartyPlatform,
   isExcludedProduct,
+  isExcludedCategory,
   isHiddenProduct,
   EXCEPTION_THRESHOLDS as T,
 } from "@/lib/vm-analytics/constants";
@@ -24,6 +25,7 @@ import type {
   ExecRow,
   ExecChannelRow,
   ProductRow,
+  ProductCategoryRow,
   DaypartRow,
   DeliveryRow,
   LaborCostRow,
@@ -84,7 +86,7 @@ export interface ExceptionReport {
 export interface ExceptionInputs {
   exec: ExecRow[];
   channels: ExecChannelRow[];
-  products: ProductRow[];
+  products: ProductCategoryRow[];
   dayparts: DaypartRow[];
   delivery: DeliveryRow[];
   /**
@@ -228,18 +230,6 @@ export function buildExceptionReport(input: ExceptionInputs): ExceptionReport {
     }
   }
 
-  // Labour above the target you aim for, per store.
-  for (const k of kpi) {
-    if (k.store === "TOTAL") continue;
-    if (k.labourPctOfNet != null && k.labourPctOfNet > T.labourTargetPct) {
-      risks.push({
-        text: `${k.store}'s labour ran at ${pct(
-          k.labourPctOfNet
-        )} of net sales, above the ${T.labourTargetPct}% target — check the rota against trade.`,
-      });
-    }
-  }
-
   // Menu items losing momentum (real volume, sharp revenue drop) — told as a
   // story, with no threshold numbers cluttering the message. Display units WoW
   // (clearer than revenue WoW, which can shift due to price changes).
@@ -354,6 +344,11 @@ const byRevenue = (dir: 1 | -1) => (a: ProductRow, b: ProductRow) =>
   dir * (n(a.units_sold) - n(b.units_sold)) ||
   a.item_name.localeCompare(b.item_name);
 
+const byUnits = (dir: 1 | -1) => (a: ProductRow, b: ProductRow) =>
+  dir * (n(a.units_sold) - n(b.units_sold)) ||
+  dir * (n(a.gross_sales) - n(b.gross_sales)) ||
+  a.item_name.localeCompare(b.item_name);
+
 const asItem = (p: ProductRow) => ({
   name: p.item_name,
   revenue: n(p.gross_sales),
@@ -370,11 +365,15 @@ function topProductsForStore(products: ProductRow[], store: string, limit: numbe
 
 // Which items are eligible for the "least performing" ranking.
 //
-// By name: hidden items and the drinks/sides EXCLUDED_PRODUCTS already keeps out
-// of rankings are dropped — structurally low-value add-ons that would otherwise
-// occupy all three slots every week, saying nothing about the core menu.
-const rankableName = (itemName: string) =>
-  !isHiddenProduct(itemName) && !isExcludedProduct(itemName);
+// By category first, then by name: drinks, sauces, sides and fries are
+// structurally low-value add-ons that attach to an order regardless of menu
+// choice, and would otherwise occupy all three slots every week, saying nothing
+// about the core menu. The name list is the fallback for items the curated
+// category map has not been taught yet — those arrive as 'Uncategorised'.
+const rankable = (p: ProductCategoryRow) =>
+  !isHiddenProduct(p.item_name) &&
+  !isExcludedProduct(p.item_name) &&
+  !isExcludedCategory(p.category);
 
 // By totals: an item must have both sold and earned. Zero units usually means the
 // item was off the menu that week rather than selling badly, and zero revenue on
@@ -382,29 +381,31 @@ const rankableName = (itemName: string) =>
 // underperforming product, and both would otherwise rank bottom every week.
 const rankableTotals = (units: number, revenue: number) => units > 0 && revenue > 0;
 
-// Mirror images of the Top 3 helpers: same sort key, reversed. Per store that is
-// revenue (matching topProductsForStore); across stores it is units, matching
-// topProductsAcrossStores' "volume, not revenue" basis.
-function bottomProductsForStore(products: ProductRow[], store: string, limit: number) {
+// Least selling = fewest UNITS, not lowest revenue, at both grains. Revenue
+// would rank on the price list rather than on performance: the cheapest item on
+// the menu wins almost every week whatever it did, so the answer is knowable
+// without opening the report. Units answer the question a menu decision turns on
+// — what is nobody ordering — and the cost of keeping a listing (board space,
+// prep, stock, waste) scales with how rarely it moves, not with its price.
+// Top 3 stays on revenue per store: a best seller matters for what it EARNS.
+function bottomProductsForStore(products: ProductCategoryRow[], store: string, limit: number) {
   return products
     .filter(
       (p) =>
-        p.store === store &&
-        rankableName(p.item_name) &&
-        rankableTotals(n(p.units_sold), n(p.gross_sales)),
+        p.store === store && rankable(p) && rankableTotals(n(p.units_sold), n(p.gross_sales)),
     )
-    .sort(byRevenue(1))
+    .sort(byUnits(1))
     .slice(0, limit)
     .map(asItem);
 }
 
-function bottomProductsAcrossStores(products: ProductRow[], limit: number) {
-  // Name filtering happens per row but the totals test is applied to the SUMMED
+function bottomProductsAcrossStores(products: ProductCategoryRow[], limit: number) {
+  // Eligibility is tested per row but the totals test is applied to the SUMMED
   // item: an item earning £0 at one store and £40 at the other is a £40 item, and
   // dropping the zero row before summing would understate it.
   const agg = new Map<string, { revenue: number; units: number }>();
   for (const p of products) {
-    if (!rankableName(p.item_name)) continue;
+    if (!rankable(p)) continue;
     const cur = agg.get(p.item_name) ?? { revenue: 0, units: 0 };
     cur.revenue += n(p.gross_sales);
     cur.units += n(p.units_sold);

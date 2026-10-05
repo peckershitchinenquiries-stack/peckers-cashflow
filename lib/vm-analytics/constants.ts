@@ -80,6 +80,19 @@ export const isExcludedProduct = (itemName: string) => {
   return EXCLUDED_PRODUCTS.has(norm) || norm.includes("fries");
 };
 
+// The same exclusion by CATEGORY, from vm_category_for(). Categories cover every
+// SKU in the group on the day it is added, which the name list above cannot —
+// it was written against the soft drinks range and so let Corona, wine and the
+// dips through to the Weekly Exception Report's least-selling ranking.
+// Milkshakes, Desserts and Churros deliberately stay IN: they are chosen
+// products with real revenue, not add-ons that attach regardless of menu choice.
+// The name list remains as the fallback for items the curated map has not been
+// taught yet, which arrive as 'Uncategorised'.
+export const EXCLUDED_CATEGORIES = new Set(["drinks", "sauces", "sides", "fries"]);
+
+export const isExcludedCategory = (category: string | null | undefined) =>
+  EXCLUDED_CATEGORIES.has((category ?? "").trim().toLowerCase());
+
 // Products hidden from the Product Performance dashboard everywhere (rankings AND
 // category totals/drill-down) without touching the source data. Delete a line to
 // bring one back. Kept separate from EXCLUDED_PRODUCTS, which only drops drinks/

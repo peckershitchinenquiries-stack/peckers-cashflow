@@ -54,7 +54,7 @@ function ItemCell({ item }: { item: RankedItem | null }) {
     <span>
       {item.name}{" "}
       <span className="text-xs text-tertiary">
-        ({gbp(item.revenue)} · {int(item.units)} units)
+        ({gbp(item.revenue)} · {int(item.units)} unit{item.units === 1 ? "" : "s"})
       </span>
     </span>
   );
@@ -304,7 +304,7 @@ export default async function WeeklyExceptionPage({
 
       <Section
         title="Most and Least Selling Items"
-        description="The three best and three weakest sellers per store, ranked on NET item sales (same source as the Product Performance dashboard). The least-selling ranking excludes items that recorded no sale, loyalty and comped items (£0.00 revenue), hidden items, and drinks and sides — so it reflects the core menu rather than add-ons."
+        description="Best sellers are ranked on NET item sales; least sellers are ranked on UNITS SOLD, because ranking the bottom on revenue just returns the cheapest item on the menu. Both read the same source as the Product Performance dashboard. The least-selling ranking excludes items that recorded no sale, loyalty and comped items (£0.00 revenue), hidden items, and the drinks, sauces, sides and fries categories — so it reflects the core menu rather than add-ons."
       >
         <DataTable
           columns={itemRankColumns}
