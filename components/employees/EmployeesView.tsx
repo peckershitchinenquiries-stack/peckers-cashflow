@@ -15,6 +15,7 @@ import {
   emptyStaffWeekCache,
   type StaffWeekCache,
 } from "./StaffWeekSummary";
+import { projectManagerDayToStore } from "@/lib/manager-clock-sessions";
 import { CoverDriversCard } from "@/components/cover-drivers/CoverDriversCard";
 import { CoverDriverHoursTable } from "@/components/cover-drivers/CoverDriverHoursTable";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
@@ -391,6 +392,7 @@ export function EmployeesView({
       manager_id,
       event_date,
       deliveries: deliveries ? toDeliveryInput(deliveries) : undefined,
+      store_id: storeFilter === "all" ? undefined : storeFilter,
     });
     if (!res.ok) throw new Error(res.error);
     invalidateWeekSummary();
@@ -398,7 +400,11 @@ export function EmployeesView({
   }
 
   async function handleManagerUnapprove(manager_id: string, event_date: string) {
-    const res = await unapproveManagerDeliveries({ manager_id, event_date });
+    const res = await unapproveManagerDeliveries({
+      manager_id,
+      event_date,
+      store_id: storeFilter === "all" ? undefined : storeFilter,
+    });
     if (!res.ok) throw new Error(res.error);
     invalidateWeekSummary();
     router.refresh();
@@ -445,10 +451,24 @@ export function EmployeesView({
       d.sessions.some((sess) => sess.store_id === storeFilter),
   );
   // A pre-034 manager day has a null store_id; keep it visible rather than
-  // silently dropping a day someone still has to sign off.
-  const visibleManagerDaily = managerDaily.filter(
-    (m) => storeFilter === "all" || !m.store_id || m.store_id === storeFilter,
-  );
+  // silently dropping a day someone still has to sign off. A day's rounds can
+  // be covered at BOTH stores (migration 061), so the shifts decide visibility
+  // and not the header's single store — the same rule visibleDaily follows.
+  const visibleManagerDaily = managerDaily
+    .filter(
+      (m) =>
+        storeFilter === "all" ||
+        !m.store_id ||
+        m.store_id === storeFilter ||
+        m.by_store.some((b) => b.store_id === storeFilter),
+    )
+    // Scoped to one store, the row shows THAT store's window, drops and
+    // sign-off. The header's totals are the whole day's, which on a cross-store
+    // day is another store's round as well — and the figure the approver would
+    // otherwise be signing off.
+    .map((m) =>
+      storeFilter === "all" ? m : projectManagerDayToStore(m, storeFilter),
+    );
   const coverDaily = React.useMemo(
     () => mergeCoverDailyApproval(visibleCoverDays, visibleCoverHours),
     [visibleCoverDays, visibleCoverHours],

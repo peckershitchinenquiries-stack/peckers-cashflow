@@ -28,12 +28,14 @@ import {
   buildManagerWageLines,
   buildPrePaymentSummary,
   buildWageLinesForStore,
+  MANAGER_PAY_SESSION_COLUMNS,
   PAY_CLOCK_SESSION_COLUMNS,
   payWeekOf,
   supermarketCashAmount,
   type CoverDriverPayRow,
   type ManagerPayee,
   type ManagerPayRow,
+  type ManagerPaySessionRow,
 } from "@/lib/cash-flow";
 import { wageComplianceForEmployee } from "@/lib/compliance";
 import { isCredentialEmail } from "@/lib/credentials";
@@ -328,6 +330,7 @@ async function runScan(
     coverRes,
     managersRes,
     managerClocksRes,
+    managerPaySessionsRes,
     paySessionsRes,
     todaySessionsRes,
   ] = await Promise.all([
@@ -392,6 +395,14 @@ async function runScan(
         .select(
           "manager_id, store_id, event_date, approved_short_deliveries_count, approved_long_deliveries_count, approved_extra_short_deliveries, approved_extra_long_deliveries",
         )
+        .gte("event_date", payWeek.start)
+        .lte("event_date", payWeek.end),
+      // The manager shifts behind those days — same reason as the employee
+      // shifts below: a manager who covered a round at each store has one
+      // header carrying only the last one's store (migration 061).
+      supabase
+        .from("manager_clock_sessions")
+        .select(MANAGER_PAY_SESSION_COLUMNS)
         .gte("event_date", payWeek.start)
         .lte("event_date", payWeek.end),
       // The pay week's individual shifts. A day split across two stores carries
@@ -820,6 +831,7 @@ async function runScan(
   const coverRows = (coverRes.data ?? []) as CoverDriverPayRow[];
   const managerPayees = (managersRes.data ?? []) as ManagerPayee[];
   const managerPayRows = (managerClocksRes.data ?? []) as ManagerPayRow[];
+  const managerPaySessions = (managerPaySessionsRes.data ?? []) as ManagerPaySessionRow[];
   const priorPayouts = (priorPayoutsRes.data ?? []) as Array<{
     store_id: string;
     surplus_carry_forward: number;
@@ -939,7 +951,12 @@ async function runScan(
     const lines = [
       ...buildWageLinesForStore(store.id, employees, payWeekClocks, paySessions),
       ...buildCoverDriverWageLines(store.id, coverRows),
-      ...buildManagerWageLines(store.id, managerPayees, managerPayRows),
+      ...buildManagerWageLines(
+        store.id,
+        managerPayees,
+        managerPayRows,
+        managerPaySessions,
+      ),
     ].sort((a, b) => b.total_payment - a.total_payment);
     const payout = payoutByStore.get(store.id);
     const summary = buildPrePaymentSummary({

@@ -15,10 +15,12 @@ import {
   approvedHoursByEmployeeStore,
   buildWageLinesForStore,
   cashHoursFromStoreTotal,
+  MANAGER_PAY_SESSION_COLUMNS,
   PAY_CLOCK_SESSION_COLUMNS,
   type CoverDriverPayRow,
   type ManagerPayee,
   type ManagerPayRow,
+  type ManagerPaySessionRow,
 } from "@/lib/cash-flow";
 import {
   defaultSeedRows,
@@ -833,6 +835,7 @@ export async function prefillLabour(input: {
     coverRes,
     managersRes,
     managerClocksRes,
+    managerSessionsRes,
     sessionsRes,
   ] = await Promise.all([
       // Leavers included: someone marked "left" still worked the week being
@@ -868,7 +871,14 @@ export async function prefillLabour(input: {
         .select(
           "manager_id, store_id, event_date, clock_in_at, worked_hours, approved_short_deliveries_count, approved_long_deliveries_count, approved_extra_short_deliveries, approved_extra_long_deliveries",
         )
-        .eq("store_id", storeId)
+        .gte("event_date", weekStart)
+        .lte("event_date", weekEnd),
+      // The manager shifts behind those days. Same reason as the employee
+      // shifts below — a day's rounds can be covered at two stores, and the
+      // header carries only the last one's (migration 061).
+      supabase
+        .from("manager_clock_sessions")
+        .select(MANAGER_PAY_SESSION_COLUMNS)
         .gte("event_date", weekStart)
         .lte("event_date", weekEnd),
       // The individual shifts. A day worked at BOTH stores carries only the
@@ -887,6 +897,7 @@ export async function prefillLabour(input: {
     sessionsRes.error?.message ??
     coverRes.error?.message ??
     managerClocksRes.error?.message ??
+    managerSessionsRes.error?.message ??
     null;
   if (loadError) throw new Error(`Couldn't read the week's hours: ${loadError}`);
 
@@ -981,6 +992,8 @@ export async function prefillLabour(input: {
   // correctly not a day worked.
   const managerDays = new Map<string, { days: number; hours: number }>();
   for (const d of managerClocksRes.data ?? []) {
+    // The days now arrive for every store, so the fixed wage is filtered here.
+    if (d.store_id !== storeId) continue;
     if (!d.clock_in_at) continue;
     const acc = managerDays.get(d.manager_id) ?? { days: 0, hours: 0 };
     acc.days += 1;
@@ -995,6 +1008,7 @@ export async function prefillLabour(input: {
       storeId,
       managers,
       (managerClocksRes.data ?? []) as ManagerPayRow[],
+      (managerSessionsRes.data ?? []) as ManagerPaySessionRow[],
     ).map((l) => [l.manager_id!, l]),
   );
 

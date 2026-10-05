@@ -351,6 +351,12 @@ export type ManualManagerDeliveryInput = {
   event_date: string;
   deliveries: DeliveryInput;
   reason: string;
+  /**
+   * Where the round was covered — which store's Tuesday payout pays for it.
+   * A day may hold one of these PER STORE (migration 061). Admin-only; a
+   * manager is held to the store they are running.
+   */
+  store_id?: string | null;
 };
 
 export async function upsertManualManagerDeliveryEntry(
@@ -404,20 +410,28 @@ async function performManualManagerDeliveryEntry(input: ManualManagerDeliveryInp
     .eq("event_date", input.event_date)
     .maybeSingle();
 
-  // Attributed to the store the caller is running — that is where the drops
-  // were covered. An admin falls back to the day's own store, then the
-  // manager's home store.
+  // Where the round was covered. The caller says so explicitly; otherwise the
+  // store a manager is running, then the day's own store, then the manager's
+  // home store. A day clocked at the OTHER store is no longer refused — that is
+  // exactly the case migration 061 exists for: a manager who covered a round at
+  // each store has one day row and a drops row per store.
   const storeId =
-    user.allowed!.role === "manager"
+    input.store_id ??
+    (user.allowed!.role === "manager"
       ? resolveActiveStoreId(user.allowed)
-      : existing?.store_id ?? manager.store_id;
+      : existing?.store_id ?? manager.store_id);
   if (!storeId) throw new Error("No store to record these deliveries against.");
-  if (
-    user.allowed!.role === "manager" &&
-    existing?.store_id &&
-    existing.store_id !== storeId
-  ) {
-    throw new Error("That day was clocked at another store — record it from there.");
+  assertManagerEntryStore(user, storeId);
+
+  // A client-supplied id is checked against the real roster before any row is
+  // written against it.
+  if (input.store_id) {
+    const { data: store } = await supabase
+      .from("stores")
+      .select("id")
+      .eq("id", input.store_id)
+      .maybeSingle();
+    if (!store) throw new Error("That store doesn't exist.");
   }
 
   const now = new Date();
@@ -465,9 +479,10 @@ async function performManualManagerDeliveryEntry(input: ManualManagerDeliveryInp
     });
   }
 
-  // A day already carrying hand-entered drops is CORRECTED, not added to —
-  // otherwise re-submitting the same round would pay it twice.
-  const alreadyEntered = await findDeliveriesOnlySession(supabase, clockEventId);
+  // A STORE already carrying hand-entered drops that day is CORRECTED, not
+  // added to — otherwise re-submitting the same round would pay it twice. The
+  // other store's round is untouched.
+  const alreadyEntered = await findDeliveriesOnlySession(supabase, clockEventId, storeId);
   if (alreadyEntered?.deliveries_approved) {
     throw new Error(
       "Those deliveries are already approved. Undo the approval on the day's row to change them.",
@@ -947,6 +962,12 @@ export async function approveManagerDeliveries(input: {
   event_date: string;
   /** Corrected day totals. Omit to sign off what was clocked, unchanged. */
   deliveries?: DeliveryInput | null;
+  /**
+   * Sign off only the shifts at this store (migration 061). The screen that
+   * sent this is scoped to one store, and the totals it shows are that store's
+   * — approving the whole day from it would sign off a round nobody there saw.
+   */
+  store_id?: string | null;
 }): Promise<ActionResult> {
   return asResult(async () => {
     const user = await requireApprover();
@@ -966,7 +987,12 @@ export async function approveManagerDeliveries(input: {
       // Settle the correction on the day's LAST shift so the day sums to what
       // the approver typed, then let the header recompute from the sessions —
       // recomputeManagerDayHeader stays the only writer of the totals.
-      const applied = await applyManagerDayDeliveryTotal(supabase, day.id, corrected);
+      const applied = await applyManagerDayDeliveryTotal(
+        supabase,
+        day.id,
+        corrected,
+        input.store_id,
+      );
       if (applied) {
         await recomputeManagerDayHeader(supabase, day.id);
       } else {
@@ -989,7 +1015,7 @@ export async function approveManagerDeliveries(input: {
 
     // Sign-off lives on the SHIFT (migration 035), so a second shift added
     // later arrives unapproved instead of inheriting the day's flag.
-    await approveManagerDaySessions(supabase, day.id, user.id);
+    await approveManagerDaySessions(supabase, day.id, user.id, input.store_id);
     const sessions = await managerSessionsForEvent(supabase, day.id);
     if (sessions.length > 0) {
       await recomputeManagerDayHeader(supabase, day.id);
@@ -1061,6 +1087,8 @@ export async function approveManagerDeliveries(input: {
 export async function unapproveManagerDeliveries(input: {
   manager_id: string;
   event_date: string;
+  /** Withdraw only this store's shifts (migration 061). */
+  store_id?: string | null;
 }): Promise<ActionResult> {
   return asResult(async () => {
     const user = await requireApprover();
@@ -1076,7 +1104,12 @@ export async function unapproveManagerDeliveries(input: {
     // Only the sign-off is withdrawn. The counts stay exactly as they are —
     // they are the record of what the manager actually did — but they stop
     // being paid until someone signs them off again (migration 035).
-    const withdrawn = await unapproveManagerDaySessions(supabase, day.id, user.id);
+    const withdrawn = await unapproveManagerDaySessions(
+      supabase,
+      day.id,
+      user.id,
+      input.store_id,
+    );
     if (withdrawn > 0) {
       await recomputeManagerDayHeader(supabase, day.id);
     } else {

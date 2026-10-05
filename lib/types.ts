@@ -795,6 +795,22 @@ export type ManagerClockSession = {
  * DELIVERIES only — their hours drive no pay — so unlike an employee row there
  * is no hours box to correct here.
  */
+/** One store's share of a manager's day — its own window, drops and sign-off. */
+export type ManagerDayStoreBreakdown = {
+  store_id: string;
+  worked_hours: number;
+  clock_in_at: string | null;
+  clock_out_at: string | null;
+  short_deliveries: number;
+  long_deliveries: number;
+  extra_short_deliveries: number;
+  extra_long_deliveries: number;
+  extra_short_reason: string | null;
+  extra_long_reason: string | null;
+  approved: boolean;
+  session_count: number;
+};
+
 export type ManagerDailyApprovalRow = {
   manager_id: string;
   manager_name: string;
@@ -814,6 +830,12 @@ export type ManagerDailyApprovalRow = {
   approved: boolean;
   auto_clocked_out: boolean;
   session_count: number;
+  /**
+   * The day broken down by STORE (migration 061). A manager can cover a round
+   * at each store on one date, so the header's single store_id decides neither
+   * which screen shows the day nor what that screen owes.
+   */
+  by_store: ManagerDayStoreBreakdown[];
   /**
    * The day's drops were entered by hand (migration 037). True implies there is
    * no clock record at all for the day — worked_hours reads 0 and no times are

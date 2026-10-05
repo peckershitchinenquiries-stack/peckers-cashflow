@@ -13,6 +13,7 @@ import {
   buildManagerWageLines,
   buildPrePaymentSummary,
   buildWageLinesForStore,
+  MANAGER_PAY_SESSION_COLUMNS,
   PAY_CLOCK_SESSION_COLUMNS,
   normalisePayoutAdjustment,
   payWeekOf,
@@ -22,6 +23,7 @@ import {
   type CoverDriverPayRow,
   type ManagerPayee,
   type ManagerPayRow,
+  type ManagerPaySessionRow,
 } from "@/lib/cash-flow";
 import type {
   CashPayoutAdjustment,
@@ -229,6 +231,7 @@ async function computeSummary(
     storeRes,
     adjustmentRes,
     sessionsRes,
+    managerSessionsRes,
   ] = await Promise.all([
     supabase
       .from("daily_cash_entries")
@@ -266,8 +269,10 @@ async function computeSummary(
       .gte("work_date", payWeek.start)
       .lte("work_date", payWeek.end),
     // Managers who covered deliveries (migration 034). Only the drops are paid
-    // — their salary never comes through this sheet. Scoped to this store: a
-    // manager's day carries the store they clocked in at.
+    // — their salary never comes through this sheet. Across ALL stores, like
+    // the employee days above: a manager's header carries only the store of the
+    // day's last shift, so the store this sheet pays is resolved from their
+    // shifts (migration 061).
     supabase
       .from("allowed_users")
       .select(
@@ -279,7 +284,6 @@ async function computeSummary(
       .select(
         "manager_id, store_id, event_date, approved_short_deliveries_count, approved_long_deliveries_count, approved_extra_short_deliveries, approved_extra_long_deliveries",
       )
-      .eq("store_id", storeId)
       .gte("event_date", payWeek.start)
       .lte("event_date", payWeek.end),
     // Only needed to resolve the supermarket cash float — Hitchin's is a fixed
@@ -304,6 +308,13 @@ async function computeSummary(
       .select(PAY_CLOCK_SESSION_COLUMNS)
       .gte("event_date", payWeek.start)
       .lte("event_date", payWeek.end),
+    // The manager shifts behind those days, for the same reason — a manager who
+    // covered a round at each store has one header carrying only the last one.
+    supabase
+      .from("manager_clock_sessions")
+      .select(MANAGER_PAY_SESSION_COLUMNS)
+      .gte("event_date", payWeek.start)
+      .lte("event_date", payWeek.end),
   ]);
 
   // A failed query must never read as "nobody worked": every wage on this sheet
@@ -318,6 +329,9 @@ async function computeSummary(
     sessionsRes.error?.message ??
     employeesRes.error?.message ??
     managerClocksRes.error?.message ??
+    // Same hazard as the employee shifts: without these every cross-store
+    // manager day silently bills to one store.
+    managerSessionsRes.error?.message ??
     coverRes.error?.message ??
     entriesRes.error?.message ??
     // A failed adjustments read is money that silently vanishes off the settle,
@@ -343,6 +357,7 @@ async function computeSummary(
       storeId,
       (managersRes.data ?? []) as ManagerPayee[],
       (managerClocksRes.data ?? []) as ManagerPayRow[],
+      (managerSessionsRes.data ?? []) as ManagerPaySessionRow[],
     ),
   ].sort((a, b) => b.total_payment - a.total_payment);
   const opening = await loadOpeningBalance(

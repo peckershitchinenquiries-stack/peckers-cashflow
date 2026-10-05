@@ -422,7 +422,7 @@ export default async function LaborCostPage({
         ["NI", r.ni_cost],
         ["Cash hours", r.cash_cost],
         ["Delivery pay", r.delivery_cost],
-        ["Manager NI pay (fixed wage)", r.manager_cost],
+        ["Manager pay (fixed wage)", r.manager_cost],
         ["Cover drivers — cash hours", r.cover_driver_cost],
       ];
     }
@@ -431,9 +431,14 @@ export default async function LaborCostPage({
       ["Cash hours", c.employee_cash],
       ["Delivery pay", c.employee_delivery],
       ["Manager NI pay (fixed wage)", c.manager_ni],
-      ["Manager cash pay (deliveries)", c.manager_cash],
+      ["Manager — delivery pay", c.manager_delivery],
       ["Cover drivers — cash hours", c.cover_driver_cash],
       ["Cover drivers — delivery pay", c.cover_driver_delivery],
+      // A manager on cash hours is rare; a permanent £0.00 row would read as a
+      // cost type the business has rather than one this week didn't use.
+      ...(c.manager_cash !== 0
+        ? ([["Manager cash hours", c.manager_cash]] as [string, number][])
+        : []),
       // Outsourced cover and the like. Most weeks have none, and a permanent
       // £0.00 row would read as a cost type the business has rather than one
       // this week happens not to have used.

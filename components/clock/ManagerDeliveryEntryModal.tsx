@@ -21,6 +21,8 @@ export type ManagerEntryCandidate = {
   existing_drops?: number;
   /** A signed-off day can't be rewritten from here; undo the approval first. */
   approved?: boolean;
+  /** The store those existing drops sit on, so another store's round is addable. */
+  existing_store_id?: string | null;
 };
 
 const REASON_PRESETS = [
@@ -32,16 +34,23 @@ const REASON_PRESETS = [
 export function ManagerDeliveryEntryModal({
   candidates,
   eventDate,
+  stores,
+  defaultStoreId,
   onClose,
   onSaved,
 }: {
   candidates: ManagerEntryCandidate[];
   eventDate: string;
+  /** Offered when the caller may choose — admins. Omitted fixes the store server-side. */
+  stores?: Array<{ id: string; name: string }>;
+  /** The store a manager is running; replaces the picker. */
+  defaultStoreId?: string | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const toast = useToast();
   const [managerId, setManagerId] = React.useState("");
+  const [storeId, setStoreId] = React.useState(defaultStoreId ?? "");
   const [preset, setPreset] = React.useState<string>(REASON_PRESETS[0]);
   const [otherReason, setOtherReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -55,6 +64,20 @@ export function ManagerDeliveryEntryModal({
 
   const selected = candidates.find((c) => c.id === managerId) ?? null;
   const reason = preset === "Other" ? otherReason.trim() : preset;
+  const showStorePicker = !!stores && stores.length > 1 && !defaultStoreId;
+  const storeName = (id: string | null | undefined) =>
+    (id && stores?.find((s) => s.id === id)?.name) || null;
+  const effectiveStoreId = showStorePicker ? storeId : defaultStoreId ?? null;
+  // A day can hold one hand-entered round PER STORE (migration 061), so an
+  // approved round only blocks the store it was recorded against.
+  const blockedByApproval =
+    !!selected?.approved &&
+    (!effectiveStoreId || !selected.existing_store_id ||
+      selected.existing_store_id === effectiveStoreId);
+  const correctsExisting =
+    !!selected?.existing_drops &&
+    (!effectiveStoreId || !selected.existing_store_id ||
+      selected.existing_store_id === effectiveStoreId);
 
   const total =
     (Number(shortDrops) || 0) +
@@ -66,7 +89,8 @@ export function ManagerDeliveryEntryModal({
 
   const canSave =
     !!managerId &&
-    !selected?.approved &&
+    !blockedByApproval &&
+    (!showStorePicker || !!storeId) &&
     total > 0 &&
     !!reason &&
     !extraShortNeedsReason &&
@@ -76,6 +100,7 @@ export function ManagerDeliveryEntryModal({
   async function save() {
     setError(null);
     if (!managerId) return setError("Pick which manager this is for.");
+    if (showStorePicker && !storeId) return setError("Pick the store these were covered at.");
     if (total <= 0) return setError("Enter at least one delivery.");
     if (!reason) return setError("Give a reason.");
     if (extraShortNeedsReason) {
@@ -90,6 +115,7 @@ export function ManagerDeliveryEntryModal({
       const res = await upsertManualManagerDeliveryEntry({
         manager_id: managerId,
         event_date: eventDate,
+        store_id: effectiveStoreId || undefined,
         reason,
         deliveries: {
           short_deliveries_count: Number(shortDrops) || 0,
@@ -105,7 +131,9 @@ export function ManagerDeliveryEntryModal({
         return;
       }
       toast.success(
-        `${total} deliveries recorded for ${selected?.name ?? "them"} — approve the row to pay them`,
+        `${total} deliveries recorded for ${selected?.name ?? "them"}${
+          storeName(effectiveStoreId) ? ` at ${storeName(effectiveStoreId)}` : ""
+        } — approve the row to pay them`,
       );
       onSaved();
     } catch (err) {
@@ -155,17 +183,46 @@ export function ManagerDeliveryEntryModal({
               ))}
             </Select>
 
-            {selected?.approved ? (
+            {/* Where the round was covered — it decides which store's Tuesday
+                payout pays for it. A manager can cover one at each store on the
+                same day, and each is recorded separately (migration 061). */}
+            {showStorePicker && (
+              <Select
+                label="Store covered *"
+                value={storeId}
+                onChange={(e) => setStoreId(e.target.value)}
+                disabled={!managerId}
+              >
+                <option value="">Select…</option>
+                {stores!.map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+
+            {blockedByApproval ? (
               <p className="text-xs text-danger bg-danger/10 border border-danger/30 rounded-xl px-3 py-2 -mt-1">
-                {selected.name}&apos;s deliveries for that day are already approved. Undo
+                {selected!.name}&apos;s deliveries for that day are already approved. Undo
                 the approval on their row first, then record the correction there.
+              </p>
+            ) : correctsExisting ? (
+              <p className="text-xs text-warning bg-warning/10 border border-warning/30 rounded-xl px-3 py-2 -mt-1">
+                {selected!.name} already has {selected!.existing_drops} deliveries
+                recorded that day. Saving REPLACES this store&apos;s hand-entered
+                counts rather than adding to them.
               </p>
             ) : (
               !!selected?.existing_drops && (
-                <p className="text-xs text-warning bg-warning/10 border border-warning/30 rounded-xl px-3 py-2 -mt-1">
-                  {selected.name} already has {selected.existing_drops} deliveries
-                  recorded that day. Saving REPLACES the hand-entered counts rather
-                  than adding to them.
+                <p className="text-xs text-text-muted bg-bg border border-border rounded-xl px-3 py-2 -mt-1">
+                  {selected.name} already has {selected.existing_drops} deliveries that
+                  day
+                  {storeName(selected.existing_store_id)
+                    ? ` at ${storeName(selected.existing_store_id)}`
+                    : ""}
+                  . This round is recorded separately, against{" "}
+                  {storeName(effectiveStoreId) ?? "the store you pick"}.
                 </p>
               )
             )}

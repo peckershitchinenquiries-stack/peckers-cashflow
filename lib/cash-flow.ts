@@ -565,6 +565,10 @@ export type StoreClockSessionRow = {
 export const PAY_CLOCK_SESSION_COLUMNS =
   "employee_id, store_id, event_date, clock_in_at, clock_out_at, hours_approved, approved_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
 
+/** What every pay screen must select to resolve ManagerPaySessionRow. */
+export const MANAGER_PAY_SESSION_COLUMNS =
+  "manager_id, store_id, event_date, deliveries_approved, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
+
 /** A completed shift's clocked length. An open one has worked nothing yet. */
 function sessionHours(s: { clock_in_at: string; clock_out_at: string | null }): number {
   if (!s.clock_out_at) return 0;
@@ -880,6 +884,94 @@ export type ManagerPayRow = {
   approved_extra_long_deliveries?: number | null;
 };
 
+/**
+ * One manager SHIFT, as the payout reads it (migrations 031/034/035).
+ *
+ * The manager mirror of StoreClockSessionRow. Pay is resolved from these, not
+ * from the day header, for the same reason employees' is: a day's shifts can be
+ * at DIFFERENT stores, and the header carries only the last one's — so a
+ * manager who covered a round at each store had the whole day billed to one.
+ */
+export type ManagerPaySessionRow = {
+  manager_id: string;
+  store_id: string | null;
+  event_date: string;
+  /** Only signed-off drops are payable (migration 035). */
+  deliveries_approved?: boolean | null;
+  short_deliveries_count?: number | null;
+  long_deliveries_count?: number | null;
+  extra_short_deliveries?: number | null;
+  extra_long_deliveries?: number | null;
+};
+
+/** One payable round: an approved manager shift, or a whole pre-031 day. */
+export type ManagerPayableDrops = {
+  manager_id: string;
+  store_id: string;
+  event_date: string;
+  short: number;
+  long: number;
+  extra_short: number;
+  extra_long: number;
+};
+
+/**
+ * Flatten a week's manager clock records into payable drops, each carrying the
+ * store the round was ACTUALLY covered at. The exact counterpart of
+ * resolvePayableWork, and the one place the day-vs-shift question is answered
+ * for managers.
+ *
+ * A day's shifts are used whenever it has any; the header stands in only for a
+ * day with none (a pre-031 row, or one hand-fixed since). The two agree on a
+ * single-store day — the header's approved_* columns are by definition the sum
+ * of its approved shifts (see deriveDayHeader) — so the fallback is a safety
+ * net, not a second rule.
+ */
+export function resolveManagerPayableDrops(
+  days: ManagerPayRow[],
+  sessions: ManagerPaySessionRow[],
+): ManagerPayableDrops[] {
+  const byMgrDate = new Map<string, ManagerPaySessionRow[]>();
+  for (const s of sessions) {
+    const k = `${s.manager_id}:${s.event_date}`;
+    byMgrDate.set(k, [...(byMgrDate.get(k) ?? []), s]);
+  }
+
+  const out: ManagerPayableDrops[] = [];
+  for (const d of days) {
+    const daySessions = byMgrDate.get(`${d.manager_id}:${d.event_date}`);
+    if (daySessions?.length) {
+      for (const s of daySessions) {
+        // A shift whose store is somehow unset falls back to the day's, which
+        // is the best the record can say.
+        const storeId = s.store_id ?? d.store_id;
+        if (!s.deliveries_approved || !storeId) continue;
+        out.push({
+          manager_id: d.manager_id,
+          store_id: storeId,
+          event_date: d.event_date,
+          short: Number(s.short_deliveries_count) || 0,
+          long: Number(s.long_deliveries_count) || 0,
+          extra_short: Number(s.extra_short_deliveries) || 0,
+          extra_long: Number(s.extra_long_deliveries) || 0,
+        });
+      }
+      continue;
+    }
+    if (!d.store_id) continue;
+    out.push({
+      manager_id: d.manager_id,
+      store_id: d.store_id,
+      event_date: d.event_date,
+      short: Number(d.approved_short_deliveries_count) || 0,
+      long: Number(d.approved_long_deliveries_count) || 0,
+      extra_short: Number(d.approved_extra_short_deliveries) || 0,
+      extra_long: Number(d.approved_extra_long_deliveries) || 0,
+    });
+  }
+  return out;
+}
+
 /** The manager accounts a payout may need to price and name. */
 export type ManagerPayee = {
   id: string;
@@ -903,24 +995,29 @@ export type ManagerPayee = {
  * Approval IS a condition (migration 035): only shifts signed off on Daily
  * Approval are payable, and withdrawing a shift's approval takes it back off
  * this sheet. Employees, cover drivers and managers now all work this way.
+ *
+ * `sessions` must cover the pay week across ALL stores. Without them a day
+ * falls back to its header, whose single store_id bills a cross-store day
+ * wholly to the store of its last shift.
  */
 export function buildManagerWageLines(
   storeId: string,
   managers: ManagerPayee[],
   days: ManagerPayRow[],
+  sessions: ManagerPaySessionRow[] = [],
 ): WageLine[] {
   const byManager = new Map(managers.map((m) => [m.id, m]));
   const totals = new Map<string, { short: number; long: number; miscS: number; miscL: number }>();
 
-  for (const d of days) {
-    if (d.store_id !== storeId) continue;
-    if (!byManager.has(d.manager_id)) continue;
-    const acc = totals.get(d.manager_id) ?? { short: 0, long: 0, miscS: 0, miscL: 0 };
-    acc.short += Number(d.approved_short_deliveries_count) || 0;
-    acc.long += Number(d.approved_long_deliveries_count) || 0;
-    acc.miscS += Number(d.approved_extra_short_deliveries) || 0;
-    acc.miscL += Number(d.approved_extra_long_deliveries) || 0;
-    totals.set(d.manager_id, acc);
+  for (const p of resolveManagerPayableDrops(days, sessions)) {
+    if (p.store_id !== storeId) continue;
+    if (!byManager.has(p.manager_id)) continue;
+    const acc = totals.get(p.manager_id) ?? { short: 0, long: 0, miscS: 0, miscL: 0 };
+    acc.short += p.short;
+    acc.long += p.long;
+    acc.miscS += p.extra_short;
+    acc.miscL += p.extra_long;
+    totals.set(p.manager_id, acc);
   }
 
   const lines: WageLine[] = [];

@@ -35,6 +35,7 @@ import type {
   ManagerClockEvent,
   ManagerClockSession,
   ManagerDailyApprovalRow,
+  ManagerDayStoreBreakdown,
 } from "@/lib/types";
 import { dayWorkedHours } from "@/lib/utils";
 
@@ -50,6 +51,7 @@ import { dayWorkedHours } from "@/lib/utils";
 export function mapManagerDaysToApproval(
   days: ManagerClockEvent[],
   names: Map<string, string>,
+  sessionsByEvent?: Map<string, ManagerClockSession[]>,
 ): ManagerDailyApprovalRow[] {
   return days.map((d) => ({
     manager_id: d.manager_id,
@@ -69,9 +71,77 @@ export function mapManagerDaysToApproval(
     approved: Boolean(d.deliveries_approved),
     auto_clocked_out: Boolean(d.auto_clocked_out),
     session_count: Number(d.session_count) || 0,
+    by_store: summariseManagerDayByStore(sessionsByEvent?.get(d.id) ?? []),
     manual_entry: Boolean(d.manual_entry),
     manual_entry_reason: d.manual_entry_reason ?? null,
   }));
+}
+
+/**
+ * A manager's day split by STORE (migration 061): each store's own window,
+ * drops and sign-off. The day header answers "where did they end up", which on
+ * a cross-store day is the wrong question for a screen scoped to one store.
+ *
+ * Two derivations per store, the same pair recomputeManagerDayHeader makes: a
+ * deliveries-only row carries drops but is not attendance, so it stays out of
+ * the window, the hours and the shift count.
+ */
+export function summariseManagerDayByStore(
+  sessions: ManagerClockSession[],
+): ManagerDayStoreBreakdown[] {
+  const byStore = new Map<string, ManagerClockSession[]>();
+  for (const s of sessions) {
+    if (!s.store_id) continue;
+    byStore.set(s.store_id, [...(byStore.get(s.store_id) ?? []), s]);
+  }
+
+  return Array.from(byStore, ([storeId, rows]) => {
+    const mapped = rows.map((r) => ({ ...r, hours_approved: r.deliveries_approved }));
+    const worked = deriveDayHeader(mapped.filter((r) => !r.deliveries_only));
+    const all = deriveDayHeader(mapped);
+    return {
+      store_id: storeId,
+      worked_hours: worked.workedHours,
+      clock_in_at: worked.firstIn,
+      clock_out_at: worked.lastOut,
+      short_deliveries: all.deliveries.short ?? 0,
+      long_deliveries: all.deliveries.long ?? 0,
+      extra_short_deliveries: all.deliveries.extraShort,
+      extra_long_deliveries: all.deliveries.extraLong,
+      extra_short_reason: all.deliveries.extraShortReason,
+      extra_long_reason: all.deliveries.extraLongReason,
+      approved: all.allApproved,
+      session_count: worked.sessionCount,
+    };
+  });
+}
+
+/**
+ * The day as ONE store sees it. A day with no breakdown for that store (a
+ * pre-031 row with no sessions) is returned untouched — the header is then the
+ * only record there is.
+ */
+export function projectManagerDayToStore(
+  row: ManagerDailyApprovalRow,
+  storeId: string,
+): ManagerDailyApprovalRow {
+  const b = row.by_store.find((x) => x.store_id === storeId);
+  if (!b) return row;
+  return {
+    ...row,
+    store_id: storeId,
+    worked_hours: b.worked_hours,
+    clock_in_at: b.clock_in_at,
+    clock_out_at: b.clock_out_at,
+    short_deliveries: b.short_deliveries,
+    long_deliveries: b.long_deliveries,
+    extra_short_deliveries: b.extra_short_deliveries,
+    extra_long_deliveries: b.extra_long_deliveries,
+    extra_short_reason: b.extra_short_reason,
+    extra_long_reason: b.extra_long_reason,
+    approved: b.approved,
+    session_count: b.session_count,
+  };
 }
 
 /**
@@ -193,23 +263,39 @@ export async function recomputeManagerDayHeader(
 }
 
 /**
- * The day's deliveries-only row, if it has one (migration 037). At most one
- * exists — manager_clock_sessions_one_deliveries_only enforces it — so
- * re-recording a manager's missed drops corrects that day rather than paying
- * the same round twice.
+ * The day's deliveries-only row FOR ONE STORE, if it has one (migrations
+ * 037/061). At most one per store exists — the unique index enforces it — so
+ * re-recording a store's missed round corrects it rather than paying the same
+ * drops twice, while the other store's round is a row of its own.
  */
 export async function findDeliveriesOnlySession(
   supabase: SupabaseClient,
   clockEventId: string,
+  storeId: string,
 ): Promise<ManagerClockSession | null> {
   const { data, error } = await supabase
     .from("manager_clock_sessions")
     .select("*")
     .eq("clock_event_id", clockEventId)
     .eq("deliveries_only", true)
+    .eq("store_id", storeId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return (data as ManagerClockSession | null) ?? null;
+}
+
+/** Every store a day's drops are recorded against (migration 061). */
+export function storesWithDrops(sessions: ManagerClockSession[]): string[] {
+  const seen = new Set<string>();
+  for (const s of sessions) {
+    const total =
+      (Number(s.short_deliveries_count) || 0) +
+      (Number(s.long_deliveries_count) || 0) +
+      (Number(s.extra_short_deliveries) || 0) +
+      (Number(s.extra_long_deliveries) || 0);
+    if (total > 0 && s.store_id) seen.add(s.store_id);
+  }
+  return Array.from(seen);
 }
 
 /**
@@ -268,7 +354,7 @@ export async function insertDeliveriesOnlySession(
   if (error) {
     if (error.code === "23505") {
       throw new Error(
-        "Deliveries have already been recorded by hand for that day. Correct them on the approval row instead.",
+        "Deliveries have already been recorded by hand for that manager, that day, at that store. Correct them on the approval row instead.",
       );
     }
     throw new Error(error.message);
@@ -302,28 +388,38 @@ export async function setManagerSessionApproval(
   if (error) throw new Error(error.message);
 }
 
-/** Approve every completed manager shift of a day. Returns how many changed. */
+/**
+ * Approve every completed manager shift of a day, or only those at ONE store.
+ * Returns how many changed. Scoping by store is what lets a cross-store day be
+ * signed off by each store for the round it actually saw.
+ */
 export async function approveManagerDaySessions(
   supabase: SupabaseClient,
   clockEventId: string,
   by: string,
+  storeId?: string | null,
 ): Promise<number> {
   const sessions = await managerSessionsForEvent(supabase, clockEventId);
-  const pending = sessions.filter((s) => s.clock_out_at && !s.deliveries_approved);
+  const pending = sessions.filter(
+    (s) => s.clock_out_at && !s.deliveries_approved && (!storeId || s.store_id === storeId),
+  );
   for (const s of pending) {
     await setManagerSessionApproval(supabase, s.id, { approved: true, by });
   }
   return pending.length;
 }
 
-/** Withdraw approval on every manager shift of a day. Returns how many changed. */
+/** Withdraw approval on a manager's shifts, all of them or one store's. */
 export async function unapproveManagerDaySessions(
   supabase: SupabaseClient,
   clockEventId: string,
   by: string,
+  storeId?: string | null,
 ): Promise<number> {
   const sessions = await managerSessionsForEvent(supabase, clockEventId);
-  const approved = sessions.filter((s) => s.deliveries_approved);
+  const approved = sessions.filter(
+    (s) => s.deliveries_approved && (!storeId || s.store_id === storeId),
+  );
   for (const s of approved) {
     await setManagerSessionApproval(supabase, s.id, { approved: false, by });
   }
@@ -368,9 +464,20 @@ export async function applyManagerDayDeliveryTotal(
   supabase: SupabaseClient,
   clockEventId: string,
   total: DeliveryCounts,
+  storeId?: string | null,
 ): Promise<boolean> {
-  const sessions = await managerSessionsForEvent(supabase, clockEventId);
+  const all = await managerSessionsForEvent(supabase, clockEventId);
+  const sessions = storeId ? all.filter((s) => s.store_id === storeId) : all;
   if (sessions.length === 0) return false;
+
+  // Without a store, settling the difference on the last shift would silently
+  // move drops from one store's till to another's — a real day since migration
+  // 061, not an impossible one. A split day is corrected one store at a time.
+  if (!storeId && storesWithDrops(all).length > 1) {
+    throw new Error(
+      "This day's deliveries are recorded at more than one store. Correct them from each store's Daily Approval.",
+    );
+  }
 
   const last = sessions[sessions.length - 1];
   const rest = sumSessionDeliveries(sessions.slice(0, -1));

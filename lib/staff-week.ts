@@ -669,12 +669,26 @@ export function buildStaffWeek(input: {
       };
     }
 
+    // Every store the week touched, from the SHIFTS as well as the day headers:
+    // a day whose rounds were covered at two stores names only the last one on
+    // its header, so a store seen only mid-day would get no line at all.
+    const mSessions = mDays.flatMap((d) =>
+      (mgrSessionsByDay.get(d.id) ?? []).map((s) => ({
+        ...s,
+        manager_id: mgr.id,
+        event_date: d.event_date,
+      })),
+    );
     const storeIds = Array.from(
-      new Set(mDays.map((d) => d.store_id).filter((s): s is string => !!s)),
+      new Set(
+        [...mDays, ...mSessions]
+          .map((r) => r.store_id)
+          .filter((s): s is string => !!s),
+      ),
     );
     const live: StoreLineBuild[] = [];
     for (const storeId of storeIds) {
-      const [line] = buildManagerWageLines(storeId, [mgr], mDays);
+      const [line] = buildManagerWageLines(storeId, [mgr], mDays, mSessions);
       if (line) live.push(toStoreLine(storeId, line));
     }
     const stores = withFrozen(live, `mgr:${mgr.id}`, frozen, confirmed);

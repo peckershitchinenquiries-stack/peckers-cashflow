@@ -932,6 +932,7 @@ export function DailyHoursApproval({
               m.extra_short_deliveries +
               m.extra_long_deliveries,
             approved: m.approved,
+            store_id: m.store_id,
           },
         ]),
     );
@@ -941,6 +942,7 @@ export function DailyHoursApproval({
         name: m.name,
         existing_drops: byManager.get(m.id)?.drops ?? 0,
         approved: byManager.get(m.id)?.approved ?? false,
+        existing_store_id: byManager.get(m.id)?.store_id ?? null,
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [managers, managerSummaries, selectedDate]);
@@ -1855,6 +1857,8 @@ export function DailyHoursApproval({
         <ManagerDeliveryEntryModal
           eventDate={selectedDate}
           candidates={managerManualCandidates}
+          stores={canChooseStore || entryStoreId ? entryStores ?? stores : undefined}
+          defaultStoreId={entryStoreId}
           onClose={() => setShowAddMissed(null)}
           onSaved={() => {
             setShowAddMissed(null);

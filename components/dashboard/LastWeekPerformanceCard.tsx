@@ -3,7 +3,8 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { cn, formatGBP } from "@/lib/utils";
 import { signedPct } from "@/lib/vm-analytics/format";
-import type { LastWeekPerformance } from "@/lib/dashboard/types";
+import type { LastWeekPerformance, PerformanceWeekOption } from "@/lib/dashboard/types";
+import { PerformanceWeekSelector } from "./PerformanceWeekSelector";
 import { ChangeBadge } from "./ChangeBadge";
 import { ddmm, fractionPct } from "./format";
 
@@ -55,7 +56,53 @@ function Tile({
 
 const moneyTone = (v: number) => (v < 0 ? "danger" : undefined);
 
-export function LastWeekPerformanceCard({ data }: { data: LastWeekPerformance }) {
+function LabourSplit({
+  split,
+  total,
+}: {
+  split: NonNullable<NonNullable<LastWeekPerformance["pnl"]>["labourSplit"]>;
+  total: number;
+}) {
+  // By what the money bought, not how it was paid: a kitchen member's driving
+  // time is carved out of their hourly pay and sits under Delivery.
+  const rows: Array<[string, number]> = [
+    ["Managers", split.managers],
+    ["Kitchen team", split.kitchen],
+    ["Delivery", split.delivery],
+    ...(split.outsourced !== 0
+      ? ([[split.outsourcedLabel ?? "Other (ad-hoc cover)", split.outsourced]] as [
+          string,
+          number,
+        ][])
+      : []),
+  ];
+  return (
+    <div className="mt-2 space-y-1 border-t border-border pt-2">
+      {rows.map(([label, amount]) => (
+        <div key={label} className="flex items-baseline justify-between gap-2">
+          <span className="min-w-0 break-words">{label}</span>
+          <span className="shrink-0 tabular-nums">
+            {formatGBP(amount)}
+            {total > 0 && (
+              <span className="text-text-muted/70"> · {fractionPct(amount / total)}</span>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function LastWeekPerformanceCard({
+  data,
+  weekOptions,
+  selectedWeek,
+}: {
+  data: LastWeekPerformance;
+  weekOptions: PerformanceWeekOption[];
+  selectedWeek: string;
+}) {
+  const isLastWeek = selectedWeek === weekOptions[0]?.iso;
   const synced = data.grossSales > 0;
   const { pnl } = data;
   const budgetSet = !!pnl && pnl.labourBudgetPct > 0;
@@ -70,19 +117,29 @@ export function LastWeekPerformanceCard({ data }: { data: LastWeekPerformance })
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 mb-4">
         <div className="min-w-0">
           <h3 className="flex flex-wrap items-center gap-2 text-base font-semibold tracking-wide text-text-primary">
-            Last week · {ddmm(data.weekStart)} – {ddmm(data.weekEnd)}
+            {isLastWeek ? "Last week" : "Week"} · {ddmm(data.weekStart)} – {ddmm(data.weekEnd)}
             <StatusBadge status={data.status} />
           </h3>
           {data.status === "draft" && (
             <p className="text-xs text-warning mt-1">Provisional (report not locked)</p>
           )}
+          {/* A report is filled on the Tuesday AFTER its week, so an empty one is
+              normal early in the week — say so rather than leaving a row of dashes. */}
+          {!data.pnl && isLastWeek && (
+            <p className="text-xs text-text-muted mt-1">
+              Reports are filled on Tuesday — pick an earlier week to see a completed one.
+            </p>
+          )}
         </div>
-        <a
-          href={data.reportHref}
-          className="text-sm font-medium text-gold hover:underline underline-offset-2 max-sm:hidden"
-        >
-          Open weekly report →
-        </a>
+        <div className="flex items-center gap-3">
+          <PerformanceWeekSelector options={weekOptions} selected={selectedWeek} />
+          <a
+            href={data.reportHref}
+            className="text-sm font-medium text-gold hover:underline underline-offset-2 max-sm:hidden"
+          >
+            Open weekly report →
+          </a>
+        </div>
       </div>
 
       {data.loadError && (
@@ -139,6 +196,7 @@ export function LastWeekPerformanceCard({ data }: { data: LastWeekPerformance })
                   {Math.abs(pnl.labourVariancePct * 100).toFixed(1)} pts vs budget
                 </p>
               )}
+              {pnl.labourSplit && <LabourSplit split={pnl.labourSplit} total={pnl.labour} />}
             </>
           ) : (
             unavailable

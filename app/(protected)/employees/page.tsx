@@ -11,6 +11,7 @@ import type {
   CoverDriverClockEvent,
   EmployeeSummary,
   ManagerClockEvent,
+  ManagerClockSession,
 } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export default async function EmployeesPage() {
     coverHoursRes,
     managersRes,
     managerClocksRes,
+    managerSessionsRes,
   ] = await Promise.all([
     supabase
       .from("employees")
@@ -79,6 +81,13 @@ export default async function EmployeesPage() {
       .select("*")
       .gte("event_date", eightWeeksBack)
       .order("event_date", { ascending: false }),
+    // The shifts behind those days. A manager can cover a round at EACH store
+    // on one date (migration 061), and the header names only the last shift's
+    // store — so which store's screen lists the day is decided from these.
+    supabase
+      .from("manager_clock_sessions")
+      .select("*")
+      .gte("event_date", eightWeeksBack),
   ]);
 
   const employees = (empRes.data ?? []) as unknown as EmployeeSummary[];
@@ -124,9 +133,16 @@ export default async function EmployeesPage() {
     name: (m.name as string) ?? "Manager",
   }));
   const managerNames = new Map(managerAccounts.map((m) => [m.id, m.name]));
+  const managerSessionsByEvent = new Map<string, ManagerClockSession[]>();
+  for (const s of (managerSessionsRes.data ?? []) as ManagerClockSession[]) {
+    const arr = managerSessionsByEvent.get(s.clock_event_id) ?? [];
+    arr.push(s);
+    managerSessionsByEvent.set(s.clock_event_id, arr);
+  }
   const managerDaily = mapManagerDaysToApproval(
     (managerClocksRes.data ?? []) as ManagerClockEvent[],
     managerNames,
+    managerSessionsByEvent,
   );
 
   return (

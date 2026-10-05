@@ -65,7 +65,7 @@ export type LabourWeekRow = {
   /** Per-drop allowance for EVERYONE — employees, managers, cover drivers. */
   delivery_cost: number;
   deliveries: number;
-  /** Managers' fixed daily wage for days they clocked. Drops are above. */
+  /** Managers' pay for TIME — fixed daily wage plus any cash hours. Drops are above. */
   manager_cost: number;
   manager_days: number;
   manager_hours: number;
@@ -515,12 +515,12 @@ export async function getLabourByStoreWeek(
         row.cash_cost = round2(c.employee_cash + c.adhoc);
         row.cash_hours = c.cash_hours;
         row.delivery_cost = round2(
-          c.employee_delivery + c.manager_cash + c.cover_driver_delivery,
+          c.employee_delivery + c.manager_delivery + c.cover_driver_delivery,
         );
         row.deliveries = round2(
           c.employee_deliveries + c.manager_deliveries + c.cover_driver_deliveries,
         );
-        row.manager_cost = c.manager_ni;
+        row.manager_cost = round2(c.manager_ni + c.manager_cash);
         row.manager_hours = c.manager_hours;
         row.cover_driver_cost = c.cover_driver_cash;
         row.cover_driver_hours = c.cover_driver_hours;
@@ -649,8 +649,10 @@ export type LabourComposition = {
   employee_delivery: number;
   /** A manager's fixed daily wage, which the sheet carries on the NI columns. */
   manager_ni: number;
-  /** Everything else a manager earned — their drops, and cash hours if any. */
+  /** A manager's cash HOURS only — their drops are `manager_delivery`. */
   manager_cash: number;
+  /** A manager's per-drop allowance, kept apart so it can be costed as delivery. */
+  manager_delivery: number;
   cover_driver_cash: number;
   cover_driver_delivery: number;
   /** Lines belonging to no employee, manager or driver — outsourced cover. */
@@ -688,6 +690,7 @@ export function labourCompositionFromLines(
     employee_delivery: 0,
     manager_ni: 0,
     manager_cash: 0,
+    manager_delivery: 0,
     cover_driver_cash: 0,
     cover_driver_delivery: 0,
     adhoc: 0,
@@ -705,7 +708,8 @@ export function labourCompositionFromLines(
     const drops = l.deliveries ?? 0;
     if (l.source === "manager") {
       c.manager_ni += t.ni_total;
-      c.manager_cash += t.cash_total + t.delivery_pay;
+      c.manager_cash += t.cash_total;
+      c.manager_delivery += t.delivery_pay;
       c.manager_deliveries += drops;
       c.manager_hours += t.hours;
     } else if (l.source === "cover_driver") {
@@ -735,6 +739,7 @@ export function labourCompositionFromLines(
       c.employee_delivery +
       c.manager_ni +
       c.manager_cash +
+      c.manager_delivery +
       c.cover_driver_cash +
       c.cover_driver_delivery +
       c.adhoc,

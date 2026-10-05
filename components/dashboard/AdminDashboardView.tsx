@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import type { StoreDashboard } from "@/lib/dashboard/types";
+import type { PerformanceWeekOption, StoreDashboard } from "@/lib/dashboard/types";
 import { LastWeekPerformanceCard } from "./LastWeekPerformanceCard";
 import { PayoutCard } from "./PayoutCard";
 import { NeedsActionPanel } from "./NeedsActionPanel";
@@ -13,9 +13,13 @@ import { NeedsActionPanel } from "./NeedsActionPanel";
 export function AdminDashboardView({
   stores,
   today,
+  weekOptions,
+  perfWeek,
 }: {
   stores: StoreDashboard[];
   today: string;
+  weekOptions: PerformanceWeekOption[];
+  perfWeek: string;
 }) {
   const [activeId, setActiveId] = React.useState(stores[0]?.store.id ?? "");
   const active = stores.find((s) => s.store.id === activeId) ?? stores[0];
@@ -50,7 +54,11 @@ export function AdminDashboardView({
         ))}
       </div>
 
-      <LastWeekPerformanceCard data={active.performance} />
+      <LastWeekPerformanceCard
+        data={active.performance}
+        weekOptions={weekOptions}
+        selectedWeek={perfWeek}
+      />
 
       {/* Mobile reads top-down: this Tuesday, what's blocking it, then next week's forecast. */}
       {/* Desktop stretches the row so all three cards share top and bottom edges. */}

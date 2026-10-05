@@ -35,6 +35,26 @@ export type LastWeekPerformance = {
     labourBudgetPct: number;
     /** budget − actual, so NEGATIVE means over budget. */
     labourVariancePct: number;
+    /**
+     * Where `labour` went, as money. Null when the week has no labour lines to
+     * split, or when the parts disagree with `labour` (a drifted snapshot).
+     */
+    labourSplit: {
+      /** A manager's fixed daily wage plus any cash hours. Their drops are not here. */
+      managers: number;
+      /** Hourly pay of everyone whose position is not a driver's. */
+      kitchen: number;
+      /**
+       * Drivers' hourly pay, every drop allowance, cover drivers' hourly pay,
+       * and a dual-role person's estimated delivery share. Classified by
+       * `employees.position` — see `lib/dashboard/labour-roles.ts`.
+       */
+      delivery: number;
+      /** Ad-hoc cover, belonging to none of the above. 0 when there is none. */
+      outsourced: number;
+      /** Who the ad-hoc lines actually name, so the row isn't an anonymous "Other". */
+      outsourcedLabel: string | null;
+    } | null;
     storeContribution: number;
     storeContributionPct: number;
     netMargin: number;
@@ -43,6 +63,13 @@ export type LastWeekPerformance = {
   } | null;
   reportHref: string;
   labourHref: string;
+};
+
+/** One pickable week on the performance card's week selector. */
+export type PerformanceWeekOption = {
+  iso: string;
+  /** "28/09 – 04/10", built server-side so the client does no date maths. */
+  label: string;
 };
 
 export type PayoutState = "not_generated" | "draft" | "confirmed";
@@ -91,6 +118,7 @@ export type NeedsActionData = {
 
 export type StoreDashboard = {
   store: DashboardStore;
+  /** The week the user is LOOKING at, which may not be the one that just ended. */
   performance: LastWeekPerformance;
   thisTuesday: PayoutCardData;
   nextTuesday: PayoutCardData;
