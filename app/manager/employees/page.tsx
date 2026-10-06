@@ -95,7 +95,11 @@ export default async function ManagerEmployeesPage() {
       .select(CLOCK_EVENT_COLUMNS)
       .eq("store_id", storeId)
       .gte("event_date", eightWeeksBack)
-      .not("clock_out_at", "is", null)
+      // A day still RUNNING is listed once one of its shifts has finished
+      // (`worked_hours` is the sum of the completed ones, and null until there
+      // is one). The completed shift is payable work waiting on a signature;
+      // hiding the whole day until the evening ended made it unapprovable.
+      .or("clock_out_at.not.is.null,worked_hours.not.is.null")
       .order("event_date", { ascending: false }),
     // The individual shifts inside those days, for the shifts worked HERE. A
     // day can hold several, and the approval row lists them under the total it
@@ -196,7 +200,7 @@ export default async function ManagerEmployeesPage() {
           .from("clock_events")
           .select(CLOCK_EVENT_COLUMNS)
           .in("id", crossStoreEventIds)
-          .not("clock_out_at", "is", null)
+          .or("clock_out_at.not.is.null,worked_hours.not.is.null")
       : Promise.resolve({ data: [], error: null }),
     needAllShifts.length > 0
       ? supabase
@@ -241,10 +245,35 @@ export default async function ManagerEmployeesPage() {
   // Cover drivers are summarised per DAY, not per week — each cover shift is a
   // discrete engagement that is approved and paid on its own.
   const coverDrivers = (coverDriversRes.data ?? []) as CoverDriver[];
-  const coverDriverDays = summariseCoverDriverDays(
-    (coverClocksRes.data ?? []) as CoverDriverClockEvent[],
-    coverDrivers,
+  const coverClocks = (coverClocksRes.data ?? []) as CoverDriverClockEvent[];
+
+  // A driver rostered at the other store who covered a night HERE. The clock
+  // query is scoped to the store that worked them, so their day is already on
+  // this screen — without their record it rendered as "—" at a £0 rate, and
+  // the approval that pays it from this store's till looked like a bug.
+  // Migration 062 is what lets this read return them.
+  const visitingIds = Array.from(
+    new Set(
+      coverClocks
+        .map((e) => e.cover_driver_id)
+        .filter((id) => id && !coverDrivers.some((d) => d.id === id)),
+    ),
   );
+  const visitingRes =
+    visitingIds.length > 0
+      ? await supabase.from("cover_drivers").select("*").in("id", visitingIds)
+      : { data: [], error: null };
+  if (visitingRes.error) {
+    console.error(
+      "[manager/employees] visiting cover driver query failed:",
+      visitingRes.error.message,
+    );
+  }
+
+  const coverDriverDays = summariseCoverDriverDays(coverClocks, [
+    ...coverDrivers,
+    ...((visitingRes.data ?? []) as CoverDriver[]),
+  ]);
 
   // Active staff only, projected back to the four columns the picker needs —
   // the rates the map above uses are server-side and stay there.

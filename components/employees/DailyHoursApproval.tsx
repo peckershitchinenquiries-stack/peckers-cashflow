@@ -703,6 +703,32 @@ export function DailyHoursApproval({
     return !!entryStoreId && !!sh.storeId && sh.storeId !== entryStoreId;
   }
 
+  /**
+   * Someone is still ON that day — a shift is running. The day total is a
+   * figure nobody can type yet, so the server refuses a day-level sign-off and
+   * the finished shifts are approved one at a time instead.
+   *
+   * Managers are exempt: they are signed off on DROPS, not hours, and a peer
+   * may confirm a round mid-shift — the one case where the day being open
+   * changes nothing about what is being approved.
+   */
+  function isOnShift(row: ApprovalRow): boolean {
+    return row.kind !== "manager" && row.clock_out_at == null;
+  }
+
+  /**
+   * Can this row be settled as a WHOLE DAY? Everything else on it is approved
+   * shift by shift, which is what the bulk button must not promise.
+   */
+  function isDayApprovable(row: ApprovalRow): boolean {
+    return (
+      isApprovable(row) &&
+      !isOnShift(row) &&
+      !isCrossStore(row) &&
+      !isForeignDay(row)
+    );
+  }
+
   /** A whole day worked at a single store that isn't this manager's. */
   function isForeignDay(row: ApprovalRow): boolean {
     const dayStores = storesOfDay(row);
@@ -838,14 +864,22 @@ export function DailyHoursApproval({
     () => allRows.filter((s) => s.event_date === selectedDate),
     [allRows, selectedDate],
   );
-  const { approvedCount, pendingCount } = React.useMemo(() => {
+  // `bulkCount` is what "Approve all" will actually sign off; `pendingCount` is
+  // everything still outstanding. They differ on a day that must be approved
+  // shift by shift — the button used to promise those too and skip them in
+  // silence, which read as a half-failed click.
+  const { approvedCount, pendingCount, bulkCount } = React.useMemo(() => {
     let approved = 0;
     let pending = 0;
+    let bulk = 0;
     for (const s of selectedRows) {
       if (s.approved) approved += 1;
-      else if (isApprovable(s)) pending += 1;
+      else if (isApprovable(s)) {
+        pending += 1;
+        if (isDayApprovable(s)) bulk += 1;
+      }
     }
-    return { approvedCount: approved, pendingCount: pending };
+    return { approvedCount: approved, pendingCount: pending, bulkCount: bulk };
   }, [selectedRows]);
   const visibleSelected = React.useMemo(
     () => (hideApproved ? selectedRows.filter((s) => !s.approved) : selectedRows),
@@ -1102,11 +1136,24 @@ export function DailyHoursApproval({
   }
 
   async function doApproveDate(date: string, rows: ApprovalRow[]) {
-    const pending = rows.filter((r) => !r.approved && isApprovable(r));
+    const pending = rows.filter((r) => !r.approved && isDayApprovable(r));
+    // The server skips a day it can't settle whole rather than failing the
+    // batch, so the count has to be said out loud here or the rows left behind
+    // look like a bug.
+    const perShift = rows.filter(
+      (r) => !r.approved && isApprovable(r) && !isDayApprovable(r),
+    ).length;
     const empIds = pending.filter((r) => r.kind === "employee").map((r) => r.person_id);
     const covIds = pending.filter((r) => r.kind === "cover").map((r) => r.person_id);
     const mgrIds = pending.filter((r) => r.kind === "manager").map((r) => r.person_id);
-    if (empIds.length === 0 && covIds.length === 0 && mgrIds.length === 0) return;
+    if (empIds.length === 0 && covIds.length === 0 && mgrIds.length === 0) {
+      if (perShift > 0) {
+        toast.error(
+          `${perShift === 1 ? "That day has" : `Those ${perShift} days have`} to be approved shift by shift — open the row.`,
+        );
+      }
+      return;
+    }
     setBusyDate(date);
     try {
       // Sequential, not parallel: two writes to the same day's rollup.
@@ -1120,7 +1167,12 @@ export function DailyHoursApproval({
         for (const id of mgrIds) await onManagerApprove(id, date);
       }
       const n = empIds.length + covIds.length + (onManagerApprove ? mgrIds.length : 0);
-      toast.success(`Approved ${n} ${n === 1 ? "person" : "people"}`);
+      toast.success(
+        `Approved ${n} ${n === 1 ? "person" : "people"}` +
+          (perShift > 0
+            ? ` · ${perShift} still to approve shift by shift`
+            : ""),
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -1144,9 +1196,10 @@ export function DailyHoursApproval({
     // ones it has, so collapsing them would leave the row with no way to
     // approve at all.
     const crossStore = isCrossStore(s);
+    const onShift = isOnShift(s);
     const dayStores = storesOfDay(s);
     const strayOuts = shiftsClockedOutElsewhere(s);
-    const expanded = openShifts.includes(key) || crossStore;
+    const expanded = openShifts.includes(key) || crossStore || onShift;
     // Only finished shifts can be signed off — one still running isn't
     // outstanding work, it's work happening.
     const pendingShifts = s.shiftRows.filter((r) => !r.approved && !r.open).length;
@@ -1478,6 +1531,15 @@ export function DailyHoursApproval({
               Undo
             </Button>
           </div>
+        ) : onShift ? (
+          /* Still working. The day's total isn't a figure anyone can type yet,
+             so the finished shifts are signed off one at a time above and the
+             running one waits for its clock-out. */
+          <p className="w-full sm:w-52 text-[11px] text-text-subtle sm:text-right">
+            {pendingShifts > 0
+              ? `Still on shift — approve the ${pendingShifts === 1 ? "finished shift" : `${pendingShifts} finished shifts`} above.`
+              : "Still on shift — the running shift can be approved once it ends."}
+          </p>
         ) : crossStore ? (
           /* Hours and drops belong to two different tills, and there is no way
              to guess the split — the server refuses a day total outright
@@ -1767,17 +1829,24 @@ export function DailyHoursApproval({
               )}
             </p>
           </div>
-          {pendingCount > 0 && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => doApproveDate(selectedDate, selectedRows)}
-              loading={busyDate === selectedDate}
-              iconLeft={<CheckIcon size={16} />}
-              className="w-full sm:w-auto"
-            >
-              Approve all {pendingCount}
-            </Button>
+          {bulkCount > 0 && (
+            <div className="flex flex-col items-stretch sm:items-end gap-1 w-full sm:w-auto">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => doApproveDate(selectedDate, selectedRows)}
+                loading={busyDate === selectedDate}
+                iconLeft={<CheckIcon size={16} />}
+                className="w-full sm:w-auto"
+              >
+                Approve all {bulkCount}
+              </Button>
+              {pendingCount > bulkCount && (
+                <span className="text-[11px] text-text-subtle sm:text-right">
+                  {pendingCount - bulkCount} more to approve shift by shift
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -1833,16 +1902,18 @@ export function DailyHoursApproval({
                       ({rows.length})
                     </span>
                   </button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => doApproveDate(date, rows)}
-                    loading={busyDate === date}
-                    iconLeft={<CheckIcon size={16} />}
-                    className="w-full sm:w-auto"
-                  >
-                    Approve all {rows.length}
-                  </Button>
+                  {rows.filter((r) => isDayApprovable(r)).length > 0 && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => doApproveDate(date, rows)}
+                      loading={busyDate === date}
+                      iconLeft={<CheckIcon size={16} />}
+                      className="w-full sm:w-auto"
+                    >
+                      Approve all {rows.filter((r) => isDayApprovable(r)).length}
+                    </Button>
+                  )}
                 </div>
                 <div className="px-3 divide-y divide-border/60">
                   {rows.map((s) => renderRow(s))}

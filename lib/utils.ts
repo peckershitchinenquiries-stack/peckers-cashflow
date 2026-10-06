@@ -659,7 +659,15 @@ export function mapClockEventsToDaily(
 }> {
   const out = [];
   for (const ce of clockEvents) {
-    if (!ce.clock_in_at || !ce.clock_out_at) continue;
+    const sessions = (ce.id ? sessionsByEventId?.get(ce.id) : undefined) ?? [];
+    // A day reads as open (null clock_out_at) while ANY shift is running, which
+    // used to hide the finished ones with it. The day is listed once something
+    // in it has ended — that shift is payable work waiting on a signature. A
+    // day with nothing but an open shift still has nothing to approve.
+    const hasFinishedShift = ce.clock_out_at
+      ? true
+      : sessions.some((s) => s.clock_out_at);
+    if (!ce.clock_in_at || !hasFinishedShift) continue;
     out.push({
       employee_id: ce.employee_id,
       employee_name: employeeMap.get(ce.employee_id)?.name ?? "—",
@@ -668,7 +676,7 @@ export function mapClockEventsToDaily(
       clocked_hours: roundHoursToMinute(dayWorkedHours(ce)),
       clock_in_at: ce.clock_in_at,
       clock_out_at: ce.clock_out_at,
-      sessions: (ce.id ? sessionsByEventId?.get(ce.id) : undefined) ?? [],
+      sessions,
       hours_approved: !!ce.hours_approved,
       approved_hours:
         ce.approved_hours != null ? Number(ce.approved_hours) : null,

@@ -305,7 +305,6 @@ export async function approveCoverDriverDay(input: {
     .eq("id", input.cover_driver_id)
     .maybeSingle();
   if (!driver) throw new Error("Cover driver not found");
-  assertStoreAccess(user, driver.store_id);
 
   const { data: event } = await supabase
     .from("cover_driver_clock_events")
@@ -317,6 +316,14 @@ export async function approveCoverDriverDay(input: {
   if (!event?.clock_in_at || !event?.clock_out_at) {
     throw new Error("No completed clock-in/out for this driver on that date.");
   }
+
+  // The store that WORKED them, not the one they're rostered at. A cover driver
+  // clocks in wherever they're standing, and the approved row is written
+  // against the clock event's store — so that store's till pays the day and
+  // that store's manager signs it off. Gating on the home store left a day
+  // covered at the other store approvable by nobody but an admin: the host
+  // manager was refused, and the home manager never saw it.
+  assertStoreAccess(user, event.store_id ?? driver.store_id);
 
   const clocked = Math.round(clockedHours(event.clock_in_at, event.clock_out_at) * 100) / 100;
   if (clocked <= 0) throw new Error("That day has no worked hours to approve.");

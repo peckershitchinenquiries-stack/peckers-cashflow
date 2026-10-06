@@ -9,7 +9,11 @@ import {
   resolveManualClockOut,
 } from "@/lib/auto-clock-out";
 import { formatDDMMYYYY, londonHHMM, timeToMinutes, todayISO } from "@/lib/utils";
-import { resolveActiveStoreId, type ActionResult } from "@/lib/types";
+import {
+  resolveActiveStoreId,
+  type ActionResult,
+  type ManagerClockEvent,
+} from "@/lib/types";
 import {
   addManagerSession,
   adoptManagerHeaderIntoSession,
@@ -932,13 +936,24 @@ async function requireApprover() {
   return user;
 }
 
-/** The manager's day, checked against the caller's store scope. */
+/**
+ * The manager's day, checked against the caller's store scope, plus the store
+ * the caller's sign-off is confined to.
+ *
+ * Authorised on the SHIFTS, never on the header's single store_id (migration
+ * 061): a day holds one header but its shifts can be at different stores, and
+ * recomputeManagerDayHeader writes that column from the REAL shifts only — a
+ * round covered at the other store never moves it. Gating on it refused a
+ * manager signing off a round their own store saw, on a day whose clocked
+ * shift was elsewhere.
+ */
 async function loadManagerDayForApproval(
   supabase: ReturnType<typeof createServerSupabase>,
   user: Awaited<ReturnType<typeof requireApprover>>,
   managerId: string,
   eventDate: string,
-) {
+  requestedStoreId?: string | null,
+): Promise<{ day: ManagerClockEvent; scopeStoreId: string | null }> {
   const { data: day } = await supabase
     .from("manager_clock_events")
     .select("*")
@@ -947,14 +962,34 @@ async function loadManagerDayForApproval(
     .maybeSingle();
   if (!day) throw new Error("No clock record for that manager on that date.");
 
-  if (user.allowed!.role === "manager") {
-    const activeStore = resolveActiveStoreId(user.allowed);
-    if (!activeStore) throw new Error("No store assigned to your account.");
+  if (user.allowed!.role !== "manager") {
+    return { day: day as ManagerClockEvent, scopeStoreId: requestedStoreId ?? null };
+  }
+
+  const activeStore = resolveActiveStoreId(user.allowed);
+  if (!activeStore) throw new Error("No store assigned to your account.");
+
+  const sessions = await managerSessionsForEvent(supabase, day.id);
+  const storesOnDay = new Set(sessions.map((s) => s.store_id).filter(Boolean));
+
+  // Nothing on the shifts says where the day happened — a pre-031 day, or rows
+  // written before a store was recorded. The header is then the only record
+  // there is, so it keeps its old say, and no store filter is applied: one
+  // would exclude every shift it is meant to sign off.
+  if (storesOnDay.size === 0) {
     if (day.store_id && day.store_id !== activeStore) {
       throw new Error("You can only approve deliveries for the store you're managing.");
     }
+    return { day: day as ManagerClockEvent, scopeStoreId: null };
   }
-  return day;
+
+  if (!storesOnDay.has(activeStore)) {
+    throw new Error("You can only approve deliveries for the store you're managing.");
+  }
+
+  // A manager signs off their OWN store's slice and nothing else — the request
+  // doesn't get to widen that to the whole cross-store day.
+  return { day: day as ManagerClockEvent, scopeStoreId: activeStore };
 }
 
 export async function approveManagerDeliveries(input: {
@@ -975,11 +1010,12 @@ export async function approveManagerDeliveries(input: {
     if (!input.manager_id) throw new Error("Select a manager");
     if (!input.event_date) throw new Error("Date is required");
 
-    const day = await loadManagerDayForApproval(
+    const { day, scopeStoreId } = await loadManagerDayForApproval(
       supabase,
       user,
       input.manager_id,
       input.event_date,
+      input.store_id,
     );
 
     const corrected = normaliseDeliveryInput(input.deliveries);
@@ -991,7 +1027,7 @@ export async function approveManagerDeliveries(input: {
         supabase,
         day.id,
         corrected,
-        input.store_id,
+        scopeStoreId,
       );
       if (applied) {
         await recomputeManagerDayHeader(supabase, day.id);
@@ -1015,7 +1051,7 @@ export async function approveManagerDeliveries(input: {
 
     // Sign-off lives on the SHIFT (migration 035), so a second shift added
     // later arrives unapproved instead of inheriting the day's flag.
-    await approveManagerDaySessions(supabase, day.id, user.id, input.store_id);
+    await approveManagerDaySessions(supabase, day.id, user.id, scopeStoreId);
     const sessions = await managerSessionsForEvent(supabase, day.id);
     if (sessions.length > 0) {
       await recomputeManagerDayHeader(supabase, day.id);
@@ -1094,11 +1130,12 @@ export async function unapproveManagerDeliveries(input: {
     const user = await requireApprover();
     const supabase = createServerSupabase();
 
-    const day = await loadManagerDayForApproval(
+    const { day, scopeStoreId } = await loadManagerDayForApproval(
       supabase,
       user,
       input.manager_id,
       input.event_date,
+      input.store_id,
     );
 
     // Only the sign-off is withdrawn. The counts stay exactly as they are —
@@ -1108,7 +1145,7 @@ export async function unapproveManagerDeliveries(input: {
       supabase,
       day.id,
       user.id,
-      input.store_id,
+      scopeStoreId,
     );
     if (withdrawn > 0) {
       await recomputeManagerDayHeader(supabase, day.id);

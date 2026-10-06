@@ -50,7 +50,11 @@ export default async function EmployeesPage() {
       .from("clock_events")
       .select("id, employee_id, store_id, event_date, clock_in_at, clock_out_at, worked_hours, hours_approved, approved_hours, auto_clocked_out, manual_entry, manual_entry_reason, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason")
       .gte("event_date", eightWeeksBack)
-      .not("clock_out_at", "is", null)
+      // A day still RUNNING is listed once one of its shifts has finished
+      // (`worked_hours` is the sum of the completed ones, and null until there
+      // is one). The completed shift is payable work waiting on a signature;
+      // hiding the whole day until the evening ended made it unapprovable.
+      .or("clock_out_at.not.is.null,worked_hours.not.is.null")
       .order("event_date", { ascending: false }),
     // The individual shifts inside those days. A day can hold several, and the
     // approval row lists them under the total it is signing off.
