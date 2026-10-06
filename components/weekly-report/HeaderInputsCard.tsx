@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
 import { saveReportHeader } from "@/app/actions/weekly-report";
 import { useSelectOnFocus } from "@/components/weekly-report/NumberCell";
+import { useUnsavedGuard } from "@/components/weekly-report/SheetSaveBar";
+import { useStashedForm } from "@/components/weekly-report/useSheetDrafts";
 import { num, type WeeklyReport } from "@/lib/weekly-report";
 
 /**
@@ -29,20 +31,33 @@ export function HeaderInputsCard({
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
-  const [form, setForm] = React.useState({
-    packaging_costs: report.packaging_costs == null ? "" : String(num(report.packaging_costs)),
-    marketing: report.marketing == null ? "" : String(num(report.marketing)),
-    meppershall: report.meppershall == null ? "" : String(num(report.meppershall)),
-    // Stored as a decimal, edited as a whole number.
-    gross_margin_budget_pct:
-      report.gross_margin_budget_pct == null
-        ? ""
-        : String(round1(num(report.gross_margin_budget_pct) * 100)),
-    labour_budget_pct:
-      report.labour_budget_pct == null
-        ? ""
-        : String(round1(num(report.labour_budget_pct) * 100)),
-  });
+  const signature = [
+    report.packaging_costs,
+    report.marketing,
+    report.meppershall,
+    report.gross_margin_budget_pct,
+    report.labour_budget_pct,
+  ].join("|");
+  const { form, setForm, dirty, kept, saved } = useStashedForm(
+    `${report.id}:header`,
+    signature,
+    () => ({
+      packaging_costs: report.packaging_costs == null ? "" : String(num(report.packaging_costs)),
+      marketing: report.marketing == null ? "" : String(num(report.marketing)),
+      meppershall: report.meppershall == null ? "" : String(num(report.meppershall)),
+      // Stored as a decimal, edited as a whole number.
+      gross_margin_budget_pct:
+        report.gross_margin_budget_pct == null
+          ? ""
+          : String(round1(num(report.gross_margin_budget_pct) * 100)),
+      labour_budget_pct:
+        report.labour_budget_pct == null
+          ? ""
+          : String(round1(num(report.labour_budget_pct) * 100)),
+    }),
+    readOnly,
+  );
+  useUnsavedGuard(dirty, kept);
 
   async function save() {
     setBusy(true);
@@ -58,6 +73,7 @@ export function HeaderInputsCard({
           form.gross_margin_budget_pct === "" ? null : num(form.gross_margin_budget_pct),
         labour_budget_pct: form.labour_budget_pct === "" ? null : num(form.labour_budget_pct),
       });
+      saved();
       toast.success("Saved");
       router.refresh();
     } catch (err) {
@@ -141,7 +157,20 @@ export function HeaderInputsCard({
       </div>
 
       {!readOnly && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex items-center justify-end gap-3">
+          <span
+            className={
+              dirty
+                ? "text-xs font-medium text-amber-600 dark:text-amber-400"
+                : "text-xs text-text-muted"
+            }
+          >
+            {dirty
+              ? kept
+                ? "Unsaved — kept on this device"
+                : "Unsaved changes"
+              : "All changes saved"}
+          </span>
           <Button onClick={save} loading={busy}>
             Save figures
           </Button>

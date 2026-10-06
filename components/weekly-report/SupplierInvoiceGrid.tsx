@@ -7,7 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { saveReportLines, type ReportLineInput } from "@/app/actions/weekly-report";
 import { NumberCell } from "@/components/weekly-report/NumberCell";
 import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
-import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
+import { freshKey, useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   groupSupplierLines,
   lineAmount,
@@ -106,7 +106,6 @@ export function SupplierInvoiceGrid({
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
-  const newKey = React.useRef(0);
 
   const signature = lines.map((l) => `${l.id}:${l.label}:${l.amount}`).join("|");
   const grid = useSheetDrafts<Sheet>(
@@ -114,6 +113,7 @@ export function SupplierInvoiceGrid({
     () => toSheet(lines),
     (s) => new Map(s.drafts.map((d) => [d.key, rowPrint(d)])),
     readOnly,
+    `${reportId}:${def.key}`,
   );
   const sheet = grid.state;
   const setSheet = grid.setState;
@@ -141,10 +141,12 @@ export function SupplierInvoiceGrid({
   }
 
   function addSupplier() {
-    newKey.current += 1;
     setSheet((s) => ({
       ...s,
-      drafts: [...s.drafts, { key: `new-${newKey.current}`, label: "", invoices: [] }],
+      drafts: [
+        ...s.drafts,
+        { key: freshKey(s.drafts.map((d) => d.key)), label: "", invoices: [] },
+      ],
     }));
   }
 
@@ -366,6 +368,7 @@ export function SupplierInvoiceGrid({
         <SheetSaveBar
           dirty={grid.dirty}
           count={grid.changed}
+          kept={grid.kept}
           busy={busy}
           onSave={save}
           onDiscard={grid.reset}

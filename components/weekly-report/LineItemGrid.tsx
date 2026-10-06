@@ -7,7 +7,7 @@ import { useToast } from "@/components/ui/Toast";
 import { saveReportLines, type ReportLineInput } from "@/app/actions/weekly-report";
 import { NumberCell } from "@/components/weekly-report/NumberCell";
 import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
-import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
+import { freshKey, useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   expenseVat,
   money,
@@ -99,7 +99,6 @@ export function LineItemGrid({
   const router = useRouter();
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
-  const newKey = React.useRef(0);
 
   // Server data wins whenever it changes underneath us (a prefill, a lock, a
   // carry-forward seed) — the grid is a view of the rows, not their owner. It
@@ -112,6 +111,7 @@ export function LineItemGrid({
     () => lines.map(toDraft),
     (ds) => new Map(ds.map((d) => [d.key, rowPrint(d)])),
     readOnly,
+    `${reportId}:${def.key}`,
   );
   const drafts = sheet.state;
   const setDrafts = sheet.setState;
@@ -128,7 +128,6 @@ export function LineItemGrid({
   }
 
   function addRow() {
-    newKey.current += 1;
     setDrafts((prev) => [
       ...prev,
       {
@@ -140,7 +139,7 @@ export function LineItemGrid({
         vat: "",
         entry_date: "",
         note: "",
-        key: `new-${newKey.current}`,
+        key: freshKey(prev.map((d) => d.key)),
       },
     ]);
   }
@@ -358,6 +357,7 @@ export function LineItemGrid({
         <SheetSaveBar
           dirty={sheet.dirty}
           count={sheet.changed}
+          kept={sheet.kept}
           busy={busy}
           onSave={save}
           onDiscard={sheet.reset}

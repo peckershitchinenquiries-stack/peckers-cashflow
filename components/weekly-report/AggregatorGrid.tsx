@@ -68,6 +68,7 @@ export function AggregatorGrid({
       ),
     (d) => new Map(Object.entries(d)),
     readOnly,
+    `${reportId}:aggregator`,
   );
   const draft = sheet.state;
 
@@ -98,6 +99,10 @@ export function AggregatorGrid({
           .map((r) => r.line?.id)
           .filter((id): id is string => !!id && !kept.has(id)),
       });
+      // Without this the sheet still reads as dirty after a successful save:
+      // the refresh that follows changes the signature, and a dirty sheet
+      // refuses the re-seed that would have cleared it.
+      sheet.commit(draft);
       toast.success("Aggregator commission saved");
       router.refresh();
     } catch (err) {
@@ -218,6 +223,7 @@ export function AggregatorGrid({
         <SheetSaveBar
           dirty={sheet.dirty}
           count={sheet.changed}
+          kept={sheet.kept}
           busy={busy}
           onSave={save}
           onDiscard={sheet.reset}

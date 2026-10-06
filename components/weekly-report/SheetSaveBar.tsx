@@ -12,15 +12,17 @@ import { Button } from "@/components/ui/Button";
  * about. Everything is now held as drafts and sent in ONE call, so the cost of
  * entering a sheet no longer grows with the number of rows in it.
  */
-export function useUnsavedGuard(dirty: boolean) {
+export function useUnsavedGuard(dirty: boolean, kept = false) {
   React.useEffect(() => {
-    if (!dirty) return;
+    if (!dirty || kept) return;
     const warn = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
     // Tab strips and the week picker are client-side links, so a reload guard
-    // alone would let unsaved rows vanish on a single click.
+    // alone would let unsaved rows vanish on a single click. Only asked when
+    // the drafts could NOT be stashed — when they can, coming back restores
+    // them and a confirm here is a false alarm people learn to click through.
     const intercept = (e: MouseEvent) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey) return;
       const link = (e.target as HTMLElement | null)?.closest?.("a[href]");
@@ -35,12 +37,13 @@ export function useUnsavedGuard(dirty: boolean) {
       window.removeEventListener("beforeunload", warn);
       document.removeEventListener("click", intercept, true);
     };
-  }, [dirty]);
+  }, [dirty, kept]);
 }
 
 export function SheetSaveBar({
   dirty,
   count,
+  kept = false,
   busy,
   onSave,
   onDiscard,
@@ -49,12 +52,14 @@ export function SheetSaveBar({
   dirty: boolean;
   /** How many rows are waiting — the reassurance that nothing was dropped. */
   count: number;
+  /** Drafts are held on this device, so leaving the tab doesn't lose them. */
+  kept?: boolean;
   busy: boolean;
   onSave: () => void;
   onDiscard: () => void;
   children?: React.ReactNode;
 }) {
-  useUnsavedGuard(dirty);
+  useUnsavedGuard(dirty, kept);
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-3">
@@ -68,7 +73,9 @@ export function SheetSaveBar({
           }
         >
           {dirty
-            ? `${count} unsaved ${count === 1 ? "change" : "changes"}`
+            ? `${count} unsaved ${count === 1 ? "change" : "changes"}${
+                kept ? " — kept on this device until you save" : ""
+              }`
             : "All changes saved"}
         </span>
         {dirty && (

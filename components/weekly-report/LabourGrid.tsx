@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { NumberCell } from "@/components/weekly-report/NumberCell";
 import { SheetSaveBar } from "@/components/weekly-report/SheetSaveBar";
-import { useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
+import { freshKey, useSheetDrafts } from "@/components/weekly-report/useSheetDrafts";
 import {
   prefillLabour,
   saveLabourLines,
@@ -143,7 +143,6 @@ export function LabourGrid({
   const [busy, setBusy] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
   const [newName, setNewName] = React.useState("");
-  const newKey = React.useRef(0);
 
   const signature = lines
     .map(
@@ -156,6 +155,7 @@ export function LabourGrid({
     () => lines.map(toDraft),
     (ds) => new Map(ds.map((d) => [d.key, rowPrint(d)])),
     readOnly,
+    `${reportId}:labour`,
   );
   const drafts = sheet.state;
   const setDrafts = sheet.setState;
@@ -175,11 +175,10 @@ export function LabourGrid({
   function addAdhoc() {
     const name = newName.trim();
     if (!name) return;
-    newKey.current += 1;
     setDrafts((prev) => [
       ...prev,
       {
-        key: `new-${newKey.current}`,
+        key: freshKey(prev.map((d) => d.key)),
         id: null,
         person_name: name,
         source: "adhoc",
@@ -501,6 +500,7 @@ export function LabourGrid({
           <SheetSaveBar
             dirty={sheet.dirty}
             count={sheet.changed}
+            kept={sheet.kept}
             busy={busy}
             onSave={save}
             onDiscard={sheet.reset}
