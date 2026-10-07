@@ -46,6 +46,8 @@ export type WeeklyReportLine = {
   amount: number | string | null;
   /** Entered per expense line; null falls back to the standard rate. */
   vat_amount: number | string | null;
+  /** The STANDING weekly figure a new week opens with. Null = a variable line. */
+  fixed_amount: number | string | null;
   note: string | null;
 };
 
@@ -118,17 +120,45 @@ export type SectionDef = {
   labelOptional?: boolean;
 };
 
-export type ReportTab =
-  | "summary"
-  | "cogs"
-  | "walkern"
-  | "hitchin"
-  | "fillings"
-  | "labour"
-  | "occupancy"
-  | "aggregator"
-  | "expenses"
-  | "channels";
+export const REPORT_TABS = [
+  "summary",
+  "cogs",
+  "walkern",
+  "hitchin",
+  "fillings",
+  "labour",
+  "occupancy",
+  "aggregator",
+  "expenses",
+  "channels",
+] as const;
+
+export type ReportTab = (typeof REPORT_TABS)[number];
+
+export function isReportTab(v: unknown): v is ReportTab {
+  return typeof v === "string" && (REPORT_TABS as readonly string[]).includes(v);
+}
+
+/**
+ * A manager's free-text note against one sheet — the invoice numbers scribbled
+ * in the paper grid's empty right-hand column. Record only: nothing here is
+ * summed, and nothing reaches the P&L.
+ */
+export type WeeklyReportNotes = Partial<Record<ReportTab, string>>;
+
+/** What the sheet's note box offers to hold, per tab. */
+export const NOTE_PLACEHOLDERS: Record<ReportTab, string> = {
+  summary: "Anything the owners should read alongside this week's figures.",
+  cogs: "e.g. invoice numbers — Magna 113, 142, 170 oil",
+  walkern: "What went to Walkern, and anything unusual about it.",
+  hitchin: "Why stock moved, and who asked for it.",
+  fillings: "Counts you want to remember, batches, anything short.",
+  labour: "Cover, overtime, anything that explains the hours.",
+  occupancy: "One-offs, invoices still to come.",
+  aggregator: "Promotions, refunds, commission disputes.",
+  expenses: "Receipts still to come in, or anything unclear on one.",
+  channels: "Outages, promotions — anything that explains the mix.",
+};
 
 export const SECTION_DEFS: Record<ReportSection, SectionDef> = {
   cogs_supplier: {
@@ -251,11 +281,27 @@ export const VAT_RATE = 0.2;
  * per invoice and opens MIN_INVOICE_COLUMNS wide, so the cells are already
  * there to type into.
  */
+/**
+ * A default line: a bare label, or a label with its STANDING weekly figure —
+ * the rows highlighted yellow on the paper sheet, which the manager copies
+ * forward rather than re-reading off an invoice. The amounts below are the ones
+ * both stores were running at w/c 2026-09-21.
+ */
+export type DefaultLine = string | readonly [label: string, fixedAmount: number];
+
 export type ReportDefaults = {
-  lines: Partial<Record<ReportSection, string[]>>;
+  lines: Partial<Record<ReportSection, DefaultLine[]>>;
   gross_margin_budget_pct: number;
   labour_budget_pct: number;
 };
+
+export function defaultLabel(line: DefaultLine): string {
+  return typeof line === "string" ? line : line[0];
+}
+
+export function defaultFixedAmount(line: DefaultLine): number | null {
+  return typeof line === "string" ? null : line[1];
+}
 
 const STEVENAGE_DEFAULTS: ReportDefaults = {
   lines: {
@@ -263,18 +309,20 @@ const STEVENAGE_DEFAULTS: ReportDefaults = {
       "Magna",
       "MS Foods",
       "Bidfood",
-      "T Quality",
-      "JJ's",
-      "Oil",
-      "Hulses",
-      "Soft Drinks",
-      "Lovely Singh",
-      "Edwards Wine",
-      "Costco",
-      "Amazon + Nisbets",
-      "One Stop",
-      "Samosa",
-      "Blue Rolls & Gloves",
+      ["T Quality", 415],
+      ["JJ's", 55],
+      // A credit, not a cost: the oil collection pays the store back.
+      ["Oil", -128],
+      ["Hulses", 310],
+      ["Soft Drinks", 380],
+      ["Lovely Singh", 200],
+      ["Edwards Wine", 115],
+      ["Costco", 50],
+      ["Amazon + Nisbets", 15],
+      ["One Stop", 20],
+      ["Samosa", 289],
+      ["Blue Rolls & Gloves", 145],
+      "Veggie Express",
     ],
     occupancy: [
       "Go Big",
@@ -305,15 +353,21 @@ const HITCHIN_DEFAULTS: ReportDefaults = {
     cogs_supplier: [
       "MS Foods",
       "Magna",
+      "SMS Charges",
+      "Bidfood",
       "Blue Rolls & Napkins",
-      "T Quality",
-      "JJ's",
-      "Oil",
-      "Hulses",
-      "Soft Drinks",
-      "Lovely Singh",
-      "NISA",
-      "Costco",
+      ["T Quality", 300],
+      ["JJ's", 50],
+      ["Oil", -72],
+      ["Hulses", 250],
+      ["Soft Drinks", 250],
+      ["Lovely Singh", 150],
+      ["Veggie Express", 0],
+      ["Amazon", 0],
+      ["NISA", 10],
+      ["Butchers", 0],
+      ["Costco", 50],
+      "Store expense",
     ],
     occupancy: [
       "Go Big",
@@ -350,16 +404,22 @@ export function reportDefaults(storeName: string): ReportDefaults {
  */
 export function defaultSeedRows(
   storeName: string,
-): { section: ReportSection; label: string; sort_order: number }[] {
-  const rows: { section: ReportSection; label: string; sort_order: number }[] = [];
-  for (const [section, labels] of Object.entries(reportDefaults(storeName).lines)) {
-    (labels ?? []).forEach((label, index) => {
+): {
+  section: ReportSection;
+  label: string;
+  sort_order: number;
+  fixed_amount: number | null;
+}[] {
+  const rows: ReturnType<typeof defaultSeedRows> = [];
+  for (const [section, lines] of Object.entries(reportDefaults(storeName).lines)) {
+    (lines ?? []).forEach((line, index) => {
       rows.push({
         section: section as ReportSection,
-        label,
+        label: defaultLabel(line),
         // Suppliers are spaced so each one's invoices sort together, matching
         // what SupplierInvoiceGrid writes back.
         sort_order: section === "cogs_supplier" ? index * MAX_INVOICE_COLUMNS : index,
+        fixed_amount: defaultFixedAmount(line),
       });
     });
   }
@@ -407,6 +467,21 @@ export function lineAmount(line: Pick<WeeklyReportLine, "amount" | "qty" | "unit
 }
 
 /**
+ * A line's STANDING figure, or null where it has none.
+ *
+ * Kept separate from `lineAmount` on purpose: this is what next week opens
+ * with, not what this week cost. Overtyping the week's amount is a correction
+ * for that week alone — it never moves the standing figure, which is the whole
+ * reason the two are different columns.
+ */
+export function fixedAmount(
+  line: Pick<WeeklyReportLine, "fixed_amount">,
+): number | null {
+  if (line.fixed_amount == null || line.fixed_amount === "") return null;
+  return round2(num(line.fixed_amount));
+}
+
+/**
  * The Cost of Goods sheet is one ROW PER SUPPLIER with a column per invoice,
  * so the grid groups the stored per-invoice rows back into that shape. Grouping
  * is on the folded label — "MS Foods" and "MS foods" are one supplier, not two
@@ -420,6 +495,8 @@ export type SupplierGroup = {
   label: string;
   invoices: WeeklyReportLine[];
   total: number;
+  /** The supplier's standing weekly figure — held on whichever of its rows carries one. */
+  fixed: number | null;
 };
 
 export function supplierKey(label: string): string {
@@ -432,11 +509,12 @@ export function groupSupplierLines(lines: WeeklyReportLine[]): SupplierGroup[] {
     const key = supplierKey(line.label);
     let group = byKey.get(key);
     if (!group) {
-      group = { key, label: line.label.trim(), invoices: [], total: 0 };
+      group = { key, label: line.label.trim(), invoices: [], total: 0, fixed: null };
       byKey.set(key, group);
     }
     group.invoices.push(line);
     group.total = round2(group.total + lineAmount(line));
+    group.fixed = group.fixed ?? fixedAmount(line);
   }
   return Array.from(byKey.values());
 }

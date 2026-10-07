@@ -5,22 +5,9 @@ import { weekRange } from "@/lib/vm-analytics/format";
 import { ErrorState } from "@/components/vm-analytics/PageState";
 import { WeeklyReportScreen } from "@/components/weekly-report/WeeklyReportScreen";
 import { ReportWeekSelector } from "@/components/weekly-report/ReportWeekSelector";
-import { reportWeekOptions, resolveReportWeek, type ReportTab } from "@/lib/weekly-report";
+import { isReportTab, reportWeekOptions, resolveReportWeek } from "@/lib/weekly-report";
 
 export const dynamic = "force-dynamic";
-
-const TABS = new Set<ReportTab>([
-  "summary",
-  "cogs",
-  "walkern",
-  "hitchin",
-  "fillings",
-  "labour",
-  "occupancy",
-  "aggregator",
-  "expenses",
-  "channels",
-]);
 
 /**
  * The manager's twin of the admin weekly report.
@@ -57,9 +44,7 @@ export default async function ManagerWeeklyReportPage({
   const weekIso = resolveReportWeek(weeks, searchParams.week);
   if (!weekIso) return <ErrorState message="No weeks available." />;
   const weekOption = weeks.find((w) => w.week_start_iso === weekIso);
-  const tab = TABS.has(searchParams.tab as ReportTab)
-    ? (searchParams.tab as ReportTab)
-    : "summary";
+  const tab = isReportTab(searchParams.tab) ? searchParams.tab : "summary";
 
   return (
     <div className="flex flex-col gap-5">

@@ -32,6 +32,7 @@ import { LineItemGrid } from "./LineItemGrid";
 import { SupplierInvoiceGrid } from "./SupplierInvoiceGrid";
 import { AggregatorGrid } from "./AggregatorGrid";
 import { LabourGrid } from "./LabourGrid";
+import { SheetNotes } from "./SheetNotes";
 
 const TAB_SECTIONS: Partial<Record<ReportTab, ReportSection[]>> = {
   cogs: ["cogs_supplier"],
@@ -201,6 +202,16 @@ export async function WeeklyReportScreen({
               showMeppershall={showMeppershall}
             />
           )}
+
+          {/* Last on every tab, including the read-only ones: the working behind
+              a figure belongs beside it, and a channel mix has as much to
+              explain as a supplier invoice does. */}
+          <SheetNotes
+            reportId={report.id}
+            tab={tab}
+            note={bundle.notes[tab] ?? ""}
+            readOnly={readOnly}
+          />
         </React.Fragment>
       )}
     </div>

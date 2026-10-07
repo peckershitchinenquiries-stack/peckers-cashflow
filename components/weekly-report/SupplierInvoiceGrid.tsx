@@ -19,6 +19,7 @@ import {
   type SectionDef,
   type WeeklyReportLine,
 } from "@/lib/weekly-report";
+import { cn } from "@/lib/utils";
 
 const cell =
   "w-full rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary focus:border-gold focus:outline-none disabled:opacity-60";
@@ -35,6 +36,12 @@ type SupplierDraft = {
   key: string;
   label: string;
   invoices: InvoiceCell[];
+  /**
+   * The supplier's standing weekly figure — carried, never edited here. It is
+   * what a NEW week opens prefilled with; this week's cell is an ordinary
+   * editable amount, and overtyping it leaves the standing figure alone.
+   */
+  fixed: number | null;
 };
 
 type Sheet = {
@@ -49,6 +56,7 @@ function toSheet(lines: WeeklyReportLine[]): Sheet {
     drafts: groups.map((g) => ({
       key: g.key,
       label: g.label,
+      fixed: g.fixed,
       invoices: g.invoices.map((l) => ({
         id: l.id,
         // A seeded row carries a name and no figure — that must read as an
@@ -107,7 +115,9 @@ export function SupplierInvoiceGrid({
   const toast = useToast();
   const [busy, setBusy] = React.useState(false);
 
-  const signature = lines.map((l) => `${l.id}:${l.label}:${l.amount}`).join("|");
+  const signature = lines
+    .map((l) => `${l.id}:${l.label}:${l.amount}:${l.fixed_amount}`)
+    .join("|");
   const grid = useSheetDrafts<Sheet>(
     signature,
     () => toSheet(lines),
@@ -145,7 +155,7 @@ export function SupplierInvoiceGrid({
       ...s,
       drafts: [
         ...s.drafts,
-        { key: freshKey(s.drafts.map((d) => d.key)), label: "", invoices: [] },
+        { key: freshKey(s.drafts.map((d) => d.key)), label: "", invoices: [], fixed: null },
       ],
     }));
   }
@@ -194,12 +204,16 @@ export function SupplierInvoiceGrid({
     drafts.forEach((d, index) => {
       const label = d.label.trim();
       if (!label) return;
+      // Carried, not edited: it rides the first row written for this supplier
+      // and is nulled on the rest, so a three-invoice week never holds three
+      // copies to disagree. A save that dropped it would blank what next week
+      // opens with.
+      const fixed = d.fixed;
       let entered = 0;
       for (let column = 0; column < columns; column++) {
         const invoice = d.invoices[column];
         if (!invoice || invoice.amount === "") continue;
         if (invoice.id) kept.add(invoice.id);
-        entered += 1;
         payload.push({
           key: `${d.key}:${column}`,
           id: invoice.id,
@@ -209,8 +223,10 @@ export function SupplierInvoiceGrid({
           // together, whatever order the cells were typed in.
           sort_order: index * MAX_INVOICE_COLUMNS + column,
           amount: round2(num(invoice.amount)),
+          fixed_amount: entered === 0 ? fixed : null,
           note: invoice.note,
         });
+        entered += 1;
       }
       // A supplier nobody invoiced this week keeps ONE amount-less row, so the
       // name is still here after a save and still carries into next week. Only
@@ -225,6 +241,7 @@ export function SupplierInvoiceGrid({
           label,
           sort_order: index * MAX_INVOICE_COLUMNS,
           amount: null,
+          fixed_amount: fixed,
           note: held?.note ?? null,
         });
       }
@@ -269,6 +286,11 @@ export function SupplierInvoiceGrid({
         <span className="text-xs text-text-muted">
           {def.feeds ? `→ Weekly Summary, ${def.feeds}` : "Record only — does not affect the P&L"}
         </span>
+        <p className="w-full text-xs text-text-muted">
+          The highlighted rows are the standing costs — the ones shaded yellow on the paper
+          sheet. A new week opens with their usual figures already entered, so only what differs
+          needs typing. They are ordinary cells: overtype any of them.
+        </p>
       </div>
 
       <div className="table-scroll overflow-x-auto">
@@ -300,7 +322,15 @@ export function SupplierInvoiceGrid({
           </thead>
           <tbody>
             {drafts.map((d) => (
-              <tr key={d.key} className="border-b border-border">
+              <tr
+                key={d.key}
+                // The paper sheet highlights its standing rows; so does this one,
+                // so a manager reads the same shape on both.
+                className={cn(
+                  "border-b border-border",
+                  d.fixed != null && "bg-amber-50/60 dark:bg-amber-950/20",
+                )}
+              >
                 <td className="px-3 py-1.5">
                   <input
                     className={cell}

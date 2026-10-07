@@ -24,6 +24,8 @@ import {
 } from "@/lib/cash-flow";
 import {
   defaultSeedRows,
+  fixedAmount,
+  isReportTab,
   labourTotal,
   latestReportWeekStart,
   num,
@@ -35,6 +37,8 @@ import {
   REPORT_SECTIONS,
   SECTION_DEFS,
   type ReportSection,
+  type ReportTab,
+  type WeeklyReportNotes,
   type WeeklyReport,
   type WeeklyReportLabourLine,
   type WeeklyReportLine,
@@ -52,7 +56,7 @@ import type { Employee } from "@/lib/types";
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
 
 const LINE_COLUMNS =
-  "id, report_id, section, label, sort_order, entry_date, qty, unit_rate, amount, vat_amount, note";
+  "id, report_id, section, label, sort_order, entry_date, qty, unit_rate, amount, vat_amount, fixed_amount, note";
 const LABOUR_COLUMNS =
   "id, report_id, person_name, source, employee_id, cover_driver_id, manager_id, hours, ni_hours, ni_rate, cash_hours, cash_rate, ni_total_override, cash_total_override, deliveries, delivery_pay, sort_order";
 
@@ -124,6 +128,7 @@ export type WeeklyReportBundle = {
   report: WeeklyReport | null;
   lines: WeeklyReportLine[];
   labour: WeeklyReportLabourLine[];
+  notes: WeeklyReportNotes;
   /** A failed query must never read as "no costs this week". */
   load_error: string | null;
 };
@@ -154,11 +159,12 @@ export async function loadWeeklyReport(input: {
       report: null,
       lines: [],
       labour: [],
+      notes: {},
       load_error: reportErr?.message ?? null,
     };
   }
 
-  const [linesRes, labourRes] = await Promise.all([
+  const [linesRes, labourRes, notesRes] = await Promise.all([
     supabase
       .from("weekly_report_lines")
       .select(LINE_COLUMNS)
@@ -172,14 +178,64 @@ export async function loadWeeklyReport(input: {
       .eq("report_id", report.id)
       .order("sort_order")
       .order("created_at"),
+    supabase.from("weekly_report_notes").select("tab, body").eq("report_id", report.id),
   ]);
 
   return {
     report,
     lines: (linesRes.data ?? []) as WeeklyReportLine[],
     labour: (labourRes.data ?? []) as WeeklyReportLabourLine[],
-    load_error: reportErr?.message ?? linesRes.error?.message ?? labourRes.error?.message ?? null,
+    notes: notesOf(notesRes.data),
+    load_error:
+      reportErr?.message ??
+      linesRes.error?.message ??
+      labourRes.error?.message ??
+      notesRes.error?.message ??
+      null,
   };
+}
+
+function notesOf(rows: { tab: string; body: string }[] | null): WeeklyReportNotes {
+  const notes: WeeklyReportNotes = {};
+  for (const row of rows ?? []) {
+    if (isReportTab(row.tab)) notes[row.tab] = row.body;
+  }
+  return notes;
+}
+
+/**
+ * The note beside one sheet. An emptied box DELETES its row rather than storing
+ * "", so "has this week a note on Cost of Goods" stays one question.
+ */
+export async function saveReportNote(input: {
+  report_id: string;
+  tab: ReportTab;
+  body: string;
+}): Promise<{ ok: true }> {
+  const user = await requireStaff();
+  if (!isReportTab(input.tab)) throw new Error("Unknown sheet.");
+  const supabase = createServerSupabase();
+  const report = await loadReportRow(supabase, input.report_id);
+  assertStoreAccess(user, report.store_id);
+  assertEditable(report);
+
+  const body = (input.body ?? "").trim();
+  const { error } = body
+    ? await supabase
+        .from("weekly_report_notes")
+        .upsert(
+          { report_id: input.report_id, tab: input.tab, body, updated_by: user.id },
+          { onConflict: "report_id,tab" },
+        )
+    : await supabase
+        .from("weekly_report_notes")
+        .delete()
+        .eq("report_id", input.report_id)
+        .eq("tab", input.tab);
+  if (error) throw new Error(error.message);
+
+  revalidateWeeklyReport();
+  return { ok: true };
 }
 
 /**
@@ -341,20 +397,31 @@ async function seedNewReport(
 
   const previous = await previousStructure(supabase, input);
 
+  // A standing figure is seeded into `amount` as well as carried: that IS the
+  // feature — the week opens with its fixed costs already entered, and the
+  // manager only types what differs. Everything else still starts blank,
+  // exactly as duplicating the spreadsheet does.
   const payload = previous
-    ? previous.lines.map((l) => ({
-        report_id: reportId,
-        section: l.section,
-        label: l.label,
-        sort_order: l.sort_order,
-        unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
-      }))
+    ? previous.lines.map((l) => {
+        const fixed = fixedAmount(l);
+        return {
+          report_id: reportId,
+          section: l.section,
+          label: l.label,
+          sort_order: l.sort_order,
+          unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
+          fixed_amount: fixed,
+          amount: fixed,
+        };
+      })
     : defaultSeedRows(storeName).map((r) => ({
         report_id: reportId,
         section: r.section,
         label: r.label,
         sort_order: r.sort_order,
         unit_rate: SECTION_DEFS[r.section].defaultUnitRate ?? null,
+        fixed_amount: r.fixed_amount,
+        amount: r.fixed_amount,
       }));
 
   // The budget percentages are a standing target, not a weekly figure, so they
@@ -441,6 +508,8 @@ export type ReportLineInput = {
   unit_rate?: number | null;
   amount?: number | null;
   vat_amount?: number | null;
+  /** The standing weekly figure. Grids that don't offer it send back what they were given. */
+  fixed_amount?: number | null;
   note?: string | null;
 };
 
@@ -474,6 +543,9 @@ function lineRowPayload(reportId: string, input: ReportLineInput) {
     // Null is meaningful: it means "the standard rate on the amount", which is
     // what every line entered before this column existed still gets.
     vat_amount: input.vat_amount == null ? null : round2(Number(input.vat_amount) || 0),
+    // Negative is legitimate — the oil collection is a standing CREDIT.
+    fixed_amount:
+      input.fixed_amount == null ? null : round2(Number(input.fixed_amount) || 0),
     note: input.note?.trim() || null,
   };
 }
@@ -1248,13 +1320,15 @@ async function buildReportWorkbook(
   snapshot: WeeklyReportSnapshot,
   store: { storeName: string; vmStoreName: string | null; showMeppershall: boolean },
 ): Promise<Buffer> {
-  const [linesRes, labourRes, platformSales, history] = await Promise.all([
+  const [linesRes, labourRes, notesRes, platformSales, history] = await Promise.all([
     supabase.from("weekly_report_lines").select(LINE_COLUMNS).eq("report_id", report.id),
     supabase.from("weekly_report_labour_lines").select(LABOUR_COLUMNS).eq("report_id", report.id),
+    supabase.from("weekly_report_notes").select("tab, body").eq("report_id", report.id),
     loadVmPlatformSales(store.vmStoreName, report.week_start),
     loadChannelHistory(supabase, report.store_id, store.vmStoreName, report.week_start),
   ]);
-  const loadError = linesRes.error?.message ?? labourRes.error?.message ?? history.error;
+  const loadError =
+    linesRes.error?.message ?? labourRes.error?.message ?? notesRes.error?.message ?? history.error;
   if (loadError) throw new Error(`Couldn't build the Excel attachment: ${loadError}`);
 
   const { buildWeeklyReportWorkbook } = await import("@/lib/weekly-report-excel");
@@ -1267,6 +1341,7 @@ async function buildReportWorkbook(
     showMeppershall: store.showMeppershall,
     platformSales: platformSales.rows,
     channelWeeks: history.weeks,
+    notes: notesOf(notesRes.data),
   });
 }
 

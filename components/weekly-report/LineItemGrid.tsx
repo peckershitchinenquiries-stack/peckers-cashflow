@@ -35,6 +35,12 @@ type Draft = {
   vat: string;
   entry_date: string;
   note: string;
+  /**
+   * Carried, never edited here — the standing figure is offered on Cost of
+   * Goods only. A save that left it out would blank what the week was seeded
+   * with, so it rides back out exactly as it came in.
+   */
+  fixed_amount: number | null;
   /** Client-only key so a row that has never been saved still has React identity. */
   key: string;
 };
@@ -49,6 +55,7 @@ function toDraft(l: WeeklyReportLine): Draft {
     vat: l.vat_amount == null ? "" : String(num(l.vat_amount)),
     entry_date: l.entry_date ?? "",
     note: l.note ?? "",
+    fixed_amount: l.fixed_amount == null ? null : num(l.fixed_amount),
     key: l.id,
   };
 }
@@ -139,6 +146,7 @@ export function LineItemGrid({
         vat: "",
         entry_date: "",
         note: "",
+        fixed_amount: null,
         key: freshKey(prev.map((d) => d.key)),
       },
     ]);
@@ -170,6 +178,7 @@ export function LineItemGrid({
         unit_rate: isQtyRate ? num(d.unit_rate) : null,
         amount: draftAmount(d, def.shape),
         vat_amount: isDated && d.vat !== "" ? round2(num(d.vat)) : null,
+        fixed_amount: d.fixed_amount,
         note: d.note || null,
       });
     });

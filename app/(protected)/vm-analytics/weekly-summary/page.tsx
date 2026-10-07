@@ -10,6 +10,7 @@ import { WeeklyReportScreen } from "@/components/weekly-report/WeeklyReportScree
 import { loadStoreWeekFigures } from "@/lib/weekly-report-figures";
 import {
   combineInputs,
+  isReportTab,
   reportWeekOptions,
   resolveReportWeek,
   type ReportTab,
@@ -18,21 +19,8 @@ import type { Store } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const TABS = new Set<ReportTab>([
-  "summary",
-  "cogs",
-  "walkern",
-  "hitchin",
-  "fillings",
-  "labour",
-  "occupancy",
-  "aggregator",
-  "expenses",
-  "channels",
-]);
-
 function resolveTab(param?: string): ReportTab {
-  return param && TABS.has(param as ReportTab) ? (param as ReportTab) : "summary";
+  return isReportTab(param) ? param : "summary";
 }
 
 export default async function WeeklySummaryPage({

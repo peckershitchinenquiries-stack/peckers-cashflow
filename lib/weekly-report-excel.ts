@@ -11,6 +11,7 @@
 import ExcelJS from "exceljs";
 import {
   aggregatorRows,
+  fixedAmount,
   groupSupplierLines,
   invoiceColumnCount,
   labourLineTotals,
@@ -24,6 +25,7 @@ import {
   type ReportSection,
   type WeeklyReportLabourLine,
   type WeeklyReportLine,
+  type WeeklyReportNotes,
   type WeeklyReportSnapshot,
 } from "./weekly-report";
 import { generateWeeklySummary } from "./vm-analytics/weekly-summary";
@@ -39,6 +41,7 @@ export type WorkbookInput = {
   showMeppershall: boolean;
   platformSales: Array<{ platform: string; sales: number }>;
   channelWeeks: ChannelWeek[];
+  notes: WeeklyReportNotes;
 };
 
 const GBP = '"£"#,##0.00';
@@ -129,6 +132,22 @@ function headerRow(ws: ExcelJS.Worksheet, row: number, startCol: number, labels:
   });
 }
 
+/**
+ * A sheet's note, where the paper workbook keeps it: in the empty column to the
+ * right of the grid, beside the figures it explains rather than on a page of
+ * its own nobody opens.
+ */
+function sheetNote(ws: ExcelJS.Worksheet, cell: string, body: string | undefined) {
+  if (!body?.trim()) return;
+  const label = ws.getCell(cell);
+  label.value = "Notes";
+  label.font = { bold: true };
+  const text = ws.getCell(cell.replace(/\d+$/, (r) => String(Number(r) + 1)));
+  text.value = body.trim();
+  text.alignment = { wrapText: true, vertical: "top" };
+  ws.getColumn(text.col).width = 46;
+}
+
 function widths(ws: ExcelJS.Worksheet, cols: Record<string, number>) {
   for (const [col, width] of Object.entries(cols)) ws.getColumn(col).width = width;
 }
@@ -192,6 +211,11 @@ function costOfGoodsSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
   for (const g of groups) {
     ws.getCell(`A${r}`).value = g.label;
     ws.getCell(`A${r}`).font = { bold: true };
+    // The standing rows are highlighted on the paper sheet, and the owners read
+    // this attachment the same way they read that.
+    if (g.fixed != null) {
+      for (let c = 1; c <= invoices + 2; c++) ws.getRow(r).getCell(c).fill = HIGHLIGHT_FILL;
+    }
     g.invoices.slice(0, invoices).forEach((inv, i) => money(ws.getRow(r).getCell(i + 2), lineAmount(inv)));
     // Beyond the widest column the screen shows, fold the rest into the last
     // invoice cell so the row still totals what was entered.
@@ -214,6 +238,7 @@ function costOfGoodsSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
   );
   ws.getCell(`${totalCol}${totalRow}`).font = { bold: true };
 
+  sheetNote(ws, `${colLetter(invoices + 4)}6`, input.notes.cogs);
   widths(ws, { A: 24 });
   for (let c = 2; c <= invoices + 2; c++) ws.getColumn(c).width = 13;
   return ref(SHEET.cogs, `${totalCol}${totalRow}`);
@@ -224,6 +249,7 @@ function walkernSheet(wb: ExcelJS.Workbook, input: WorkbookInput) {
   ws.getCell("A1").value = "Products sent to Walkern";
   ws.getCell("A1").font = { bold: true };
   amountList(ws, 2, "Item", linesOf(input.lines, "cogs_walkern"));
+  sheetNote(ws, "E2", input.notes.walkern);
   widths(ws, { A: 28, B: 14, C: 24 });
 }
 
@@ -233,6 +259,7 @@ function transferSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
   ws.getCell("A1").value = name;
   ws.getCell("A1").font = { bold: true };
   const total = amountList(ws, 2, "Item", linesOf(input.lines, "cogs_hitchin"));
+  sheetNote(ws, "E2", input.notes.hitchin);
   widths(ws, { A: 28, B: 14, C: 24 });
   return ref(name, total);
 }
@@ -311,6 +338,8 @@ function fillingsSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
     "Day",
     linesOf(input.lines, "spring_rolls"),
   );
+
+  sheetNote(ws, "N1", input.notes.fillings);
 
   const grandRow = Math.max(rice.endRow, fillingsTotalRow, springRolls.endRow) + 2;
   ws.getCell(`A${grandRow}`).value = "TOTAL";
@@ -391,6 +420,7 @@ function labourSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
   }
   ws.getRow(totalRow).font = { bold: true };
 
+  sheetNote(ws, "N6", input.notes.labour);
   widths(ws, { A: 26, B: 13, C: 15, D: 10, E: 12, F: 11, G: 10, H: 12, I: 11, J: 12, K: 12, L: 12 });
   return ref(SHEET.labour, `K${totalRow}`);
 }
@@ -420,6 +450,7 @@ function occupancySheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
     GBP,
   );
   ws.getCell(`B${totalRow}`).font = { bold: true };
+  sheetNote(ws, "D8", input.notes.occupancy);
   widths(ws, { A: 22, B: 13 });
   return ref(SHEET.occupancy, `B${totalRow}`);
 }
@@ -457,6 +488,7 @@ function aggregatorSheet(wb: ExcelJS.Workbook, input: WorkbookInput): string {
     PCT,
   );
   ws.getRow(totalRow).font = { bold: true };
+  sheetNote(ws, "G2", input.notes.aggregator);
   widths(ws, { A: 16, B: 13, C: 14, D: 13, E: 12 });
   return ref(SHEET.aggregator, `C${totalRow}`);
 }
@@ -498,6 +530,7 @@ function expenseSheet(wb: ExcelJS.Workbook, input: WorkbookInput) {
     GBP,
   );
   ws.getRow(totalRow).font = { bold: true };
+  sheetNote(ws, "G8", input.notes.expenses);
   widths(ws, { A: 12, B: 24, C: 14, D: 12, E: 11 });
 }
 
@@ -564,6 +597,7 @@ function channelsSheet(wb: ExcelJS.Workbook, input: WorkbookInput) {
     }
   }
 
+  sheetNote(ws, "T2", input.notes.channels);
   ws.getColumn(1).width = 12;
   for (let c = 2; c <= 18; c++) ws.getColumn(c).width = c >= 13 ? 18 : 14;
 }
@@ -676,6 +710,7 @@ function summarySheet(
   // On GROSS sales, as the workbook and the screen both measure it.
   formula(ws.getCell(`B${r + 1}`), `IF(B${GROSS}=0,0,B${r}/B${GROSS})`, nm.actual_pct ?? 0, PCT);
 
+  sheetNote(ws, "F6", input.notes.summary);
   widths(ws, { A: 24, B: 16, C: 16, D: 16 });
 }
 
