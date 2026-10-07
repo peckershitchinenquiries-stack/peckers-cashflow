@@ -111,7 +111,10 @@ export function LineItemGrid({
   // carry-forward seed) — the grid is a view of the rows, not their owner. It
   // never wins over unsaved typing.
   const signature = lines
-    .map((l) => `${l.id}:${l.label}:${l.amount}:${l.vat_amount}:${l.qty}:${l.unit_rate}`)
+    .map(
+      (l) =>
+        `${l.id}:${l.label}:${l.amount}:${l.vat_amount}:${l.qty}:${l.unit_rate}:${l.fixed_amount}`,
+    )
     .join("|");
   const sheet = useSheetDrafts<Draft[]>(
     signature,
@@ -212,6 +215,7 @@ export function LineItemGrid({
         <span className="text-xs text-text-muted">
           {def.feeds ? `→ Weekly Summary, ${def.feeds}` : "Record only — does not affect the P&L"}
         </span>
+        {def.blurb && <p className="w-full text-xs text-text-muted">{def.blurb}</p>}
       </div>
 
       <div className="table-scroll overflow-x-auto">

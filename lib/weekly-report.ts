@@ -118,6 +118,8 @@ export type SectionDef = {
   feeds: string | null;
   /** The paper sheet leaves this column blank as often as not — see `expense`. */
   labelOptional?: boolean;
+  /** A line under the grid's heading, where the sheet needs explaining. */
+  blurb?: string;
 };
 
 export const REPORT_TABS = [
@@ -188,6 +190,8 @@ export const SECTION_DEFS: Record<ReportSection, SectionDef> = {
     labelHeading: "Cost",
     shape: "amount",
     feeds: "Occupancy Costs",
+    blurb:
+      "These are standing costs — the paper sheet calls the whole page Fixed Costs. A new week opens with each one's usual figure already entered, so only what differs needs typing. They are ordinary cells: overtype any of them.",
   },
   rice_bowls: {
     key: "rice_bowls",
@@ -325,21 +329,23 @@ const STEVENAGE_DEFAULTS: ReportDefaults = {
       "Veggie Express",
     ],
     occupancy: [
-      "Go Big",
-      "Sporting Ads",
-      "Accountancy Fees",
-      "Business Rates",
+      ["Go Big", 50],
+      ["Sporting Ads", 85],
+      ["Accountancy Fees", 65],
+      ["Business Rates", 150],
+      // The only occupancy line the sheet leaves blank week after week, so it
+      // carries no standing figure and opens empty like any ordinary cost.
       "Cleaning Supplies",
-      "Trade Bins",
-      "Equipment",
-      "NI Employers",
-      "Insurance",
-      "Software",
-      "Lighting Power",
-      "Rent",
-      "Repairs",
-      "Subscriptions",
-      "Telephone",
+      ["Trade Bins", 170],
+      ["Equipment", 100],
+      ["NI Employers", 230],
+      ["Insurance", 45],
+      ["Software", 220],
+      ["Lighting Power", 250],
+      ["Rent", 615],
+      ["Repairs", 60],
+      ["Subscriptions", 75],
+      ["Telephone", 10],
     ],
     cogs_walkern: ["Bidfood"],
     fillings: ["Walkern", "Watton At Stone"],
@@ -370,20 +376,20 @@ const HITCHIN_DEFAULTS: ReportDefaults = {
       "Store expense",
     ],
     occupancy: [
-      "Go Big",
-      "Accountancy Fees",
-      "Rates",
-      "Cleaning Supplies",
-      "Trade Bins",
-      "Equipment",
-      "NI Employers",
-      "Insurance",
-      "Software",
-      "Lighting Power",
-      "Rent",
-      "Repairs",
-      "Subscriptions",
-      "Telephone",
+      ["Go Big", 70],
+      ["Accountancy Fees", 65],
+      ["Rates", 104],
+      ["Cleaning Supplies", 40],
+      ["Trade Bins", 111],
+      ["Equipment", 50],
+      ["NI Employers", 140],
+      ["Insurance", 35],
+      ["Software", 157],
+      ["Lighting Power", 250],
+      ["Rent", 400],
+      ["Repairs", 105],
+      ["Subscriptions", 75],
+      ["Telephone", 10],
     ],
   },
   gross_margin_budget_pct: 0.7,
