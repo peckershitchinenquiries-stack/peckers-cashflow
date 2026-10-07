@@ -25,7 +25,14 @@
 // =============================================================
 
 import * as React from "react";
-import { getBestPosition, isPermissionDenied, type Fix } from "@/lib/geolocation";
+import {
+  getBestPosition,
+  isCoarseFix,
+  isPermissionDenied,
+  readGeolocationPermission,
+  type Fix,
+} from "@/lib/geolocation";
+import { isPeckersApp } from "@/lib/is-native-app";
 import {
   FIX_RESUME_GRACE_MS,
   FIX_REUSE_AT_PRESS_MS,
@@ -39,13 +46,31 @@ import type { Store } from "@/lib/types";
 export type GeoState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ok"; lat: number; lng: number; accuracy: number }
-  | { status: "denied" | "error"; message: string };
+  /** `coarse` = an approximate/network position, too imprecise to judge a
+   *  geofence with. Still "ok": the fix is real and the in-range maths is
+   *  unchanged, it just needs saying WHY the answer will be "out of range". */
+  | { status: "ok"; lat: number; lng: number; accuracy: number; coarse: boolean }
+  /** `blocked` = the permission is denied at the OS/site level, so no prompt
+   *  will appear again and Retry on its own cannot clear it. */
+  | { status: "denied" | "error"; message: string; blocked?: boolean };
 
 /** A fix plus the age the server needs to judge whether it is still current. */
 export type SubmittableFix = Fix & { ageMs: number };
 
 export type RankedStore = { store: Store; distance: number; inRange: boolean };
+
+/**
+ * Why an approximate fix cannot clock you in, and what to change. Shown INSTEAD
+ * of "move closer" — the position is kilometres wide, so walking anywhere is
+ * the one thing that will not help, and being told to is what makes the refusal
+ * unexplainable.
+ */
+export function approximateLocationMessage(accuracyM: number): string {
+  const where = isPeckersApp()
+    ? "Android Settings › Apps › Peckers › Permissions › Location and choose Precise"
+    : "your location settings and turn on precise location";
+  return `Your phone is only giving an approximate location (±${Math.round(accuracyM)}m), which is too wide to tell which store you're at — moving closer won't help. Open ${where}, then tap Retry.`;
+}
 
 /**
  * Every clockable store ranked by distance from a fix, nearest first. Shared so
@@ -119,7 +144,13 @@ export function useGeoFix({
       .then((fix) => {
         denied.current = false;
         current.current = { fix, capturedAt: performance.now() };
-        setGeo({ status: "ok", lat: fix.lat, lng: fix.lng, accuracy: fix.accuracy });
+        setGeo({
+          status: "ok",
+          lat: fix.lat,
+          lng: fix.lng,
+          accuracy: fix.accuracy,
+          coarse: isCoarseFix(fix.accuracy),
+        });
         return fix;
       })
       .catch((err: unknown) => {
@@ -130,8 +161,27 @@ export function useGeoFix({
           denied.current = true;
           setGeo({
             status: "denied",
-            message:
-              "Location permission denied. Enable it in your browser settings, then tap Retry.",
+            message: isPeckersApp()
+              ? "Location permission denied. Open Android Settings › Apps › Peckers › Permissions › Location, allow it, then tap Retry."
+              : "Location permission denied. Enable it in your browser settings, then tap Retry.",
+          });
+          // Best effort, and deliberately after the message above: a dismissed
+          // prompt and a permanently blocked permission arrive as the same
+          // error, and only the second one makes Retry pointless. Not every
+          // browser answers, so the generic message has to stand on its own.
+          void readGeolocationPermission().then((state) => {
+            if (state !== "denied") return;
+            setGeo((prev) =>
+              prev.status === "denied"
+                ? {
+                    ...prev,
+                    blocked: true,
+                    message: isPeckersApp()
+                      ? "Location is blocked for the Peckers app, so you will not be asked again. Open Android Settings › Apps › Peckers › Permissions › Location and set it to Allow, then tap Retry."
+                      : "Location is blocked for this site, so you will not be asked again. Tap the padlock in the address bar, allow Location, then tap Retry.",
+                  }
+                : prev,
+            );
           });
         } else {
           setGeo({

@@ -30,7 +30,11 @@ import {
   todayISO,
   weekdayIndex,
 } from "@/lib/utils";
-import { rankStoresByDistance, useGeoFix } from "@/lib/use-geo-fix";
+import {
+  approximateLocationMessage,
+  rankStoresByDistance,
+  useGeoFix,
+} from "@/lib/use-geo-fix";
 import { ClockReminderOptIn } from "@/components/crew/ClockReminderOptIn";
 import { savePushSubscription, deletePushSubscription, sendTestPush } from "@/app/actions/push";
 import { ClockIcon } from "@/components/ui/icons";
@@ -649,12 +653,19 @@ export function CrewClockApp({
                   {earlyClockInMessage(todayBookedStartMinutes)}
                 </p>
               )}
-              {!inRange && geo.status === "ok" && (
-                <p className="text-xs text-danger text-center">
-                  {currentPhase === "out"
-                    ? "You're not within range of any store. Move closer to the store you're working at to clock out."
-                    : "You're not within range of any store. Move closer to the store you're working at."}
+              {geo.status === "ok" && geo.coarse ? (
+                <p className="text-xs text-warning text-center">
+                  {approximateLocationMessage(geo.accuracy)}
                 </p>
+              ) : (
+                !inRange &&
+                geo.status === "ok" && (
+                  <p className="text-xs text-danger text-center">
+                    {currentPhase === "out"
+                      ? "You're not within range of any store. Move closer to the store you're working at to clock out."
+                      : "You're not within range of any store. Move closer to the store you're working at."}
+                  </p>
+                )
               )}
               {geo.status === "ok" && (
                 <p className="text-[11px] text-text-muted text-center">

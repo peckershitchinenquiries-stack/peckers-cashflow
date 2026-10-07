@@ -12,7 +12,11 @@ import { ClockIcon } from "@/components/ui/icons";
 import { HoursMinsDisplay } from "@/components/ui/HoursMinsDisplay";
 import { managerClockIn, managerClockOut } from "@/app/actions/manager-clock";
 import { switchStore } from "@/app/actions/store-switch";
-import { rankStoresByDistance, useGeoFix } from "@/lib/use-geo-fix";
+import {
+  approximateLocationMessage,
+  rankStoresByDistance,
+  useGeoFix,
+} from "@/lib/use-geo-fix";
 import { formatTimeOnly, liveDayWorkedHours } from "@/lib/utils";
 import type { ManagerClockEvent, ManagerClockSession, Store } from "@/lib/types";
 
@@ -382,12 +386,19 @@ export function ManagerClockCard({
                   ? "Start Another Shift"
                   : "Clock In Now"}
             </Button>
-            {!canClock && geo.status === "ok" && (
-              <p className="text-xs text-danger text-center">
-                {phase === "out"
-                  ? "You're not within range of any store. Move closer to clock out."
-                  : `You're too far from ${store?.name ?? "your store"} to clock in.`}
+            {geo.status === "ok" && geo.coarse ? (
+              <p className="text-xs text-warning text-center">
+                {approximateLocationMessage(geo.accuracy)}
               </p>
+            ) : (
+              !canClock &&
+              geo.status === "ok" && (
+                <p className="text-xs text-danger text-center">
+                  {phase === "out"
+                    ? "You're not within range of any store. Move closer to clock out."
+                    : `You're too far from ${store?.name ?? "your store"} to clock in.`}
+                </p>
+              )
             )}
             {phase === "out" && (
               <p className="text-[11px] text-text-muted text-center">

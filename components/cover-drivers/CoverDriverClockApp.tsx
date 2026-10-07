@@ -27,7 +27,11 @@ import {
   toISODate,
   todayISO,
 } from "@/lib/utils";
-import { rankStoresByDistance, useGeoFix } from "@/lib/use-geo-fix";
+import {
+  approximateLocationMessage,
+  rankStoresByDistance,
+  useGeoFix,
+} from "@/lib/use-geo-fix";
 import type { CoverDriver, CoverDriverClockEvent, Store } from "@/lib/types";
 
 type Props = {
@@ -416,12 +420,19 @@ export function CoverDriverClockApp({
                     : `Clock In${inRange && targetStore ? ` at ${targetStore.name}` : " Now"}`}
                 </Button>
 
-                {!inRange && geo.status === "ok" && (
-                  <p className="text-xs text-danger text-center">
-                    {currentPhase === "out"
-                      ? "You're not within range of any store. Move closer to the store you're covering to clock out."
-                      : "You're not within range of any store. Move closer to the store you're covering."}
+                {geo.status === "ok" && geo.coarse ? (
+                  <p className="text-xs text-warning text-center">
+                    {approximateLocationMessage(geo.accuracy)}
                   </p>
+                ) : (
+                  !inRange &&
+                  geo.status === "ok" && (
+                    <p className="text-xs text-danger text-center">
+                      {currentPhase === "out"
+                        ? "You're not within range of any store. Move closer to the store you're covering to clock out."
+                        : "You're not within range of any store. Move closer to the store you're covering."}
+                    </p>
+                  )
                 )}
                 {geo.status === "ok" && (
                   <p className="text-[11px] text-text-muted text-center">
