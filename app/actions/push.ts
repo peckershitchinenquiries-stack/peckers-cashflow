@@ -135,3 +135,97 @@ export async function sendTestPush(): Promise<ActionResult> {
     };
   }
 }
+
+// -------------------------------------------------------------
+// NATIVE push (Android app) — separate from the Web Push path above.
+//
+// An Android System WebView has no Push API, so the app cannot produce a
+// PushSubscription at all. It registers an FCM token through
+// @capacitor/push-notifications instead, and that token identifies the device
+// in place of an endpoint + key pair. Same table, `platform` tells them apart.
+//
+// These are NEW actions. savePushSubscription / deletePushSubscription above
+// are untouched — every browser and installed-PWA user still depends on them.
+// -------------------------------------------------------------
+
+/** Which native runtime a token came from. Must match migration 067's CHECK. */
+export type NativePlatform = "android" | "ios";
+
+/**
+ * Store (or refresh) the FCM token for the device the employee is using the
+ * app on. Upsert on `native_token`, so a token that rotates creates one row and
+ * a re-registration updates it rather than piling up duplicates.
+ *
+ * Deliberately NOT gated on isPushConfigured(): that checks the VAPID keypair,
+ * which is Web Push's. Native delivery authenticates with Firebase credentials
+ * instead (Task 6), and refusing to REMEMBER a device because Web Push is
+ * unconfigured would be the wrong dependency.
+ */
+export async function saveNativePushToken(
+  token: string,
+  platform: NativePlatform,
+  userAgent?: string | null,
+): Promise<ActionResult> {
+  try {
+    if (!isProvisioningConfigured()) {
+      return { ok: false, error: "Server is not configured to save subscriptions." };
+    }
+    if (!token || typeof token !== "string") {
+      return { ok: false, error: "Invalid push token." };
+    }
+    if (platform !== "android" && platform !== "ios") {
+      return { ok: false, error: "Unknown device platform." };
+    }
+
+    const employee = await requireEmployee();
+    const admin = createAdminClient();
+
+    // employee_id is written on conflict too, on purpose: a shared store phone
+    // re-registered by whoever is signed in now must follow them, or the
+    // previous employee keeps getting reminders on a handset they've handed over.
+    const { error } = await admin.from("push_subscriptions").upsert(
+      {
+        employee_id: employee.id,
+        native_token: token,
+        platform,
+        user_agent: userAgent ?? null,
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "native_token" },
+    );
+    if (error) return { ok: false, error: error.message };
+
+    return { ok: true };
+  } catch (err) {
+    console.error("[push] saveNativePushToken failed:", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not enable reminders.",
+    };
+  }
+}
+
+/** Remove this device's native token (employee turned reminders off in the app). */
+export async function deleteNativePushToken(token: string): Promise<ActionResult> {
+  try {
+    if (!token) return { ok: true };
+    if (!isProvisioningConfigured()) return { ok: true };
+
+    const employee = await requireEmployee();
+    const admin = createAdminClient();
+    // Scoped to this employee so one crew member can't remove another's device.
+    const { error } = await admin
+      .from("push_subscriptions")
+      .delete()
+      .eq("native_token", token)
+      .eq("employee_id", employee.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    console.error("[push] deleteNativePushToken failed:", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not turn reminders off.",
+    };
+  }
+}

@@ -6,7 +6,15 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import type { ActionResult } from "@/lib/types";
-import type { BrowserSubscription } from "@/app/actions/push";
+import type { BrowserSubscription, NativePlatform } from "@/app/actions/push";
+import {
+  checkNativePermission,
+  getNativePushToken,
+  nativePlatform,
+  rememberNativeToken,
+  rememberedNativeToken,
+  requestNativePermission,
+} from "@/lib/native-push";
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -70,6 +78,14 @@ type Props = {
   deleteSubscription: (endpoint: string) => Promise<ActionResult>;
   /** Fire a test notification to confirm delivery. */
   sendTest: () => Promise<ActionResult>;
+  /** Persist this device's FCM token (Android app only — no Push API there). */
+  saveNativeToken: (
+    token: string,
+    platform: NativePlatform,
+    userAgent?: string | null,
+  ) => Promise<ActionResult>;
+  /** Remove this device's FCM token. */
+  deleteNativeToken: (token: string) => Promise<ActionResult>;
   /** Where the "we'll nudge you" copy sends the reader — attendance/clock screen. */
   homeHref?: string;
 };
@@ -84,11 +100,15 @@ export function ClockReminderOptIn({
   saveSubscription,
   deleteSubscription,
   sendTest,
+  saveNativeToken,
+  deleteNativeToken,
 }: Props) {
   const toast = useToast();
   const [status, setStatus] = React.useState<Status>("checking");
   const [busy, setBusy] = React.useState(false);
   const regRef = React.useRef<ServiceWorkerRegistration | null>(null);
+  // Non-null only inside the Android app, where Web Push does not exist at all.
+  const [native, setNative] = React.useState<NativePlatform | null>(null);
 
   const supported =
     typeof window !== "undefined" &&
@@ -100,6 +120,41 @@ export function ClockReminderOptIn({
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
+      const platform = nativePlatform();
+      if (platform) {
+        setNative(platform);
+        try {
+          const permission = await checkNativePermission();
+          if (cancelled) return;
+          if (permission === "denied") {
+            setStatus("denied");
+            return;
+          }
+          const remembered = rememberedNativeToken();
+          if (permission !== "granted" || !remembered) {
+            setStatus("off");
+            return;
+          }
+          setStatus("on");
+          // FCM rotates tokens, so a device already opted in re-registers on
+          // every open to keep its row current. Silent on purpose: permission
+          // is already granted, so no dialog appears and nothing is asked.
+          const token = await getNativePushToken();
+          if (cancelled) return;
+          const res = await saveNativeToken(
+            token,
+            platform,
+            typeof navigator !== "undefined" ? navigator.userAgent : null,
+          );
+          if (res.ok) rememberNativeToken(token);
+        } catch (err) {
+          console.error("[push] native refresh failed:", err);
+          // Leave whatever status was set. A failed refresh means the row may
+          // be stale, not that reminders are off, and nagging on open is worse.
+        }
+        return;
+      }
+
       if (!supported || !VAPID_PUBLIC_KEY) {
         setStatus(supported ? "off" : "unsupported");
         return;
@@ -129,6 +184,37 @@ export function ClockReminderOptIn({
   }, []);
 
   async function enable() {
+    if (native) {
+      setBusy(true);
+      try {
+        const permission = await requestNativePermission();
+        if (permission !== "granted") {
+          setStatus(permission === "denied" ? "denied" : "off");
+          toast.error("Notifications weren't allowed. You can enable them in Android settings.");
+          return;
+        }
+        const token = await getNativePushToken();
+        const res = await saveNativeToken(
+          token,
+          native,
+          typeof navigator !== "undefined" ? navigator.userAgent : null,
+        );
+        if (!res.ok) {
+          toast.error(res.error);
+          return;
+        }
+        rememberNativeToken(token);
+        setStatus("on");
+        toast.success("Reminders on — we'll nudge you at shift start and end.");
+      } catch (err) {
+        console.error("[push] native enable failed:", err);
+        toast.error(err instanceof Error ? err.message : "Couldn't turn on reminders.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     if (!VAPID_PUBLIC_KEY) {
       toast.error("Reminders aren't set up on the server yet.");
       return;
@@ -177,6 +263,23 @@ export function ClockReminderOptIn({
   }
 
   async function disable() {
+    if (native) {
+      setBusy(true);
+      try {
+        const token = rememberedNativeToken();
+        if (token) await deleteNativeToken(token);
+        rememberNativeToken(null);
+        setStatus("off");
+        toast.success("Reminders turned off on this device.");
+      } catch (err) {
+        console.error("[push] native disable failed:", err);
+        toast.error("Couldn't turn reminders off.");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       const reg = regRef.current;
@@ -230,7 +333,9 @@ export function ClockReminderOptIn({
                 : status === "needs-install"
                   ? "On iPhone/iPad, tap the Share button and “Add to Home Screen”, then open Peckers from your home screen to turn on reminders."
                   : status === "denied"
-                    ? "Notifications are blocked for this site. Allow them in your browser settings, then reload to turn reminders on."
+                    ? native
+                      ? "Notifications are blocked for Peckers. Turn them on in Android Settings › Apps › Peckers › Notifications, then reopen the app."
+                      : "Notifications are blocked for this site. Allow them in your browser settings, then reload to turn reminders on."
                     : "Get a nudge to clock in when your shift starts (and to clock out when it ends). Never miss it again."}
             </p>
           </div>
@@ -239,9 +344,15 @@ export function ClockReminderOptIn({
         <div className="flex items-center gap-2 shrink-0">
           {status === "on" ? (
             <>
-              <Button size="sm" variant="outline" onClick={test} loading={busy} disabled={busy}>
-                Send test
-              </Button>
+              {/* Hidden in the app: sendTest goes through lib/push.ts, which
+                  only speaks Web Push, so it would always report "no device
+                  received it" on a native-only token. Drop this guard once
+                  Task 6 teaches the sender about FCM. */}
+              {!native && (
+                <Button size="sm" variant="outline" onClick={test} loading={busy} disabled={busy}>
+                  Send test
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={disable} disabled={busy}>
                 Turn off
               </Button>

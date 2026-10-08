@@ -12,7 +12,7 @@ import { getSessionUser } from "@/lib/supabase-server";
 import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import { isPushConfigured, sendPushToManager } from "@/lib/push";
 import type { ActionResult } from "@/lib/types";
-import type { BrowserSubscription } from "./push";
+import type { BrowserSubscription, NativePlatform } from "./push";
 
 async function requireManager() {
   const user = await getSessionUser();
@@ -115,6 +115,81 @@ export async function sendManagerTestPush(): Promise<ActionResult> {
     return {
       ok: false,
       error: err instanceof Error ? err.message : "Could not send a test notification.",
+    };
+  }
+}
+
+// -------------------------------------------------------------
+// NATIVE push (Android app) — MANAGER side. Mirrors the employee actions in
+// app/actions/push.ts; see the note there for why the WebView needs this at
+// all and why it is not gated on the VAPID keypair.
+//
+// NEW actions. saveManagerPushSubscription / deleteManagerPushSubscription
+// above are untouched.
+// -------------------------------------------------------------
+
+export async function saveManagerNativePushToken(
+  token: string,
+  platform: NativePlatform,
+  userAgent?: string | null,
+): Promise<ActionResult> {
+  try {
+    if (!isProvisioningConfigured()) {
+      return { ok: false, error: "Server is not configured to save subscriptions." };
+    }
+    if (!token || typeof token !== "string") {
+      return { ok: false, error: "Invalid push token." };
+    }
+    if (platform !== "android" && platform !== "ios") {
+      return { ok: false, error: "Unknown device platform." };
+    }
+
+    const manager = await requireManager();
+    const admin = createAdminClient();
+
+    // manager_id on conflict for the same reason as the employee action: a
+    // handset that changes hands must follow whoever is signed in on it.
+    const { error } = await admin.from("manager_push_subscriptions").upsert(
+      {
+        manager_id: manager.id,
+        native_token: token,
+        platform,
+        user_agent: userAgent ?? null,
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: "native_token" },
+    );
+    if (error) return { ok: false, error: error.message };
+
+    return { ok: true };
+  } catch (err) {
+    console.error("[push] saveManagerNativePushToken failed:", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not enable reminders.",
+    };
+  }
+}
+
+export async function deleteManagerNativePushToken(token: string): Promise<ActionResult> {
+  try {
+    if (!token) return { ok: true };
+    if (!isProvisioningConfigured()) return { ok: true };
+
+    const manager = await requireManager();
+    const admin = createAdminClient();
+    const { error } = await admin
+      .from("manager_push_subscriptions")
+      .delete()
+      .eq("native_token", token)
+      .eq("manager_id", manager.id);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    console.error("[push] deleteManagerNativePushToken failed:", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Could not turn reminders off.",
     };
   }
 }

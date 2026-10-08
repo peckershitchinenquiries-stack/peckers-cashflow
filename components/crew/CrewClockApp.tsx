@@ -36,7 +36,13 @@ import {
   useGeoFix,
 } from "@/lib/use-geo-fix";
 import { ClockReminderOptIn } from "@/components/crew/ClockReminderOptIn";
-import { savePushSubscription, deletePushSubscription, sendTestPush } from "@/app/actions/push";
+import {
+  savePushSubscription,
+  deletePushSubscription,
+  sendTestPush,
+  saveNativePushToken,
+  deleteNativePushToken,
+} from "@/app/actions/push";
 import { ClockIcon } from "@/components/ui/icons";
 import type {
   ClockEvent,
@@ -754,6 +760,8 @@ export function CrewClockApp({
         saveSubscription={savePushSubscription}
         deleteSubscription={deletePushSubscription}
         sendTest={sendTestPush}
+        saveNativeToken={saveNativePushToken}
+        deleteNativeToken={deleteNativePushToken}
       />
 
       {/* ---------- Week shifts ---------- */}

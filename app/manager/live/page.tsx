@@ -9,6 +9,8 @@ import {
   saveManagerPushSubscription,
   deleteManagerPushSubscription,
   sendManagerTestPush,
+  saveManagerNativePushToken,
+  deleteManagerNativePushToken,
 } from "@/app/actions/manager-push";
 import { todayISO } from "@/lib/utils";
 import type {
@@ -155,6 +157,8 @@ export default async function ManagerLivePage() {
           saveSubscription={saveManagerPushSubscription}
           deleteSubscription={deleteManagerPushSubscription}
           sendTest={sendManagerTestPush}
+          saveNativeToken={saveManagerNativePushToken}
+          deleteNativeToken={deleteManagerNativePushToken}
         />
       </div>
       <LiveDashboard
