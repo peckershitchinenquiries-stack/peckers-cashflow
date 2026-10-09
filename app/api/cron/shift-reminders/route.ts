@@ -2,7 +2,7 @@
 // Scheduled reminder: clock in / clock out.
 //
 // Staff forget to clock in when they arrive and to clock out when they leave.
-// This endpoint pushes a browser reminder at each person's scheduled shift
+// This endpoint pushes a reminder at each person's scheduled shift
 // START (if not clocked in) and shift END (if clocked in but not out) — to
 // every device they've opted in from. Covers both employees (rota_shifts /
 // employee_schedules) and managers (manager_shifts).
@@ -22,15 +22,21 @@
 //
 // Env:
 //   CRON_SECRET                   — shared secret guarding this endpoint
-//   NEXT_PUBLIC_VAPID_PUBLIC_KEY  — VAPID public key
-//   VAPID_PRIVATE_KEY             — VAPID private key
+//   NEXT_PUBLIC_VAPID_PUBLIC_KEY  — VAPID public key   (browser devices)
+//   VAPID_PRIVATE_KEY             — VAPID private key  (browser devices)
+//   FIREBASE_SERVICE_ACCOUNT      — Firebase credential (Android app devices)
 //   SUPABASE_SERVICE_ROLE_KEY     — required (reads schedules, sends push)
+//
+// Delivery itself is lib/push.ts's problem: a person's devices are a mix of
+// browsers and app installs, and it fans out over both.
 // =============================================================
 
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import {
+  isAnyPushConfigured,
+  isFcmConfigured,
   isPushConfigured,
   sendPushToEmployee,
   sendPushToManager,
@@ -208,11 +214,15 @@ async function handle(req: Request) {
     autoClosed = sweep.closed.length;
   }
 
-  if (!isPushConfigured() || !isProvisioningConfigured()) {
+  // Either transport is enough to run: browsers need the VAPID keypair, the
+  // Android app needs the Firebase service account, and a site configured for
+  // only one of them must still reminder the devices it CAN reach.
+  if (!isAnyPushConfigured() || !isProvisioningConfigured()) {
     return NextResponse.json(
       {
         ok: false,
-        error: "Push not configured (VAPID keys / service role key).",
+        error:
+          "Push not configured (needs VAPID keys or a Firebase service account, plus the service role key).",
         autoClosed,
       },
       { status: 200 },
@@ -223,11 +233,26 @@ async function handle(req: Request) {
   const { dateIso, minutes: nowMin } = londonNow(new Date());
   const weekday = weekdayIndex(parseISODate(dateIso)); // 0=Mon..6=Sun
 
+  // No platform filter: a row is a browser or an app device (migration 067) and
+  // both are reminded. lib/push.ts picks the transport per device.
   const [empSubRows, mgrSubRows, storesRes] = await Promise.all([
     admin.from("push_subscriptions").select("employee_id"),
     admin.from("manager_push_subscriptions").select("manager_id"),
     admin.from("stores").select("id, name"),
   ]);
+
+  // An empty subscriber list and a broken query look identical from here, and
+  // the broken one silently stops every reminder — so say which it was.
+  const loadError =
+    empSubRows.error?.message ?? mgrSubRows.error?.message ?? storesRes.error?.message ?? null;
+  if (loadError) {
+    console.error("[shift-reminders] subscriber load failed:", loadError);
+    return NextResponse.json(
+      { ok: false, error: `Could not load subscribers: ${loadError}`, autoClosed },
+      { status: 200 },
+    );
+  }
+
   const employeeIds = Array.from(new Set((empSubRows.data ?? []).map((r) => r.employee_id)));
   const managerIds = Array.from(new Set((mgrSubRows.data ?? []).map((r) => r.manager_id)));
   const storeName = new Map((storesRes.data ?? []).map((s) => [s.id, s.name as string]));
@@ -410,6 +435,9 @@ async function handle(req: Request) {
   return NextResponse.json({
     ok: true,
     at: `${dateIso} ${Math.floor(nowMin / 60)}:${String(nowMin % 60).padStart(2, "0")} UK`,
+    // Which transports this deployment can actually deliver over — the first
+    // thing to check when a reminder "didn't arrive".
+    transports: { web: isPushConfigured(), native: isFcmConfigured() },
     subscribedEmployees: employeeIds.length,
     subscribedManagers: managerIds.length,
     sent,

@@ -2,6 +2,7 @@ import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { MobileTopBar } from "@/components/layout/TopBar";
+import { NativePushHandler } from "@/components/clock/NativePushHandler";
 import { resolveActiveStoreId } from "@/lib/types";
 
 export default async function ManagerLayout({
@@ -25,6 +26,7 @@ export default async function ManagerLayout({
 
   return (
     <div className="min-h-screen flex bg-bg">
+      <NativePushHandler fallbackHref="/manager/live" />
       <Sidebar
         portal="manager"
         userName={userName}

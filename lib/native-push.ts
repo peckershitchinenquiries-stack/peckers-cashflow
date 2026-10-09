@@ -24,14 +24,31 @@ type PermissionState = "prompt" | "prompt-with-rationale" | "granted" | "denied"
 
 type ListenerHandle = { remove: () => Promise<void> };
 
+/** What the plugin hands over for a delivered or tapped notification. */
+export type NativeNotification = {
+  title?: string;
+  body?: string;
+  data?: Record<string, unknown>;
+};
+
 type PushNotificationsPlugin = {
   checkPermissions: () => Promise<{ receive: PermissionState }>;
   requestPermissions: () => Promise<{ receive: PermissionState }>;
   register: () => Promise<void>;
-  addListener: (
+  // Method syntax, not a property: these are overloads, and a type literal only
+  // allows overloads this way.
+  addListener(
     event: "registration" | "registrationError",
     handler: (data: { value?: string; error?: string }) => void,
-  ) => Promise<ListenerHandle>;
+  ): Promise<ListenerHandle>;
+  addListener(
+    event: "pushNotificationReceived",
+    handler: (notification: NativeNotification) => void,
+  ): Promise<ListenerHandle>;
+  addListener(
+    event: "pushNotificationActionPerformed",
+    handler: (action: { actionId?: string; notification: NativeNotification }) => void,
+  ): Promise<ListenerHandle>;
 };
 
 type CapacitorGlobal = {
@@ -148,4 +165,69 @@ export function rememberNativeToken(token: string | null): void {
     // Private mode / blocked storage. The card then re-registers on next open,
     // which re-saves the same row — wrong state, never a wrong write.
   }
+}
+
+// -------------------------------------------------------------
+// Notification arrival and taps (Android app only).
+//
+// Two cases, and Android treats them differently:
+//
+//  • BACKGROUNDED or KILLED — the system tray draws the notification itself,
+//    and tapping it fires `pushNotificationActionPerformed`. The tap does NOT
+//    navigate the WebView, so the reminder's target URL has to be applied here.
+//  • FOREGROUNDED — Android shows NOTHING. The payload arrives as
+//    `pushNotificationReceived` and it is the page's job to say something, or
+//    the reminder is simply lost for anyone with the app already open.
+// -------------------------------------------------------------
+
+/** The reminder's target path, if the payload carried a safe one. */
+export function notificationUrl(notification: NativeNotification): string | null {
+  const url = notification?.data?.url;
+  if (typeof url !== "string") return null;
+  // Same-origin relative paths only. "//host" is protocol-relative and would
+  // leave the app, so a second slash disqualifies it.
+  if (!url.startsWith("/") || url.startsWith("//")) return null;
+  return url;
+}
+
+/**
+ * Attach a plugin listener and hand back a synchronous unsubscribe.
+ *
+ * addListener resolves asynchronously, so an effect that unmounts before it
+ * settles must still be able to detach — hence the cancelled flag rather than
+ * just holding the handle.
+ */
+function listen(attach: (push: PushNotificationsPlugin) => Promise<ListenerHandle>): () => void {
+  const push = capacitor()?.Plugins?.PushNotifications;
+  if (!push) return () => {};
+
+  let handle: ListenerHandle | null = null;
+  let cancelled = false;
+  void attach(push).then((h) => {
+    if (cancelled) void h.remove();
+    else handle = h;
+  });
+
+  return () => {
+    cancelled = true;
+    void handle?.remove();
+  };
+}
+
+/** Fires when a tray notification is tapped. Returns an unsubscribe function. */
+export function onNativeNotificationTap(
+  handler: (notification: NativeNotification) => void,
+): () => void {
+  return listen((push) =>
+    push.addListener("pushNotificationActionPerformed", (action) =>
+      handler(action.notification),
+    ),
+  );
+}
+
+/** Fires when a push arrives while the app is in the FOREGROUND. */
+export function onNativeNotificationReceived(
+  handler: (notification: NativeNotification) => void,
+): () => void {
+  return listen((push) => push.addListener("pushNotificationReceived", handler));
 }

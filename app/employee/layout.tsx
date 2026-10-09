@@ -2,6 +2,7 @@ import { requireRole } from "@/lib/supabase-server";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { MobileTopBar } from "@/components/layout/TopBar";
+import { NativePushHandler } from "@/components/clock/NativePushHandler";
 
 export default async function EmployeeLayout({
   children,
@@ -12,6 +13,7 @@ export default async function EmployeeLayout({
 
   return (
     <div className="min-h-screen flex bg-bg">
+      <NativePushHandler fallbackHref="/employee/attendance" />
       <Sidebar portal="employee" userName={user.allowed?.name || user.email} />
       <div className="flex-1 min-w-0 flex flex-col">
         <MobileTopBar userName={user.allowed?.name || user.email} />
