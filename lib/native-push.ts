@@ -37,18 +37,24 @@ type PushNotificationsPlugin = {
   register: () => Promise<void>;
   // Method syntax, not a property: these are overloads, and a type literal only
   // allows overloads this way.
+  //
+  // The return is `Promise<ListenerHandle> | ListenerHandle` because BOTH occur.
+  // @capacitor/push-notifications' own .d.ts promises a Promise, but that
+  // package isn't what runs here — the injected WebView bridge hands back a bare
+  // `{ remove }`. Typing it as a Promise is what let a .then() on it reach a
+  // device: the typecheck only ever confirmed this declaration against itself.
   addListener(
     event: "registration" | "registrationError",
     handler: (data: { value?: string; error?: string }) => void,
-  ): Promise<ListenerHandle>;
+  ): Promise<ListenerHandle> | ListenerHandle;
   addListener(
     event: "pushNotificationReceived",
     handler: (notification: NativeNotification) => void,
-  ): Promise<ListenerHandle>;
+  ): Promise<ListenerHandle> | ListenerHandle;
   addListener(
     event: "pushNotificationActionPerformed",
     handler: (action: { actionId?: string; notification: NativeNotification }) => void,
-  ): Promise<ListenerHandle>;
+  ): Promise<ListenerHandle> | ListenerHandle;
 };
 
 type CapacitorGlobal = {
@@ -193,17 +199,26 @@ export function notificationUrl(notification: NativeNotification): string | null
 /**
  * Attach a plugin listener and hand back a synchronous unsubscribe.
  *
- * addListener resolves asynchronously, so an effect that unmounts before it
- * settles must still be able to detach — hence the cancelled flag rather than
- * just holding the handle.
+ * `Promise.resolve` is load-bearing, not tidiness. The page bundles no
+ * @capacitor/* package, so what it talks to is the bridge INJECTED into the
+ * WebView, whose addListener returns a bare `{ remove }` handle — not the
+ * Promise the npm @capacitor/core returns and not what this plugin's own types
+ * declare. Calling .then() on it threw inside the effect, which React reports
+ * as a render error: the whole portal went to the error boundary. Wrapping
+ * normalises both shapes, and both carry `remove`.
+ *
+ * The attach is treated as async either way, so an effect that unmounts before
+ * it settles can still detach — hence the cancelled flag.
  */
-function listen(attach: (push: PushNotificationsPlugin) => Promise<ListenerHandle>): () => void {
+function listen(
+  attach: (push: PushNotificationsPlugin) => Promise<ListenerHandle> | ListenerHandle,
+): () => void {
   const push = capacitor()?.Plugins?.PushNotifications;
   if (!push) return () => {};
 
   let handle: ListenerHandle | null = null;
   let cancelled = false;
-  void attach(push).then((h) => {
+  void Promise.resolve(attach(push)).then((h) => {
     if (cancelled) void h.remove();
     else handle = h;
   });
