@@ -346,72 +346,57 @@ export async function ensureWeeklyReport(input: {
 
   const seeded =
     (await seedNewReport(supabase, reportId, input, store?.name ?? "")) +
-    (await seedStandingLabour(supabase, reportId, input));
+    (await ensureStandingLabour(supabase, reportId));
 
   revalidateWeeklyReport();
   return { ok: true, report_id: reportId, seeded };
 }
 
+/** Folds "India Out source " and "india out source" to the same person. */
+function labourNameKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z]/g, "");
+}
+
 /**
- * Open a week's Labour sheet with its STANDING lines — Apoorva, India Out
- * Source — figures and all, copied from the newest earlier week that has any,
- * else the built-in pair. Only into a sheet with no labour lines at all, so a
- * standing line removed from this week stays removed.
+ * Put the STANDING lines — Apoorva, India Out Source — on a week's Labour
+ * sheet at their fixed figures, wherever one is missing. Always the built-in
+ * values, never last week's: the workbook carries both unchanged every week.
+ * Matched on the name, so a line typed by hand before this existed is not
+ * doubled.
  */
-async function seedStandingLabour(
+async function ensureStandingLabour(
   supabase: SupabaseClient,
   reportId: string,
-  input: { store_id: string; week_start: string },
 ): Promise<number> {
-  const { count } = await supabase
+  const { data: existing, error } = await supabase
     .from("weekly_report_labour_lines")
-    .select("id", { count: "exact", head: true })
+    .select("person_name")
     .eq("report_id", reportId);
-  if ((count ?? 0) > 0) return 0;
-
-  const { data: candidates } = await supabase
-    .from("weekly_reports")
-    .select("id, week_start")
-    .eq("store_id", input.store_id)
-    .lt("week_start", input.week_start)
-    .order("week_start", { ascending: false })
-    .limit(12);
-  const { data: rows, error } = candidates?.length
-    ? await supabase
-        .from("weekly_report_labour_lines")
-        .select(LABOUR_COLUMNS)
-        .in("report_id", candidates.map((c) => c.id))
-        .eq("standing", true)
-        .order("sort_order")
-    : { data: [], error: null };
   if (error) throw new Error(error.message);
+  const present = new Set((existing ?? []).map((r) => labourNameKey(r.person_name as string)));
 
-  const byReport = new Map<string, WeeklyReportLabourLine[]>();
-  for (const line of (rows ?? []) as WeeklyReportLabourLine[]) {
-    byReport.set(line.report_id, [...(byReport.get(line.report_id) ?? []), line]);
-  }
-  const previous = (candidates ?? []).map((c) => byReport.get(c.id as string)).find(Boolean);
-
-  const payload = (previous ?? STANDING_LABOUR_DEFAULTS).map((l, index) => {
+  const payload = STANDING_LABOUR_DEFAULTS.flatMap((l, index) => {
+    if (present.has(labourNameKey(l.person_name))) return [];
     const niHours = num(l.ni_hours);
     const cashHours = num(l.cash_hours);
-    return {
-      report_id: reportId,
-      person_name: l.person_name,
-      source: "adhoc",
-      standing: true,
-      hours: round2(niHours + cashHours),
-      ni_hours: niHours,
-      ni_rate: num(l.ni_rate),
-      cash_hours: cashHours,
-      cash_rate: num(l.cash_rate),
-      ni_total_override:
-        "ni_total_override" in l && l.ni_total_override != null ? num(l.ni_total_override) : null,
-      cash_total_override: l.cash_total_override == null ? null : num(l.cash_total_override),
-      deliveries: 0,
-      delivery_pay: 0,
-      sort_order: STANDING_SORT_BASE + index,
-    };
+    return [
+      {
+        report_id: reportId,
+        person_name: l.person_name,
+        source: "adhoc",
+        standing: true,
+        hours: round2(niHours + cashHours),
+        ni_hours: niHours,
+        ni_rate: num(l.ni_rate),
+        cash_hours: cashHours,
+        cash_rate: num(l.cash_rate),
+        ni_total_override: null,
+        cash_total_override: l.cash_total_override == null ? null : num(l.cash_total_override),
+        deliveries: 0,
+        delivery_pay: 0,
+        sort_order: STANDING_SORT_BASE + index,
+      },
+    ];
   });
   if (payload.length === 0) return 0;
   const { error: insErr } = await supabase.from("weekly_report_labour_lines").insert(payload);
@@ -1257,6 +1242,10 @@ export async function prefillLabour(input: {
     const { error } = await supabase.from("weekly_report_labour_lines").insert(payload);
     if (error) throw new Error(error.message);
   }
+
+  // A week opened before the standing lines existed gets them on its next
+  // prefill, so no open week is left without Apoorva or India Out Source.
+  await ensureStandingLabour(supabase, input.report_id);
 
   // Hand-entered lines stay below the prefilled ones, in their own order, as
   // they sit at the foot of the workbook's sheet.

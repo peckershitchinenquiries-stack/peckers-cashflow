@@ -334,9 +334,9 @@ export function LabourGrid({
               A manager is costed at their weekly contract (45 h × their NI rate, set on Managers) at
               their home store; their drops follow where they covered. A line bought as a job rather
               than by the hour — outsourced cover, say — takes its total typed straight into NI Total
-              or Cash Total; leave those blank and they stay hours × rate. Mark a hand-entered line
-              &ldquo;Every week&rdquo; and each new week opens with it, figures included. The last
-              column is the cash the person takes: Cash Total + Delivery Pay.
+              or Cash Total; leave those blank and they stay hours × rate. Apoorva and India Out
+              Source are filled in every week at their standing figures. The last column is the cash
+              the person takes: Cash Total + Delivery Pay.
             </p>
           </div>
           {!readOnly && (
@@ -421,32 +421,12 @@ export function LabourGrid({
                   <tr key={d.key} className="border-b border-border">
                     <td className="px-3 py-1.5">
                       {d.source === "adhoc" ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            className={cellText}
-                            value={d.person_name}
-                            disabled={readOnly}
-                            onChange={(e) => update(d.key, { person_name: e.target.value })}
-                          />
-                          <button
-                            type="button"
-                            disabled={readOnly}
-                            aria-pressed={d.standing}
-                            onClick={() => update(d.key, { standing: !d.standing })}
-                            title={
-                              d.standing
-                                ? "Every new week opens with this line and its figures. Click to make it this week only."
-                                : "This week only. Click to carry this line into every new week."
-                            }
-                            className={`shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] transition disabled:opacity-60 ${
-                              d.standing
-                                ? "border-gold bg-gold/10 text-gold"
-                                : "border-border text-text-muted hover:text-text-primary"
-                            }`}
-                          >
-                            {d.standing ? "Every week" : "This week"}
-                          </button>
-                        </div>
+                        <input
+                          className={cellText}
+                          value={d.person_name}
+                          disabled={readOnly}
+                          onChange={(e) => update(d.key, { person_name: e.target.value })}
+                        />
                       ) : (
                         <div className="text-text-primary">
                           {d.person_name}
