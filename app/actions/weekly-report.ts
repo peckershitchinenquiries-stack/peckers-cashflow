@@ -28,6 +28,7 @@ import {
   isReportTab,
   labourTotal,
   latestReportWeekStart,
+  MANAGER_CONTRACT_HOURS,
   num,
   reportDefaults,
   rollUpInputs,
@@ -36,6 +37,8 @@ import {
   sectionTotals,
   REPORT_SECTIONS,
   SECTION_DEFS,
+  STANDING_LABOUR_DEFAULTS,
+  supplierKey,
   type ReportSection,
   type ReportTab,
   type WeeklyReportNotes,
@@ -53,12 +56,15 @@ import { loadChannelHistory } from "@/lib/weekly-report-channels";
 // other action in this 1400-line module.
 import type { Employee } from "@/lib/types";
 
+// Hand-entered lines sort after everyone prefill writes, as on the workbook.
+const STANDING_SORT_BASE = 1000;
+
 type SessionUser = NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
 
 const LINE_COLUMNS =
   "id, report_id, section, label, sort_order, entry_date, qty, unit_rate, amount, vat_amount, fixed_amount, note";
 const LABOUR_COLUMNS =
-  "id, report_id, person_name, source, employee_id, cover_driver_id, manager_id, hours, ni_hours, ni_rate, cash_hours, cash_rate, ni_total_override, cash_total_override, deliveries, delivery_pay, sort_order";
+  "id, report_id, person_name, source, employee_id, cover_driver_id, manager_id, hours, ni_hours, ni_rate, cash_hours, cash_rate, ni_total_override, cash_total_override, deliveries, delivery_pay, standing, sort_order";
 
 async function requireStaff(): Promise<SessionUser> {
   const user = await getSessionUser();
@@ -338,10 +344,79 @@ export async function ensureWeeklyReport(input: {
     reportId = data.id as string;
   }
 
-  const seeded = await seedNewReport(supabase, reportId, input, store?.name ?? "");
+  const seeded =
+    (await seedNewReport(supabase, reportId, input, store?.name ?? "")) +
+    (await seedStandingLabour(supabase, reportId, input));
 
   revalidateWeeklyReport();
   return { ok: true, report_id: reportId, seeded };
+}
+
+/**
+ * Open a week's Labour sheet with its STANDING lines — Apoorva, India Out
+ * Source — figures and all, copied from the newest earlier week that has any,
+ * else the built-in pair. Only into a sheet with no labour lines at all, so a
+ * standing line removed from this week stays removed.
+ */
+async function seedStandingLabour(
+  supabase: SupabaseClient,
+  reportId: string,
+  input: { store_id: string; week_start: string },
+): Promise<number> {
+  const { count } = await supabase
+    .from("weekly_report_labour_lines")
+    .select("id", { count: "exact", head: true })
+    .eq("report_id", reportId);
+  if ((count ?? 0) > 0) return 0;
+
+  const { data: candidates } = await supabase
+    .from("weekly_reports")
+    .select("id, week_start")
+    .eq("store_id", input.store_id)
+    .lt("week_start", input.week_start)
+    .order("week_start", { ascending: false })
+    .limit(12);
+  const { data: rows, error } = candidates?.length
+    ? await supabase
+        .from("weekly_report_labour_lines")
+        .select(LABOUR_COLUMNS)
+        .in("report_id", candidates.map((c) => c.id))
+        .eq("standing", true)
+        .order("sort_order")
+    : { data: [], error: null };
+  if (error) throw new Error(error.message);
+
+  const byReport = new Map<string, WeeklyReportLabourLine[]>();
+  for (const line of (rows ?? []) as WeeklyReportLabourLine[]) {
+    byReport.set(line.report_id, [...(byReport.get(line.report_id) ?? []), line]);
+  }
+  const previous = (candidates ?? []).map((c) => byReport.get(c.id as string)).find(Boolean);
+
+  const payload = (previous ?? STANDING_LABOUR_DEFAULTS).map((l, index) => {
+    const niHours = num(l.ni_hours);
+    const cashHours = num(l.cash_hours);
+    return {
+      report_id: reportId,
+      person_name: l.person_name,
+      source: "adhoc",
+      standing: true,
+      hours: round2(niHours + cashHours),
+      ni_hours: niHours,
+      ni_rate: num(l.ni_rate),
+      cash_hours: cashHours,
+      cash_rate: num(l.cash_rate),
+      ni_total_override:
+        "ni_total_override" in l && l.ni_total_override != null ? num(l.ni_total_override) : null,
+      cash_total_override: l.cash_total_override == null ? null : num(l.cash_total_override),
+      deliveries: 0,
+      delivery_pay: 0,
+      sort_order: STANDING_SORT_BASE + index,
+    };
+  });
+  if (payload.length === 0) return 0;
+  const { error: insErr } = await supabase.from("weekly_report_labour_lines").insert(payload);
+  if (insErr) throw new Error(insErr.message);
+  return payload.length;
 }
 
 /** The newest earlier week of this store that holds carryable lines, if any. */
@@ -367,9 +442,9 @@ async function previousStructure(
     .in("report_id", candidates.map((c) => c.id));
   const byReport = new Map<string, WeeklyReportLine[]>();
   for (const line of (rows ?? []) as WeeklyReportLine[]) {
-    // Expenses are dated one-offs, not a structure — deliberately not carried,
-    // so a week holding nothing else does not count as a structure to copy.
-    if (line.section === "expense") continue;
+    // Expenses are dated one-offs, not a structure — only the STANDING ones
+    // carry, so a week's one-off receipts never reappear in the next.
+    if (line.section === "expense" && fixedAmount(line) == null) continue;
     const list = byReport.get(line.report_id) ?? [];
     list.push(line);
     byReport.set(line.report_id, list);
@@ -401,28 +476,46 @@ async function seedNewReport(
   // feature — the week opens with its fixed costs already entered, and the
   // manager only types what differs. Everything else still starts blank,
   // exactly as duplicating the spreadsheet does.
-  const payload = previous
-    ? previous.lines.map((l) => {
-        const fixed = fixedAmount(l);
-        return {
-          report_id: reportId,
-          section: l.section,
-          label: l.label,
-          sort_order: l.sort_order,
-          unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
-          fixed_amount: fixed,
-          amount: fixed,
-        };
-      })
-    : defaultSeedRows(storeName).map((r) => ({
-        report_id: reportId,
-        section: r.section,
-        label: r.label,
-        sort_order: r.sort_order,
-        unit_rate: SECTION_DEFS[r.section].defaultUnitRate ?? null,
-        fixed_amount: r.fixed_amount,
-        amount: r.fixed_amount,
-      }));
+  const seedRows = defaultSeedRows(storeName);
+  // A line carried from a week typed before its default gained a standing
+  // figure (Walkern and Watton's £350) takes the default's. Never on Cost of
+  // Goods, the one sheet where a manager sets standing figures themselves — a
+  // supplier they cleared must stay cleared.
+  const defaultFixed = new Map(
+    seedRows
+      .filter((r) => r.section !== "cogs_supplier" && r.fixed_amount != null)
+      .map((r) => [`${r.section}:${supplierKey(r.label)}`, r.fixed_amount]),
+  );
+  const carried = (previous?.lines ?? []).map((l) => {
+    const fixed =
+      fixedAmount(l) ?? defaultFixed.get(`${l.section}:${supplierKey(l.label)}`) ?? null;
+    return {
+      report_id: reportId,
+      section: l.section,
+      label: l.label,
+      sort_order: l.sort_order,
+      unit_rate: l.unit_rate == null ? null : num(l.unit_rate),
+      fixed_amount: fixed,
+      amount: fixed,
+    };
+  });
+  // Per SECTION, a section the previous week holds nothing in opens with the
+  // store's defaults. That is how a default added after a store's first week —
+  // Stevenage's standing expenses, Hitchin's samosas — reaches a store that
+  // already has history, instead of only ever reaching a brand-new one.
+  const carriedSections = new Set(carried.map((r) => r.section));
+  const sectionDefaults = seedRows
+    .filter((r) => !carriedSections.has(r.section))
+    .map((r) => ({
+      report_id: reportId,
+      section: r.section,
+      label: r.label,
+      sort_order: r.sort_order,
+      unit_rate: SECTION_DEFS[r.section].defaultUnitRate ?? null,
+      fixed_amount: r.fixed_amount,
+      amount: r.fixed_amount,
+    }));
+  const payload = [...carried, ...sectionDefaults];
 
   // The budget percentages are a standing target, not a weekly figure, so they
   // carry across even though every amount is blanked. So is Meppershall, which
@@ -709,6 +802,8 @@ export type LabourLineInput = {
   cash_total_override?: number | null;
   deliveries?: number | null;
   delivery_pay?: number | null;
+  /** Carry this hand-entered line, figures and all, into every new week. */
+  standing?: boolean;
   sort_order?: number | null;
 };
 
@@ -737,10 +832,13 @@ function labourRowPayload(reportId: string, input: LabourLineInput) {
     return Number.isFinite(n) ? round4(Math.max(0, n)) : null;
   };
 
+  const source = input.source ?? "adhoc";
   return {
     report_id: reportId,
     person_name: name,
-    source: input.source ?? "adhoc",
+    source,
+    // Only a hand-entered line can stand: prefill replaces every other row.
+    standing: source === "adhoc" && input.standing === true,
     hours: hrs(input.hours),
     ni_hours: hrs(input.ni_hours),
     ni_rate: rate(input.ni_rate),
@@ -935,7 +1033,7 @@ export async function prefillLabour(input: {
       supabase
         .from("allowed_users")
         .select(
-          "id, name, fixed_daily_wage, short_delivery_rate, long_delivery_rate, extra_short_delivery_rate, extra_long_delivery_rate",
+          "id, name, store_id, fixed_daily_wage, weekly_contract_hours, weekly_ni_rate, short_delivery_rate, long_delivery_rate, extra_short_delivery_rate, extra_long_delivery_rate",
         )
         .eq("role", "manager"),
       supabase
@@ -968,6 +1066,7 @@ export async function prefillLabour(input: {
     clocksRes.error?.message ??
     sessionsRes.error?.message ??
     coverRes.error?.message ??
+    managersRes.error?.message ??
     managerClocksRes.error?.message ??
     managerSessionsRes.error?.message ??
     null;
@@ -987,8 +1086,11 @@ export async function prefillLabour(input: {
   );
   const hoursByEmpStore = approvedHoursByEmployeeStore(clocks, sessions);
 
-  const payload: Array<Record<string, unknown>> = [];
-  let sort = 0;
+  // Grouped as the workbook lays the sheet out: managers, then employees,
+  // then cover drivers. sort_order is assigned once all three are built.
+  const managerRows: Array<Record<string, unknown>> = [];
+  const employeeRows: Array<Record<string, unknown>> = [];
+  const coverRows: Array<Record<string, unknown>> = [];
 
   for (const emp of employees) {
     // Per SHIFT, not per day — a day split across both stores owes each store
@@ -1004,7 +1106,7 @@ export async function prefillLabour(input: {
       : round2(cashHoursFromStoreTotal(hoursAtStore, storeId, emp));
     const niHours = round2(Math.max(0, hoursAtStore - cashHours));
 
-    payload.push({
+    employeeRows.push({
       report_id: input.report_id,
       person_name: emp.name,
       source: "employee",
@@ -1023,7 +1125,6 @@ export async function prefillLabour(input: {
           (wage.long_misc_count ?? 0)
         : 0,
       delivery_pay: wage ? Number(wage.delivery_wages) || 0 : 0,
-      sort_order: sort++,
     });
   }
 
@@ -1033,7 +1134,7 @@ export async function prefillLabour(input: {
     storeId,
     (coverRes.data ?? []) as CoverDriverPayRow[],
   )) {
-    payload.push({
+    coverRows.push({
       report_id: input.report_id,
       person_name: line.employee_name,
       source: "cover_driver",
@@ -1051,17 +1152,19 @@ export async function prefillLabour(input: {
         (line.short_misc_count ?? 0) +
         (line.long_misc_count ?? 0),
       delivery_pay: Number(line.delivery_wages) || 0,
-      sort_order: sort++,
     });
   }
 
-  // A manager's cost is their FIXED DAILY WAGE for the days they clocked, plus
-  // the per-drop allowance for rounds they covered. The sheet has no flat-amount
-  // column — the workbook's K20 is NI + cash + delivery — so the wage is carried
-  // as their EFFECTIVE hourly rate over the hours they actually worked: the
-  // money is identical, and the Hours worked column stays true.
-  // Deliveries-only rows (migration 037) carry a null clock_in_at and are
-  // correctly not a day worked.
+  // A manager is SALARIED BY THE WEEK, the way the workbook costs them: their
+  // contracted hours (45) x their weekly NI rate, at their HOME store only,
+  // however many days they clocked or where. Drops are separate and follow the
+  // shifts, so a manager who covered rounds at the other store appears there
+  // as a deliveries-only line.
+  //
+  // A manager with no weekly rate set falls back to the older rule — the fixed
+  // daily wage for the days clocked at this store, carried as an effective
+  // hourly rate over the hours worked. Deliveries-only rows (migration 037)
+  // carry a null clock_in_at and are correctly not a day worked.
   const managerDays = new Map<string, { days: number; hours: number }>();
   for (const d of managerClocksRes.data ?? []) {
     // The days now arrive for every store, so the fixed wage is filtered here.
@@ -1073,7 +1176,12 @@ export async function prefillLabour(input: {
     managerDays.set(d.manager_id, acc);
   }
   const managers = (managersRes.data ?? []) as Array<
-    ManagerPayee & { fixed_daily_wage: number | null }
+    ManagerPayee & {
+      store_id: string | null;
+      fixed_daily_wage: number | null;
+      weekly_contract_hours: number | null;
+      weekly_ni_rate: number | null;
+    }
   >;
   const managerDelivery = new Map(
     buildManagerWageLines(
@@ -1085,22 +1193,37 @@ export async function prefillLabour(input: {
   );
 
   for (const mgr of managers) {
-    const worked = managerDays.get(mgr.id);
     const delivery = managerDelivery.get(mgr.id);
-    if (!worked && !delivery) continue;
-    const hours = worked ? round2(worked.hours) : 0;
-    const wage = worked ? round2(worked.days * (Number(mgr.fixed_daily_wage) || 0)) : 0;
-    // A day still open has no hours yet, so there is no rate to divide into.
-    // The row lands at zero rather than inventing one, and the manager corrects
-    // it — the same reason nothing here reads the rota.
-    payload.push({
+    const weeklyRate = Number(mgr.weekly_ni_rate) || 0;
+
+    let hours: number;
+    let niRate: number;
+    if (weeklyRate > 0) {
+      const salariedHere = mgr.store_id === storeId;
+      if (!salariedHere && !delivery) continue;
+      hours = salariedHere
+        ? round2(Number(mgr.weekly_contract_hours) || MANAGER_CONTRACT_HOURS)
+        : 0;
+      niRate = salariedHere ? round4(weeklyRate) : 0;
+    } else {
+      const worked = managerDays.get(mgr.id);
+      if (!worked && !delivery) continue;
+      hours = worked ? round2(worked.hours) : 0;
+      const wage = worked ? round2(worked.days * (Number(mgr.fixed_daily_wage) || 0)) : 0;
+      // A day still open has no hours yet, so there is no rate to divide into.
+      // The row lands at zero rather than inventing one, and the manager
+      // corrects it — the same reason nothing here reads the rota.
+      niRate = hours > 0 ? round4(wage / hours) : 0;
+    }
+
+    managerRows.push({
       report_id: input.report_id,
       person_name: mgr.name ?? "Manager",
       source: "manager",
       manager_id: mgr.id,
       hours,
       ni_hours: hours,
-      ni_rate: hours > 0 ? round4(wage / hours) : 0,
+      ni_rate: niRate,
       cash_hours: 0,
       cash_rate: 0,
       ni_total_override: null,
@@ -1112,9 +1235,13 @@ export async function prefillLabour(input: {
           (delivery.long_misc_count ?? 0)
         : 0,
       delivery_pay: delivery ? Number(delivery.delivery_wages) || 0 : 0,
-      sort_order: sort++,
     });
   }
+
+  const payload = [...managerRows, ...employeeRows, ...coverRows].map((row, index) => ({
+    ...row,
+    sort_order: index,
+  }));
 
   // Replace the prefilled rows only. An ad-hoc worker typed in by hand has no
   // clock record to re-derive them from, so re-running the prefill must leave
@@ -1128,6 +1255,28 @@ export async function prefillLabour(input: {
 
   if (payload.length > 0) {
     const { error } = await supabase.from("weekly_report_labour_lines").insert(payload);
+    if (error) throw new Error(error.message);
+  }
+
+  // Hand-entered lines stay below the prefilled ones, in their own order, as
+  // they sit at the foot of the workbook's sheet.
+  const { data: adhocRows, error: adhocErr } = await supabase
+    .from("weekly_report_labour_lines")
+    .select("id, sort_order")
+    .eq("report_id", input.report_id)
+    .eq("source", "adhoc")
+    .order("sort_order")
+    .order("created_at");
+  if (adhocErr) throw new Error(adhocErr.message);
+  const reorder = (adhocRows ?? [])
+    .map((r, index) => ({ id: r.id as string, from: r.sort_order, to: payload.length + index }))
+    .filter((r) => r.from !== r.to);
+  for (const r of reorder) {
+    const { error } = await supabase
+      .from("weekly_report_labour_lines")
+      .update({ sort_order: r.to })
+      .eq("id", r.id)
+      .eq("report_id", input.report_id);
     if (error) throw new Error(error.message);
   }
 

@@ -49,6 +49,7 @@ type Draft = {
   cash_total_override: string;
   deliveries: string;
   delivery_pay: string;
+  standing: boolean;
 };
 
 const NUMERIC_FIELDS = [
@@ -82,6 +83,7 @@ function toDraft(l: WeeklyReportLabourLine): Draft {
     cash_total_override: str(l.cash_total_override),
     deliveries: l.deliveries == null ? "" : String(l.deliveries),
     delivery_pay: str(l.delivery_pay),
+    standing: l.standing === true,
   };
 }
 
@@ -104,12 +106,15 @@ function asLine(d: Draft): WeeklyReportLabourLine {
     cash_total_override: d.cash_total_override === "" ? null : num(d.cash_total_override),
     deliveries: d.deliveries === "" ? null : Math.round(num(d.deliveries)),
     delivery_pay: num(d.delivery_pay),
+    standing: d.standing,
     sort_order: 0,
   };
 }
 
 function rowPrint(d: Draft): string {
-  return [d.person_name.trim(), ...NUMERIC_FIELDS.map((f) => d[f])].join("\u0001");
+  return [d.person_name.trim(), d.standing ? "1" : "0", ...NUMERIC_FIELDS.map((f) => d[f])].join(
+    "\u0001",
+  );
 }
 
 /**
@@ -147,7 +152,7 @@ export function LabourGrid({
   const signature = lines
     .map(
       (l) =>
-        `${l.id}:${l.ni_hours}:${l.ni_rate}:${l.cash_hours}:${l.cash_rate}:${l.ni_total_override}:${l.cash_total_override}:${l.deliveries}:${l.delivery_pay}`,
+        `${l.id}:${l.ni_hours}:${l.ni_rate}:${l.cash_hours}:${l.cash_rate}:${l.ni_total_override}:${l.cash_total_override}:${l.deliveries}:${l.delivery_pay}:${l.standing}`,
     )
     .join("|");
   const sheet = useSheetDrafts<Draft[]>(
@@ -190,6 +195,7 @@ export function LabourGrid({
         cash_total_override: "",
         deliveries: "",
         delivery_pay: "",
+        standing: false,
       },
     ]);
     setNewName("");
@@ -219,6 +225,7 @@ export function LabourGrid({
         cash_total_override: line.cash_total_override as number | null,
         deliveries: line.deliveries,
         delivery_pay: num(d.delivery_pay),
+        standing: d.standing,
         sort_order: index,
       };
     });
@@ -245,6 +252,10 @@ export function LabourGrid({
     if (sheet.dirty && !window.confirm("Prefill replaces the rows below. Discard the unsaved changes?")) {
       return;
     }
+    await prefill();
+  }
+
+  async function prefill() {
     setBusy(true);
     try {
       const res = await prefillLabour({ report_id: reportId });
@@ -258,6 +269,25 @@ export function LabourGrid({
       setBusy(false);
     }
   }
+
+  // Approved hours are the starting point of every week, so a sheet nobody has
+  // prefilled yet does it on opening. Once per tab session: a week with no
+  // approved hours would otherwise prefill again on every visit.
+  const hasPrefilled = lines.some((l) => l.source !== "adhoc");
+  const autoTried = React.useRef(false);
+  React.useEffect(() => {
+    if (readOnly || hasPrefilled || sheet.dirty || autoTried.current) return;
+    autoTried.current = true;
+    const key = `weekly-report:${reportId}:labour-autoprefill`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+    } catch {
+      // Storage blocked: the ref still stops a repeat within this mount.
+    }
+    void prefill();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportId, readOnly, hasPrefilled]);
 
   const total = labourTotal(drafts.map(asLine));
   // Every column carries its own total, the way the workbook's Total row does —
@@ -300,11 +330,13 @@ export function LabourGrid({
             <h3 className="text-sm font-semibold text-text-primary">Labour Cost</h3>
             <p className="text-xs text-text-muted">
               → Weekly Summary, Labour. Full cost: NI + cash + deliveries — not the Tuesday payout
-              total, which pays cash only. A manager&apos;s fixed daily wage is prefilled as their
-              effective hourly rate over the hours they clocked. A line bought as a job rather than
-              by the hour — outsourced cover, say — takes its total typed straight into NI Total or
-              Cash Total; leave those blank and they stay hours × rate. The last column is the cash
-              the person takes: Cash Total + Delivery Pay.
+              total, which pays cash only. Prefilled from approved hours when the sheet first opens.
+              A manager is costed at their weekly contract (45 h × their NI rate, set on Managers) at
+              their home store; their drops follow where they covered. A line bought as a job rather
+              than by the hour — outsourced cover, say — takes its total typed straight into NI Total
+              or Cash Total; leave those blank and they stay hours × rate. Mark a hand-entered line
+              &ldquo;Every week&rdquo; and each new week opens with it, figures included. The last
+              column is the cash the person takes: Cash Total + Delivery Pay.
             </p>
           </div>
           {!readOnly && (
@@ -389,12 +421,32 @@ export function LabourGrid({
                   <tr key={d.key} className="border-b border-border">
                     <td className="px-3 py-1.5">
                       {d.source === "adhoc" ? (
-                        <input
-                          className={cellText}
-                          value={d.person_name}
-                          disabled={readOnly}
-                          onChange={(e) => update(d.key, { person_name: e.target.value })}
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            className={cellText}
+                            value={d.person_name}
+                            disabled={readOnly}
+                            onChange={(e) => update(d.key, { person_name: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            disabled={readOnly}
+                            aria-pressed={d.standing}
+                            onClick={() => update(d.key, { standing: !d.standing })}
+                            title={
+                              d.standing
+                                ? "Every new week opens with this line and its figures. Click to make it this week only."
+                                : "This week only. Click to carry this line into every new week."
+                            }
+                            className={`shrink-0 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] transition disabled:opacity-60 ${
+                              d.standing
+                                ? "border-gold bg-gold/10 text-gold"
+                                : "border-border text-text-muted hover:text-text-primary"
+                            }`}
+                          >
+                            {d.standing ? "Every week" : "This week"}
+                          </button>
+                        </div>
                       ) : (
                         <div className="text-text-primary">
                           {d.person_name}

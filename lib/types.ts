@@ -79,6 +79,13 @@ export type AllowedUser = {
    */
   extra_short_delivery_rate: number | null;
   extra_long_delivery_rate: number | null;
+  /**
+   * A manager's weekly salary as the Weekly Report costs it (migration 068):
+   * contracted hours (null = 45) x this NI rate, at their HOME store. Feeds the
+   * report's labour cost only — never the Tuesday payout.
+   */
+  weekly_contract_hours: number | null;
+  weekly_ni_rate: number | null;
   created_at: string;
 };
 

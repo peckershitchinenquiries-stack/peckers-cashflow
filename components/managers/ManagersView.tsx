@@ -55,6 +55,9 @@ export function ManagersView({
   // means "same as the base rate", which is what every manager had before.
   const [extraShortRateValue, setExtraShortRateValue] = React.useState("");
   const [extraLongRateValue, setExtraLongRateValue] = React.useState("");
+  // The weekly contract the Weekly Report costs this manager at (migration 068).
+  const [contractHoursValue, setContractHoursValue] = React.useState("");
+  const [weeklyRateValue, setWeeklyRateValue] = React.useState("");
   const [wageSaving, setWageSaving] = React.useState(false);
   const [emailEditing, setEmailEditing] = React.useState<AllowedUser | null>(null);
   const [emailValue, setEmailValue] = React.useState("");
@@ -156,6 +159,8 @@ export function ManagersView({
     setExtraLongRateValue(
       m.extra_long_delivery_rate != null ? String(m.extra_long_delivery_rate) : "",
     );
+    setContractHoursValue(m.weekly_contract_hours != null ? String(m.weekly_contract_hours) : "");
+    setWeeklyRateValue(m.weekly_ni_rate != null ? String(m.weekly_ni_rate) : "");
   }
 
   async function saveWage() {
@@ -173,6 +178,8 @@ export function ManagersView({
         extra_long_delivery_rate: extraLongRateValue.trim()
           ? Number(extraLongRateValue)
           : null,
+        weekly_contract_hours: contractHoursValue.trim() ? Number(contractHoursValue) : null,
+        weekly_ni_rate: weeklyRateValue.trim() ? Number(weeklyRateValue) : null,
       });
       toast.success("Pay settings updated");
       setWageEditing(null);
@@ -261,6 +268,11 @@ export function ManagersView({
                   {(m.short_delivery_rate != null || m.long_delivery_rate != null) && (
                     <span className="block text-[11px] text-text-muted tabular-nums">
                       {formatGBP(m.short_delivery_rate ?? 0)} SD · {formatGBP(m.long_delivery_rate ?? 0)} LD
+                    </span>
+                  )}
+                  {m.weekly_ni_rate != null && (
+                    <span className="block text-[11px] text-text-muted tabular-nums">
+                      {m.weekly_contract_hours ?? 45} h × {formatGBP(m.weekly_ni_rate)} /wk
                     </span>
                   )}
                   {(m.extra_short_delivery_rate != null || m.extra_long_delivery_rate != null) && (
@@ -358,6 +370,11 @@ export function ManagersView({
                           <span className="block text-[11px] text-text-muted">
                             {formatGBP(m.short_delivery_rate ?? 0)} SD ·{" "}
                             {formatGBP(m.long_delivery_rate ?? 0)} LD
+                          </span>
+                        )}
+                        {m.weekly_ni_rate != null && (
+                          <span className="block text-[11px] text-text-muted">
+                            {m.weekly_contract_hours ?? 45} h × {formatGBP(m.weekly_ni_rate)} /wk
                           </span>
                         )}
                         {/* Only shown once an extra is priced differently —
@@ -496,6 +513,39 @@ export function ManagersView({
               placeholder="e.g. 2400"
               autoFocus
             />
+
+            <div>
+              <p className="text-xs uppercase tracking-wider text-text-muted mb-2">
+                Weekly Report salary
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  label="Contracted hours / week"
+                  value={contractHoursValue}
+                  onChange={(e) => setContractHoursValue(e.target.value)}
+                  placeholder="45"
+                />
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  label="NI rate (£ / hour)"
+                  prefix="£"
+                  value={weeklyRateValue}
+                  onChange={(e) => setWeeklyRateValue(e.target.value)}
+                  placeholder="e.g. 14.10"
+                />
+              </div>
+              <p className="text-xs text-text-muted mt-2">
+                The Weekly Report&apos;s Labour Cost prefills this manager at these hours × this
+                rate, at their home store, every week — however many days they clocked. Leave the
+                rate blank to cost them at the daily wage for the days clocked instead. Never
+                affects the Tuesday payout.
+              </p>
+            </div>
 
             <div>
               <p className="text-xs uppercase tracking-wider text-text-muted mb-2">

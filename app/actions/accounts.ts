@@ -177,6 +177,12 @@ export async function updateManagerWage(input: {
    */
   extra_short_delivery_rate?: number | null;
   extra_long_delivery_rate?: number | null;
+  /**
+   * The weekly contract the Weekly Report costs this manager at (migration
+   * 068). Undefined leaves both untouched; null clears them.
+   */
+  weekly_contract_hours?: number | null;
+  weekly_ni_rate?: number | null;
 }): Promise<{ ok: true }> {
   await requireAdmin();
   const supabase = createServerSupabase();
@@ -211,6 +217,22 @@ export async function updateManagerWage(input: {
   );
   const extraLongRate = rate(input.extra_long_delivery_rate, "Misc long delivery rate");
 
+  // Bounded like the hourly rates elsewhere: this multiplies by 45 every week.
+  const bounded = (v: number | null | undefined, label: string, max: number): number | null => {
+    if (v == null || v === ("" as unknown)) return null;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${label} can't be negative.`);
+    if (n > max) throw new Error(`${label} of ${n} looks wrong — check it.`);
+    return n > 0 ? n : null;
+  };
+  const contract =
+    input.weekly_contract_hours === undefined && input.weekly_ni_rate === undefined
+      ? {}
+      : {
+          weekly_contract_hours: bounded(input.weekly_contract_hours, "Weekly contract hours", 80),
+          weekly_ni_rate: bounded(input.weekly_ni_rate, "Weekly NI rate", 50),
+        };
+
   const { error } = await supabase
     .from("allowed_users")
     .update({
@@ -219,6 +241,7 @@ export async function updateManagerWage(input: {
       long_delivery_rate: longRate,
       extra_short_delivery_rate: extraShortRate,
       extra_long_delivery_rate: extraLongRate,
+      ...contract,
     })
     .eq("id", acct.id);
   if (error) throw new Error(error.message);
@@ -233,6 +256,7 @@ export async function updateManagerWage(input: {
       long_delivery_rate: longRate,
       extra_short_delivery_rate: extraShortRate,
       extra_long_delivery_rate: extraLongRate,
+      ...contract,
     },
   });
 

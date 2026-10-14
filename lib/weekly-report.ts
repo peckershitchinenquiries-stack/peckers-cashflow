@@ -69,6 +69,8 @@ export type WeeklyReportLabourLine = {
   cash_total_override: number | string | null;
   deliveries: number | null;
   delivery_pay: number | string | null;
+  /** A hand-entered line every new week opens with, figures and all — migration 068. */
+  standing: boolean;
   sort_order: number;
 };
 
@@ -299,6 +301,39 @@ export type ReportDefaults = {
   labour_budget_pct: number;
 };
 
+/** The figures a standing labour line opens a week with. */
+export type StandingLabourLine = Pick<
+  WeeklyReportLabourLine,
+  "person_name" | "ni_hours" | "ni_rate" | "cash_hours" | "cash_rate" | "cash_total_override"
+>;
+
+/**
+ * On BOTH stores' sheets every week, at the same figures. Apoorva is costed in
+ * full at each store — that is how the workbook carries her, not a double count
+ * to fix. India Out Source is a job bought for a flat £50, hence the typed total.
+ */
+export const STANDING_LABOUR_DEFAULTS: StandingLabourLine[] = [
+  {
+    person_name: "Apoorva",
+    ni_hours: 22.5,
+    ni_rate: 14.1,
+    cash_hours: 0,
+    cash_rate: 0,
+    cash_total_override: null,
+  },
+  {
+    person_name: "India Out Source",
+    ni_hours: 0,
+    ni_rate: 0,
+    cash_hours: 45,
+    cash_rate: 0,
+    cash_total_override: 50,
+  },
+];
+
+/** A salaried manager's week when no contract hours are set — the workbook's 45. */
+export const MANAGER_CONTRACT_HOURS = 45;
+
 export function defaultLabel(line: DefaultLine): string {
   return typeof line === "string" ? line : line[0];
 }
@@ -348,7 +383,14 @@ const STEVENAGE_DEFAULTS: ReportDefaults = {
       ["Telephone", 10],
     ],
     cogs_walkern: ["Bidfood"],
-    fillings: ["Walkern", "Watton At Stone"],
+    fillings: [
+      ["Walkern", 350],
+      ["Watton At Stone", 350],
+    ],
+    // The same fifteen unlabelled receipts every week, in the workbook's order.
+    expense: [15, 15, 15, 15, 15, 15, 15, 15, 10, 15, 11, 15, 15, 15, 15].map(
+      (amount) => ["", amount] as const,
+    ),
   },
   gross_margin_budget_pct: 0.7,
   labour_budget_pct: 0.26,
@@ -391,6 +433,9 @@ const HITCHIN_DEFAULTS: ReportDefaults = {
       ["Subscriptions", 75],
       ["Telephone", 10],
     ],
+    // The workbook keeps this on its own SAMOSAS tab and never adds it to the
+    // summary — a workbook error. Here it counts in Fillings and Samosas.
+    fillings: [["Samosas", 160]],
   },
   gross_margin_budget_pct: 0.7,
   labour_budget_pct: 0.25,
@@ -405,8 +450,8 @@ export function reportDefaults(storeName: string): ReportDefaults {
  * Aggregator lines are NOT seeded: `aggregatorRows` already renders all three
  * platforms whether a commission has been entered or not.
  *
- * Expenses are not seeded either — they are dated one-off receipts, not a
- * structure, which is also why the carry-forward skips them.
+ * Expenses are dated one-off receipts, so only those with a STANDING figure are
+ * seeded or carried — Stevenage's fifteen weekly ones. A one-off never is.
  */
 export function defaultSeedRows(
   storeName: string,
