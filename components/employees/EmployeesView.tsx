@@ -3,7 +3,8 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
-import { PlusIcon } from "@/components/ui/icons";
+import { ArchiveIcon, PlusIcon } from "@/components/ui/icons";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { EmployeeCard } from "./EmployeeCard";
 import { EmployeeDetailModal } from "./EmployeeDetailModal";
 import { AddEmployeeModal } from "./AddEmployeeModal";
@@ -592,7 +593,31 @@ export function EmployeesView({
       {/* ---------------- EMPLOYEES (cards) ---------------- */}
       {tab === "people" && (
         <div className="flex flex-col gap-6">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-wrap">
+          <div className="md:hidden flex items-center gap-2">
+            <p className="flex-1 text-sm text-text-muted">
+              {activeCount} active employee{activeCount === 1 ? "" : "s"}
+            </p>
+            <Button size="sm" onClick={() => setShowAdd(true)} iconLeft={<PlusIcon size={16} />}>
+              Add
+            </Button>
+            <ActionMenu
+              title="Employees"
+              actions={[
+                {
+                  label: showArchived ? "Hide archived / left" : "Show archived / left",
+                  icon: <ArchiveIcon size={18} />,
+                  onSelect: () => setShowArchived((v) => !v),
+                },
+                {
+                  label: "Jump to cover drivers",
+                  icon: <UsersIcon size={18} />,
+                  onSelect: () =>
+                    document.getElementById("cover-drivers")?.scrollIntoView({ behavior: "smooth" }),
+                },
+              ]}
+            />
+          </div>
+          <div className="max-md:hidden flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3 flex-wrap">
               <p className="text-sm text-text-muted">
                 {activeCount} active employee{activeCount === 1 ? "" : "s"}

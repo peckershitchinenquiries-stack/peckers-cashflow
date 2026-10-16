@@ -327,7 +327,7 @@ export function ClockReminderOptIn({
               {status === "on" && <Badge variant="success">On</Badge>}
               {status === "denied" && <Badge variant="danger">Blocked</Badge>}
             </div>
-            <p className="text-xs text-text-muted mt-0.5">
+            <p className={"text-xs text-text-muted mt-0.5" + (status === "on" ? " max-md:hidden" : "")}>
               {status === "on"
                 ? "We'll send this phone a reminder when your shift starts and ends — even if the app is closed."
                 : status === "needs-install"

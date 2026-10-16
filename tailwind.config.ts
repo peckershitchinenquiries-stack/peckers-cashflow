@@ -47,6 +47,7 @@ const config: Config = {
         "fade-in": "fadeIn 0.2s ease-out",
         "slide-in": "slideIn 0.25s ease-out",
         "slide-up": "slideUp 0.3s ease-out",
+        "sheet-up": "sheetUp 0.28s cubic-bezier(0.2, 0.8, 0.2, 1)",
       },
       keyframes: {
         fadeIn: {
@@ -56,6 +57,10 @@ const config: Config = {
         slideIn: {
           "0%": { transform: "translateX(20px)", opacity: "0" },
           "100%": { transform: "translateX(0)", opacity: "1" },
+        },
+        sheetUp: {
+          "0%": { transform: "translateY(100%)" },
+          "100%": { transform: "translateY(0)" },
         },
         slideUp: {
           "0%": { transform: "translateY(10px)", opacity: "0" },

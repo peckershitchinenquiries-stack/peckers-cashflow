@@ -36,12 +36,13 @@ export default async function ManagerLayout({
       />
       <div className="flex-1 min-w-0 flex flex-col">
         <MobileTopBar
+          portal="manager"
           userName={userName}
           stores={stores}
           activeStoreId={activeStoreId}
           homeStoreId={homeStoreId}
         />
-        <main className="flex-1 px-4 sm:px-6 md:px-8 py-6 md:py-8 pb-24 md:pb-10 max-w-[1400px] w-full mx-auto">
+        <main className="flex-1 px-4 sm:px-6 md:px-8 pt-4 sm:pt-6 md:pt-8 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-10 max-w-[1400px] w-full mx-auto app-screen">
           {children}
         </main>
         <BottomNav portal="manager" />

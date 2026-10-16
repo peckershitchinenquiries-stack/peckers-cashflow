@@ -5,7 +5,8 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { NavLink } from "./NavLink";
 import { BOTTOM_NAV_FOR_PORTAL, NAV_FOR_PORTAL } from "./nav-config";
-import { CloseIcon, MoreIcon } from "@/components/ui/icons";
+import { MoreIcon } from "@/components/ui/icons";
+import { BottomSheet } from "@/components/ui/BottomSheet";
 import type { Portal } from "@/lib/types";
 
 function isActive(pathname: string | null, href: string) {
@@ -17,7 +18,10 @@ export function BottomNav({ portal }: { portal: Portal }) {
   const fullNav = NAV_FOR_PORTAL[portal];
   const primary = BOTTOM_NAV_FOR_PORTAL[portal];
   // Only add a "More" tab when the full menu doesn't already fit in the bar.
-  const needsMore = fullNav.length > primary.length;
+  // Settings alone doesn't earn one: it is also in the top bar's account sheet.
+  const needsMore = fullNav.some(
+    (i) => !primary.includes(i) && !i.href.endsWith("/settings"),
+  );
 
   const [sheetOpen, setSheetOpen] = React.useState(false);
 
@@ -25,16 +29,6 @@ export function BottomNav({ portal }: { portal: Portal }) {
   React.useEffect(() => {
     setSheetOpen(false);
   }, [pathname]);
-
-  // Lock body scroll while the sheet is open.
-  React.useEffect(() => {
-    if (!sheetOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [sheetOpen]);
 
   const columns = primary.length + (needsMore ? 1 : 0);
   // A page is "in the More sheet" (not a primary tab) — used to light up the
@@ -47,39 +41,24 @@ export function BottomNav({ portal }: { portal: Portal }) {
   return (
     <>
       <nav
-        className="md:hidden print:hidden fixed bottom-0 inset-x-0 z-40 bg-bg/95 backdrop-blur border-t border-border"
+        className="md:hidden print:hidden fixed bottom-0 inset-x-0 z-40 bg-bg/90 backdrop-blur-xl border-t border-border/70"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <ul
           className="grid"
           style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
         >
-          {primary.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(pathname, item.href);
-            return (
-              <li key={item.href}>
-                <NavLink
-                  href={item.href}
-                  className={cn(
-                    "flex flex-col items-center justify-center gap-1 h-16 text-[11px] transition-colors",
-                    active ? "text-text-primary" : "text-text-muted",
-                  )}
-                >
-                  <Icon size={20} />
-                  <span className="max-w-full truncate px-0.5">
-                    {item.shortLabel ?? item.label}
-                  </span>
-                  <span
-                    className={cn(
-                      "h-1 w-1 rounded-full transition-colors",
-                      active ? "bg-gold" : "bg-transparent",
-                    )}
-                  />
-                </NavLink>
-              </li>
-            );
-          })}
+          {primary.map((item) => (
+            <li key={item.href}>
+              <NavLink href={item.href} className="block">
+                <TabFace
+                  icon={item.icon}
+                  label={item.shortLabel ?? item.label}
+                  active={!!isActive(pathname, item.href)}
+                />
+              </NavLink>
+            </li>
+          ))}
 
           {needsMore && (
             <li>
@@ -88,19 +67,9 @@ export function BottomNav({ portal }: { portal: Portal }) {
                 onClick={() => setSheetOpen(true)}
                 aria-label="More pages"
                 aria-expanded={sheetOpen}
-                className={cn(
-                  "w-full flex flex-col items-center justify-center gap-1 h-16 text-[11px] transition-colors",
-                  moreActive ? "text-text-primary" : "text-text-muted",
-                )}
+                className="w-full block"
               >
-                <MoreIcon size={20} />
-                <span>More</span>
-                <span
-                  className={cn(
-                    "h-1 w-1 rounded-full transition-colors",
-                    moreActive ? "bg-gold" : "bg-transparent",
-                  )}
-                />
+                <TabFace icon={MoreIcon} label="More" active={moreActive || sheetOpen} />
               </button>
             </li>
           )}
@@ -111,11 +80,40 @@ export function BottomNav({ portal }: { portal: Portal }) {
         <MoreSheet
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
-          items={fullNav}
+          items={fullNav.filter((i) => !primaryHrefs.has(i.href))}
           pathname={pathname}
         />
       )}
     </>
+  );
+}
+
+function TabFace({
+  icon: Icon,
+  label,
+  active,
+}: {
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex flex-col items-center justify-center gap-1 h-16 text-[11px] font-medium select-none transition-colors active:opacity-70",
+        active ? "text-text-primary" : "text-text-muted",
+      )}
+    >
+      <span
+        className={cn(
+          "h-8 w-14 rounded-full flex items-center justify-center transition-colors duration-200",
+          active ? "bg-gold/20 text-gold" : "bg-transparent",
+        )}
+      >
+        <Icon size={21} />
+      </span>
+      <span className="max-w-full truncate px-0.5 leading-none">{label}</span>
+    </span>
   );
 }
 
@@ -130,87 +128,55 @@ function MoreSheet({
   items: { href: string; label: string; icon: React.ComponentType<{ size?: number }>; group?: string }[];
   pathname: string | null;
 }) {
+  const groups: { name: string; items: typeof items }[] = [];
+  for (const item of items) {
+    const name = item.group ?? "General";
+    const g = groups.find((x) => x.name === name);
+    if (g) g.items.push(item);
+    else groups.push({ name, items: [item] });
+  }
   return (
-    <div
-      className={cn(
-        "md:hidden fixed inset-0 z-50 transition-[visibility] duration-200",
-        open ? "visible" : "invisible",
-      )}
-      aria-hidden={!open}
-    >
-      {/* Backdrop */}
-      <button
-        type="button"
-        aria-label="Close menu"
-        onClick={onClose}
-        className={cn(
-          "absolute inset-0 bg-black/50 transition-opacity duration-200",
-          open ? "opacity-100" : "opacity-0",
-        )}
-      />
-
-      {/* Sheet */}
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="All pages"
-        className={cn(
-          "absolute inset-x-0 bottom-0 bg-bg border-t border-border rounded-t-2xl shadow-2xl",
-          "max-h-[75vh] flex flex-col transition-transform duration-200 ease-out",
-          open ? "translate-y-0" : "translate-y-full",
-        )}
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        {/* Grab handle + header */}
-        <div className="pt-2">
-          <div className="mx-auto h-1 w-10 rounded-full bg-border" />
-        </div>
-        <div className="flex items-center justify-between px-4 h-12">
-          <span className="text-sm font-semibold">All pages</span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="h-8 w-8 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-surface"
-          >
-            <CloseIcon size={18} />
-          </button>
-        </div>
-
-        <nav className="overflow-y-auto px-2 pb-3">
-          {items.map((item, idx) => {
-            const Icon = item.icon;
-            const active = isActive(pathname, item.href);
-            const prev = items[idx - 1];
-            const showGroupLabel = item.group && prev?.group !== item.group;
-            return (
-              <React.Fragment key={item.href}>
-                {showGroupLabel && (
-                  <p className="px-3 mt-3 mb-1 text-[10px] uppercase tracking-[0.18em] text-text-muted">
-                    {item.group}
-                  </p>
-                )}
-                <NavLink
-                  href={item.href}
-                  onClick={onClose}
-                  className={cn(
-                    "relative flex items-center gap-3 h-12 px-3 rounded-xl text-sm transition-colors",
-                    active
-                      ? "bg-surface text-text-primary"
-                      : "text-text-muted hover:text-text-primary hover:bg-surface/60",
-                  )}
-                >
-                  {active && (
-                    <span className="absolute left-0 top-2 bottom-2 w-[3px] rounded-r bg-gold" />
-                  )}
-                  <Icon size={18} />
-                  <span className="font-medium">{item.label}</span>
-                </NavLink>
-              </React.Fragment>
-            );
-          })}
-        </nav>
-      </div>
-    </div>
+    <BottomSheet open={open} onClose={onClose} title="More">
+      <nav className="flex flex-col gap-4 px-1 pb-1">
+        {groups.map((g) => (
+          <section key={g.name}>
+            <p className="px-1 mb-2 text-[11px] font-medium uppercase tracking-[0.14em] text-text-muted">
+              {g.name}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {g.items.map((item) => {
+                const Icon = item.icon;
+                const active = isActive(pathname, item.href);
+                return (
+                  <NavLink
+                    key={item.href}
+                    href={item.href}
+                    onClick={onClose}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-2 rounded-2xl border px-1 py-3 min-h-[84px] text-center transition-colors active:scale-[.97]",
+                      active
+                        ? "border-gold/50 bg-gold/10 text-text-primary"
+                        : "border-border bg-bg/60 text-text-subtle",
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "h-9 w-9 rounded-xl flex items-center justify-center",
+                        active ? "bg-gold text-black" : "bg-surface-hover text-text-primary",
+                      )}
+                    >
+                      <Icon size={19} />
+                    </span>
+                    <span className="text-[12px] font-medium leading-tight line-clamp-2">
+                      {item.label}
+                    </span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </nav>
+    </BottomSheet>
   );
 }

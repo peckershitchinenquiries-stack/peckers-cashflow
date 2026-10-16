@@ -77,6 +77,7 @@ export function PayoutHistoryView({
   const [linesError, setLinesError] = React.useState<Record<string, string>>({});
 
   const [exporting, setExporting] = React.useState(false);
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [printRows, setPrintRows] = React.useState<PayoutHistoryExportRow[] | null>(null);
 
   const storeById = React.useMemo(
@@ -218,8 +219,34 @@ export function PayoutHistoryView({
 
   return (
     <div className="flex flex-col gap-4">
-      <Card className="print:hidden">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+      <Card className="print:hidden max-md:p-3">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((o) => !o)}
+          aria-expanded={filtersOpen}
+          className="md:hidden w-full flex items-center justify-between gap-3 min-h-10 text-left"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-text-primary">Filters</span>
+            <span className="block text-xs text-text-muted truncate">
+              {[from && to ? `${formatDDMMYYYY(from)} – ${formatDDMMYYYY(to)}` : from ? `From ${formatDDMMYYYY(from)}` : to ? `To ${formatDDMMYYYY(to)}` : "All dates",
+                isAdmin ? stores.find((x) => x.id === store)?.name ?? "All stores" : null,
+                name.trim() ? `“${name.trim()}”` : null]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          </span>
+          <ChevronDownIcon
+            size={18}
+            className={"shrink-0 text-text-muted transition-transform " + (filtersOpen ? "rotate-180" : "")}
+          />
+        </button>
+        <div
+          className={
+            "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3" +
+            (filtersOpen ? " max-md:mt-3" : " max-md:hidden")
+          }
+        >
           <DatePicker label="From" value={from} onChange={setFrom} />
           <DatePicker label="To" value={to} onChange={setTo} />
           {isAdmin && (
@@ -231,7 +258,7 @@ export function PayoutHistoryView({
             </Select>
           )}
           <Input label="Employee" placeholder="Name…" value={name} onChange={(e) => setName(e.target.value)} />
-          <div className="flex items-end gap-2">
+          <div className="flex items-end gap-2 app-hide">
             <Button
               variant="secondary"
               onClick={() => runExport("csv")}

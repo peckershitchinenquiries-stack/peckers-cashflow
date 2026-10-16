@@ -125,6 +125,7 @@ export default async function DashboardPage({
   return (
     <>
       <PageHeader
+        showTitleOnMobile
         title={`Hello, ${user.allowed?.name?.split(" ")[0] || "there"}`}
         description={`Today is ${formatDDMMYYYY(today)}. Live sales, last week's results and Tuesday payouts.`}
       />

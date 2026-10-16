@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { listAlerts, resolveAlert, scanForAlerts } from "@/app/actions/alerts";
@@ -15,6 +16,7 @@ import {
 import { formatDDMMYYYY, formatTimeOnly } from "@/lib/utils";
 import type { Employee, Store, SystemAlert } from "@/lib/types";
 import {
+  AlertIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -171,14 +173,14 @@ export function AlertsView({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-3 flex-wrap min-w-0">
+        <div className="flex items-center gap-3 flex-wrap min-w-0 max-md:flex-nowrap max-md:gap-2">
           <Badge variant={openCount > 0 ? "warning" : "success"}>
             {openCount}
             {openCapped ? "+" : ""} open
           </Badge>
           <button
             onClick={() => changeFilters(() => setShowResolved((v) => !v))}
-            className="text-xs text-gold hover:underline"
+            className="text-xs text-gold hover:underline max-md:hidden"
           >
             {showResolved ? "Hide resolved" : "Show resolved"}
           </button>
@@ -188,7 +190,7 @@ export function AlertsView({
               const next = e.target.value;
               changeFilters(() => setStoreFilter(next));
             }}
-            className="h-9 max-w-full px-3 rounded-lg bg-surface border border-border text-sm"
+            className="h-9 max-w-full px-3 rounded-lg bg-surface border border-border text-sm max-md:flex-1 max-md:h-10"
           >
             <option value="all">All stores</option>
             {stores.map((s) => (
@@ -197,8 +199,24 @@ export function AlertsView({
               </option>
             ))}
           </select>
+          <ActionMenu
+            title="Alerts"
+            actions={[
+              {
+                label: scanning ? "Scanning…" : "Scan for new alerts",
+                icon: <AlertIcon size={18} />,
+                disabled: scanning,
+                onSelect: () => void runScan(),
+              },
+              {
+                label: showResolved ? "Hide resolved" : "Show resolved",
+                icon: <CheckIcon size={18} />,
+                onSelect: () => changeFilters(() => setShowResolved((v) => !v)),
+              },
+            ]}
+          />
         </div>
-        <Button onClick={runScan} loading={scanning} className="w-full sm:w-auto sm:shrink-0">
+        <Button onClick={runScan} loading={scanning} className="w-full sm:w-auto sm:shrink-0 max-md:hidden">
           Scan now
         </Button>
       </div>
@@ -315,7 +333,10 @@ export function AlertsView({
             className="absolute inset-0 bg-black/60"
             onClick={() => setResolving(null)}
           />
-          <div className="relative w-full sm:max-w-md bg-surface border border-border rounded-t-2xl sm:rounded-2xl p-5">
+          <div
+            className="relative w-full sm:max-w-md bg-surface border border-border rounded-t-2xl sm:rounded-2xl p-5 max-sm:rounded-t-3xl max-sm:animate-sheet-up"
+            style={{ paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
+          >
             <h3 className="font-semibold mb-2">Resolve alert</h3>
             <p className="text-sm text-text-muted mb-3">{resolving.title}</p>
             <textarea

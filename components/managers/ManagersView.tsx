@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Input, Select } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
@@ -246,7 +247,27 @@ export function ManagersView({
                     {m.username || m.email}
                   </p>
                 </div>
-                <Badge variant="neutral" className="shrink-0">{storeName(m.store_id)}</Badge>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge variant="neutral">{storeName(m.store_id)}</Badge>
+                  <ActionMenu
+                    title={m.name || m.username || "Manager"}
+                    actions={[
+                      {
+                        label: actingId === m.id ? "Resetting password…" : "Reset password",
+                        description: "Generate a new password to share",
+                        icon: <KeyIcon size={18} />,
+                        disabled: actingId === m.id,
+                        onSelect: () => reset(m),
+                      },
+                      {
+                        label: "Delete manager",
+                        icon: <TrashIcon size={18} />,
+                        tone: "danger",
+                        onSelect: () => remove(m),
+                      },
+                    ]}
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-2 mt-3">
@@ -293,26 +314,6 @@ export function ManagersView({
                 </button>
               </div>
 
-              <div className="flex items-center gap-2 mt-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => reset(m)}
-                  loading={actingId === m.id}
-                  className="flex-1"
-                >
-                  Reset password
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => remove(m)}
-                  aria-label="Delete"
-                  className="text-text-muted hover:text-danger border border-border"
-                >
-                  <TrashIcon size={16} />
-                </Button>
-              </div>
             </li>
           ))}
         </ul>

@@ -451,6 +451,7 @@ export function StaffWeekSummary({
             <Button
               variant="secondary"
               iconLeft={<DownloadIcon size={16} />}
+              className="app-hide"
               onClick={exportExcel}
               disabled={!data || visible.length === 0}
             >

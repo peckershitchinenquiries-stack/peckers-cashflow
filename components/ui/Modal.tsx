@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { CloseIcon } from "./icons";
 
 type Props = {
   open: boolean;
@@ -46,11 +47,23 @@ export function Modal({ open, onClose, title, description, children, footer, siz
         className={cn(
           "relative w-full bg-surface border border-border rounded-t-2xl sm:rounded-2xl shadow-2xl",
           "animate-slide-up max-h-[92dvh] overflow-y-auto overscroll-contain",
+          "max-sm:rounded-t-3xl max-sm:border-x-0 max-sm:border-b-0 max-sm:animate-sheet-up",
           widths,
         )}
       >
+        <div className="sm:hidden sticky top-0 z-10 bg-surface pt-2.5 pb-1">
+          <div className="mx-auto h-1.5 w-10 rounded-full bg-border-strong" />
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute right-2 top-1.5 h-9 w-9 rounded-full flex items-center justify-center text-text-muted bg-surface-hover"
+          >
+            <CloseIcon size={16} />
+          </button>
+        </div>
         {(title || description) && (
-          <div className="px-4 sm:px-5 pt-5 pb-3 border-b border-border">
+          <div className="px-4 sm:px-5 pt-5 pb-3 border-b border-border max-sm:pt-1 max-sm:pr-12">
             {title && (
               <h2 className="text-base sm:text-lg font-semibold tracking-wide text-text-primary break-words">
                 {title}

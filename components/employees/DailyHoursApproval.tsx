@@ -6,12 +6,14 @@ import { Badge } from "@/components/ui/Badge";
 import { DatePicker } from "@/components/ui/DatePicker";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import {
   AlertIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ClockIcon,
+  PlusIcon,
 } from "@/components/ui/icons";
 import {
   addDays,
@@ -1763,7 +1765,55 @@ export function DailyHoursApproval({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 lg:pb-2">
+        <div className="md:hidden flex items-center gap-2">
+          <button
+            type="button"
+            aria-pressed={hideApproved}
+            onClick={() => setHideApproved(!hideApproved)}
+            className={
+              "h-9 px-3 rounded-full border text-sm font-medium inline-flex items-center gap-1.5 transition-colors " +
+              (hideApproved
+                ? "border-gold/50 bg-gold/15 text-gold"
+                : "border-border bg-surface text-text-subtle")
+            }
+          >
+            {hideApproved && <CheckIcon size={14} />}
+            Hide approved
+          </button>
+          <span className="flex-1" />
+          <ActionMenu
+            title={`Add an entry for ${longDate(selectedDate)}`}
+            label="Add entry"
+            actions={[
+              {
+                label: "Missed employee entry",
+                description: "A shift someone forgot to clock",
+                icon: <PlusIcon size={18} />,
+                hidden: manualCandidates.length === 0,
+                onSelect: () => setShowAddMissed("employee"),
+              },
+              {
+                label: "Cover driver entry",
+                description: "A day a cover driver forgot to clock",
+                icon: <PlusIcon size={18} />,
+                hidden: !(coverManualCandidates.length > 0 && onCoverApprove),
+                onSelect: () => setShowAddMissed("cover_driver"),
+              },
+              {
+                label: "Manager deliveries",
+                description: "Drops a manager covered, no clock times",
+                icon: <PlusIcon size={18} />,
+                hidden: !(managerManualCandidates.length > 0 && onManagerApprove),
+                onSelect: () => setShowAddMissed("manager"),
+              },
+            ]}
+          >
+            <PlusIcon size={16} />
+            Add entry
+          </ActionMenu>
+        </div>
+
+        <div className="max-md:hidden flex flex-wrap items-center gap-2 sm:gap-3 lg:pb-2">
           <label className="flex items-center gap-2 text-sm text-text-subtle cursor-pointer select-none w-full sm:w-auto">
             <input
               type="checkbox"

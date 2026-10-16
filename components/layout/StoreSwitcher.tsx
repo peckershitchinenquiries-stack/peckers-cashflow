@@ -6,6 +6,7 @@ import { switchStore } from "@/app/actions/store-switch";
 import { useToast } from "@/components/ui/Toast";
 import { cn } from "@/lib/utils";
 import { ChevronDownIcon, CheckIcon } from "@/components/ui/icons";
+import { BottomSheet, useIsPhone } from "@/components/ui/BottomSheet";
 
 export type StoreOption = { id: string; name: string };
 
@@ -35,9 +36,12 @@ export function StoreSwitcher({
   const [busy, setBusy] = React.useState(false);
   const [open, setOpen] = React.useState(false);
   const rootRef = React.useRef<HTMLDivElement>(null);
+  const isPhone = useIsPhone();
+  const asSheet = compact && isPhone;
+  const closeSheet = React.useCallback(() => setOpen(false), []);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (!open || asSheet) return;
     function onClick(e: MouseEvent) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -52,7 +56,7 @@ export function StoreSwitcher({
       document.removeEventListener("mousedown", onClick);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, asSheet]);
 
   // Nothing to switch between.
   if (stores.length < 2) return null;
@@ -110,7 +114,7 @@ export function StoreSwitcher({
         >
           <span className="truncate">
             {currentStore?.name ?? "Select store"}
-            {currentStore && homeStoreId === currentStore.id ? " (home)" : ""}
+            {currentStore && homeStoreId === currentStore.id && !compact ? " (home)" : ""}
           </span>
           <ChevronDownIcon
             size={compact ? 14 : 16}
@@ -118,7 +122,36 @@ export function StoreSwitcher({
           />
         </button>
 
-        {open && (
+        {asSheet && (
+          <BottomSheet open={open} onClose={closeSheet} title="Switch store">
+            <ul className="rounded-2xl bg-bg/60 border border-border divide-y divide-border overflow-hidden">
+              {stores.map((s) => {
+                const selected = s.id === current;
+                return (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => pick(s.id)}
+                      className={cn(
+                        "w-full flex items-center justify-between gap-3 px-4 min-h-[52px] text-left text-[15px] active:bg-surface-hover",
+                        selected ? "text-gold font-medium" : "text-text-primary",
+                      )}
+                    >
+                      <span className="truncate">
+                        {s.name}
+                        {homeStoreId === s.id && (
+                          <span className="ml-2 text-xs text-text-muted font-normal">home</span>
+                        )}
+                      </span>
+                      {selected && <CheckIcon size={18} className="shrink-0" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </BottomSheet>
+        )}
+        {open && !asSheet && (
           <ul
             role="listbox"
             className={cn(
