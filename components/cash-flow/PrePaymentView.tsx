@@ -594,7 +594,7 @@ export function PrePaymentView({
                 ? `${paidCount}/${payout.lines.length} marked paid`
                 : "live forecast — generate the sheet to mark payments"}
             </p>
-            <p className="text-xs text-text-subtle mt-1">
+            <p className="text-xs text-text-subtle mt-1 max-md:hidden">
               Misc = extra drops logged beyond the normal round (with a reason at
               clock-out). Paid at the same short/long rate.
             </p>

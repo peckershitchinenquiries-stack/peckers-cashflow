@@ -147,9 +147,18 @@ export function DateRangePicker({ start, end, onApply }: Props) {
       </button>
 
       {open && (
+        <button
+          type="button"
+          aria-label="Close"
+          tabIndex={-1}
+          onClick={() => setOpen(false)}
+          className="sm:hidden fixed inset-0 z-[59] bg-black/50 animate-fade-in"
+        />
+      )}
+      {open && (
         <div
           role="dialog"
-          className="absolute right-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3 max-sm:fixed max-sm:inset-x-3 max-sm:top-20 max-sm:z-50 max-sm:mt-0 max-sm:w-auto max-sm:max-w-none"
+          className="absolute right-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3 max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:z-[60] max-sm:mt-0 max-sm:w-auto max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-3xl max-sm:border-x-0 max-sm:border-b-0 max-sm:px-4 max-sm:pt-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:animate-sheet-up max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
         >
           {/* Presets */}
           <div className="flex flex-wrap gap-1.5 mb-3">

@@ -25,7 +25,8 @@ import {
   todayISO,
   weekdayIndex,
 } from "@/lib/utils";
-import { ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/icons";
+import { CalendarIcon, ChevronLeftIcon, ChevronRightIcon, InfoIcon } from "@/components/ui/icons";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { HoursMinsDisplay } from "@/components/ui/HoursMinsDisplay";
 import { applyScheduleToWeek } from "@/app/actions/schedule";
 import { worksForCash } from "@/lib/cash-flow";
@@ -1175,7 +1176,7 @@ export function RotaView({
                 onClick={() => setActiveStoreId(store.id)}
                 disabled={!isSuperAdmin && userStoreId !== null && userStoreId !== store.id}
                 className={
-                  "px-4 h-10 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed " +
+                  "px-4 h-10 rounded-xl border text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed max-md:flex-1 max-md:px-2 " +
                   (store.id === activeStoreId
                     ? "bg-gold text-black border-gold"
                     : "bg-surface text-text-primary border-border hover:bg-surface-hover")
@@ -1190,10 +1191,22 @@ export function RotaView({
               onClick={applyDefaults}
               loading={applying}
               title="Fill this week's empty days from each employee's recurring weekly schedule"
-              className="w-full sm:w-auto"
+              className="w-full sm:w-auto max-md:hidden"
             >
               Apply default schedules
             </Button>
+            <ActionMenu
+              title="Rota"
+              actions={[
+                {
+                  label: applying ? "Applying default schedules…" : "Apply default schedules",
+                  description: "Fill this week's empty days from each person's usual pattern",
+                  icon: <CalendarIcon size={18} />,
+                  disabled: applying,
+                  onSelect: applyDefaults,
+                },
+              ]}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-2 max-sm:grid max-sm:grid-cols-[auto_minmax(0,1fr)_auto]">
             <Button

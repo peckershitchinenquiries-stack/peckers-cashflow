@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { ChevronDownIcon } from "@/components/ui/icons";
+import { CheckIcon, ChevronDownIcon } from "@/components/ui/icons";
+import { BottomSheet, useIsPhone } from "./BottomSheet";
 
 type InputProps = React.InputHTMLAttributes<HTMLInputElement> & {
   label?: string;
@@ -49,7 +50,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(function Inp
           type={type}
           onWheel={handleWheel}
           className={cn(
-            "flex-1 min-w-0 bg-transparent outline-none text-text-primary placeholder:text-text-muted text-sm w-full",
+            "flex-1 min-w-0 bg-transparent outline-none text-text-primary placeholder:text-text-muted text-sm w-full max-sm:text-base",
             className,
           )}
           {...props}
@@ -84,7 +85,7 @@ export const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(fun
         id={textareaId}
         ref={ref}
         className={cn(
-          "w-full min-w-0 rounded-xl bg-surface border border-border px-3 py-3 text-sm outline-none placeholder:text-text-muted",
+          "w-full min-w-0 rounded-xl bg-surface border border-border px-3 py-3 text-sm outline-none placeholder:text-text-muted max-sm:text-base",
           "focus:border-gold/60 focus:ring-2 focus:ring-gold/30",
           error && "border-danger/60 focus:ring-danger/30",
           className,
@@ -134,6 +135,8 @@ export function Select({ label, error, disabled, className, children, id, value,
   const [flipUp, setFlipUp] = React.useState(false);
   const wrapRef = React.useRef<HTMLDivElement>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
+  const isPhone = useIsPhone();
+  const closeSheet = React.useCallback(() => setOpen(false), []);
 
   const options = parseOptions(children);
   const selected = options.find((o) => String(o.value) === String(value ?? ""));
@@ -146,7 +149,7 @@ export function Select({ label, error, disabled, className, children, id, value,
   }, [open, options.length]);
 
   React.useEffect(() => {
-    if (!open) return;
+    if (!open || isPhone) return;
     function onDown(e: MouseEvent) {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     }
@@ -159,7 +162,7 @@ export function Select({ label, error, disabled, className, children, id, value,
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, isPhone]);
 
   function pick(val: string) {
     onChange?.({ target: { value: val } });
@@ -199,7 +202,35 @@ export function Select({ label, error, disabled, className, children, id, value,
           />
         </button>
 
-        {open && (
+        {isPhone && (
+          <BottomSheet open={open} onClose={closeSheet} title={label}>
+            <ul
+              role="listbox"
+              className="rounded-2xl bg-bg/60 border border-border divide-y divide-border overflow-hidden"
+            >
+              {options.map((opt) => {
+                const isSelected = String(opt.value) === String(value ?? "");
+                return (
+                  <li key={opt.value} role="option" aria-selected={isSelected}>
+                    <button
+                      type="button"
+                      disabled={opt.disabled}
+                      onClick={() => pick(opt.value)}
+                      className={cn(
+                        "w-full flex items-center justify-between gap-3 px-4 min-h-[52px] py-2 text-left text-[15px] active:bg-surface-hover disabled:opacity-40",
+                        isSelected ? "text-gold font-medium" : "text-text-primary",
+                      )}
+                    >
+                      <span className="min-w-0 break-words">{opt.label}</span>
+                      {isSelected && <CheckIcon size={18} className="shrink-0" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </BottomSheet>
+        )}
+        {open && !isPhone && (
           <ul
             role="listbox"
             className={cn(

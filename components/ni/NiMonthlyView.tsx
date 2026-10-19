@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { Input, Select } from "@/components/ui/Input";
@@ -272,7 +273,7 @@ export function NiMonthlyView({
             onClick={exportCSV}
             iconLeft={<DownloadIcon size={16} />}
             disabled={months.length === 0}
-            className="flex-1 sm:flex-none"
+            className="flex-1 sm:flex-none max-md:hidden"
           >
             CSV
           </Button>
@@ -280,10 +281,28 @@ export function NiMonthlyView({
             variant="secondary"
             onClick={() => window.print()}
             disabled={months.length === 0}
-            className="flex-1 sm:flex-none"
+            className="flex-1 sm:flex-none max-md:hidden"
           >
             PDF
           </Button>
+          <ActionMenu
+            title="Export"
+            className="app-hide"
+            actions={[
+              {
+                label: "Download CSV",
+                icon: <DownloadIcon size={18} />,
+                disabled: months.length === 0,
+                onSelect: exportCSV,
+              },
+              {
+                label: "Print / save as PDF",
+                icon: <DownloadIcon size={18} />,
+                disabled: months.length === 0,
+                onSelect: () => window.print(),
+              },
+            ]}
+          />
         </div>
       </div>
 

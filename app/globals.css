@@ -474,3 +474,77 @@
     print-color-adjust: exact;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Native-app feel (phones only)
+
+   The Android/iOS app is this site in a WebView, so on a phone the page should
+   behave like an app screen rather than a web page: no grey tap flash, no
+   long-press link menu or text selection on controls, a press state on every
+   tappable thing, and a short fade when a screen opens. Desktop is untouched.
+--------------------------------------------------------------------------- */
+@media screen and (max-width: 767px) {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-x: none;
+  }
+  body {
+    overflow-x: hidden;
+  }
+  a,
+  button,
+  nav,
+  label,
+  [role="button"],
+  [role="tab"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  button:not(:disabled),
+  [role="button"],
+  a[href] {
+    touch-action: manipulation;
+  }
+  button:not(:disabled):active,
+  [role="button"]:active {
+    opacity: 0.72;
+    transition: opacity 0s;
+  }
+  .app-screen > * {
+    animation: app-screen-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  /* Headline numbers read better with fixed-width digits. */
+  .app-screen {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Thin scrollbars inside a phone screen look like a desktop page. */
+  .app-screen ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+@keyframes app-screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Inside the installed app (user agent carries "PeckersApp"): downloads and
+   window.print() do nothing in a WebView, so their buttons are hidden. */
+.in-app .app-hide {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-screen > * {
+    animation: none;
+  }
+}

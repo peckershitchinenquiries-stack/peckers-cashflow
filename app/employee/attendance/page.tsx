@@ -85,6 +85,7 @@ export default async function AttendancePage() {
   return (
     <>
       <PageHeader
+        showTitleOnMobile
         title={`Hi ${employee.name.split(" ")[0]}`}
         description="Clock in & out. Location is required — you must be at your store."
       />

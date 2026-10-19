@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DASHBOARDS } from "@/lib/vm-analytics/constants";
+import { BottomSheet, useIsPhone } from "@/components/ui/BottomSheet";
 
 // The "VM Analytics" module: a dropdown that lets you pick which dashboard to
 // view. Keeps the currently-selected week in the URL when switching dashboards.
@@ -12,18 +13,20 @@ export function DashboardSelector() {
   const search = useSearchParams();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const isPhone = useIsPhone();
 
   const week = search.get("week");
   const qs = week ? `?week=${week}` : "";
   const active = DASHBOARDS.find((d) => pathname.startsWith(d.href));
 
   useEffect(() => {
+    if (isPhone) return;
     function onClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
-  }, []);
+  }, [isPhone]);
 
   return (
     <div className="relative" ref={ref}>
@@ -60,7 +63,29 @@ export function DashboardSelector() {
         </svg>
       </button>
 
-      {open && (
+      {isPhone && (
+        <BottomSheet open={open} onClose={() => setOpen(false)} title="Dashboards">
+          <div className="flex flex-col gap-1.5">
+            {DASHBOARDS.map((d) => {
+              const isActive = active?.key === d.key;
+              return (
+                <Link
+                  key={d.key}
+                  href={`${d.href}${qs}`}
+                  onClick={() => setOpen(false)}
+                  className={`block rounded-2xl border px-4 py-3 active:bg-surface-hover ${
+                    isActive ? "border-gold/50 bg-gold/10" : "border-border bg-bg/60"
+                  }`}
+                >
+                  <span className="block text-[15px] font-medium text-primary">{d.title}</span>
+                  <span className="block text-xs text-secondary mt-0.5">{d.blurb}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </BottomSheet>
+      )}
+      {open && !isPhone && (
         <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-lg border border-line bg-surface shadow-lg">
           {DASHBOARDS.map((d) => {
             const isActive = active?.key === d.key;

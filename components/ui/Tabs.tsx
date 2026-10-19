@@ -32,6 +32,7 @@ export function Tabs({
       aria-label="Sections"
       className={cn(
         "inline-flex items-center gap-1 p-1 rounded-xl bg-surface border border-border max-w-full min-w-0 overflow-x-auto scrollbar-none",
+        "max-md:flex max-md:w-full",
         className,
       )}
     >
@@ -45,6 +46,7 @@ export function Tabs({
             onClick={() => onChange(t.id)}
             className={cn(
               "inline-flex shrink-0 items-center gap-2 px-3 sm:px-4 h-10 rounded-lg text-sm font-medium whitespace-nowrap transition-colors",
+              "max-md:flex-1 max-md:justify-center max-md:px-2.5",
               active
                 ? "bg-gold text-black shadow-sm"
                 : "text-text-subtle hover:text-text-primary hover:bg-surface-hover",

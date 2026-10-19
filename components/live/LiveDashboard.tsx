@@ -40,7 +40,7 @@ import {
   totalDeliveries,
 } from "@/lib/cover-driver-hours";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Input";
+import { ActionMenu } from "@/components/ui/ActionMenu";
 import { PlusIcon } from "@/components/ui/icons";
 import {
   ManualClockEntryModal,
@@ -566,16 +566,28 @@ export function LiveDashboard({
           ))}
         </div>
         {visibleStores.length > 1 && (
-          <Select
-            value={activeMobileStoreId}
-            onChange={(e) => setMobileStoreId(e.target.value)}
+          <div
+            role="tablist"
+            aria-label="Store"
+            className="grid gap-1 p-1 rounded-xl bg-surface border border-border"
+            style={{ gridTemplateColumns: `repeat(${visibleStores.length}, minmax(0, 1fr))` }}
           >
             {visibleStores.map((st) => (
-              <option key={st.id} value={st.id}>
+              <button
+                key={st.id}
+                type="button"
+                role="tab"
+                aria-selected={activeMobileStoreId === st.id}
+                onClick={() => setMobileStoreId(st.id)}
+                className={
+                  "h-8 rounded-lg text-sm font-medium truncate px-2 transition-colors " +
+                  (activeMobileStoreId === st.id ? "bg-gold text-black" : "text-text-subtle")
+                }
+              >
                 {st.name}
-              </option>
+              </button>
             ))}
-          </Select>
+          </div>
         )}
       </div>
 
@@ -846,8 +858,8 @@ export function LiveDashboard({
               }
             >
               <div className="px-3 md:px-5 pt-3 md:pt-5 pb-3 border-b border-border">
-                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                  <div className="min-w-0">
+                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 relative">
+                  <div className={"min-w-0" + (canAddClockIn && canAddManagerClockIn ? " max-md:pr-20" : "")}>
                     <h2 className="text-base sm:text-lg font-semibold tracking-wide break-words">
                       {store.name}
                     </h2>
@@ -855,8 +867,37 @@ export function LiveDashboard({
                       {sorted.length} scheduled · {onShiftCount} on shift now
                     </p>
                   </div>
+                  {canAddClockIn && canAddManagerClockIn && (
+                    <ActionMenu
+                      title={`Add a clock-in at ${store.name}`}
+                      label="Add clock-in"
+                      className="absolute right-0 top-0"
+                      actions={[
+                        {
+                          label: "Employee clock-in",
+                          description: "Someone who forgot to clock in",
+                          icon: <PlusIcon size={18} />,
+                          onSelect: () => setAdding({ mode: "employee", storeId: store.id }),
+                        },
+                        {
+                          label: "Manager clock-in",
+                          description: "A manager who worked and forgot",
+                          icon: <PlusIcon size={18} />,
+                          onSelect: () => setAdding({ mode: "manager", storeId: store.id }),
+                        },
+                      ]}
+                    >
+                      <PlusIcon size={16} />
+                      Add
+                    </ActionMenu>
+                  )}
                   {(canAddClockIn || canAddManagerClockIn) && (
-                    <div className="flex flex-row sm:flex-col items-stretch gap-2 sm:shrink-0">
+                    <div
+                      className={
+                        "flex flex-row sm:flex-col items-stretch gap-2 sm:shrink-0" +
+                        (canAddClockIn && canAddManagerClockIn ? " max-md:hidden" : "")
+                      }
+                    >
                       {canAddClockIn && (
                         <Button
                           size="sm"

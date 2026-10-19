@@ -38,6 +38,10 @@ export const viewport = {
   themeColor: "#0f0f0f",
 };
 
+// Marks the page as running inside the Android/iOS shell (its WebView appends
+// "PeckersApp" to the user agent), so CSS can hide what a WebView can't do.
+const inAppInitScript = `try{if(/PeckersApp/.test(navigator.userAgent))document.documentElement.classList.add('in-app')}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: {
@@ -47,6 +51,7 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable}`} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        <script dangerouslySetInnerHTML={{ __html: inAppInitScript }} />
       </head>
       <body className="font-sans bg-bg text-text-primary antialiased">
         <ThemeProvider>

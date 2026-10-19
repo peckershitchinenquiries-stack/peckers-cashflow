@@ -174,13 +174,22 @@ export function DatePicker({
         </button>
 
         {open && (
+          <button
+            type="button"
+            aria-label="Close calendar"
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="sm:hidden fixed inset-0 z-[59] bg-black/50 animate-fade-in"
+          />
+        )}
+        {open && (
           <div
             role="dialog"
             className={cn(
               "absolute left-0 z-40 w-[min(18rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-surface shadow-xl p-3 animate-fade-in",
-              // Phones: centred on screen, so a field near either edge can't push it off.
-              "max-sm:fixed max-sm:left-1/2 max-sm:top-1/2 max-sm:bottom-auto max-sm:-translate-x-1/2 max-sm:-translate-y-1/2 max-sm:m-0 max-sm:z-[60] max-sm:w-[min(20rem,calc(100vw-1.5rem))]",
               flipUp ? "bottom-full mb-2" : "top-full mt-2",
+              // Phones: a bottom sheet, so a field near either edge can't push it off.
+              "max-sm:fixed max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:m-0 max-sm:z-[60] max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-3xl max-sm:border-x-0 max-sm:border-b-0 max-sm:px-4 max-sm:pt-4 max-sm:pb-[max(1rem,env(safe-area-inset-bottom))] max-sm:animate-sheet-up",
             )}
           >
             {/* Header nav — adapts to the drill-down level (day / month / year) */}
@@ -254,7 +263,7 @@ export function DatePicker({
                         type="button"
                         disabled={off}
                         onClick={() => pick(d)}
-                        className="h-9 grid place-items-center"
+                        className="h-9 max-sm:h-11 grid place-items-center"
                       >
                         <span
                           className={cn(

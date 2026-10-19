@@ -49,6 +49,7 @@ export default async function CoverDriverAttendancePage() {
   return (
     <>
       <PageHeader
+        showTitleOnMobile
         title={`Hi ${driver.name.split(" ")[0]}`}
         description="Clock in & out. Location is required — you must be at the store."
       />

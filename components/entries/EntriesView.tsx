@@ -9,6 +9,7 @@ import { DatePicker } from "@/components/ui/DatePicker";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import {
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DownloadIcon,
@@ -61,6 +62,7 @@ export function EntriesView({
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
   const [manager, setManager] = React.useState("");
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [page, setPage] = React.useState(1);
   const [editing, setEditing] = React.useState<Entry | null>(null);
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
@@ -121,8 +123,27 @@ export function EntriesView({
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <Card className="max-md:p-3">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((o) => !o)}
+          aria-expanded={filtersOpen}
+          className="md:hidden w-full flex items-center justify-between gap-3 min-h-10 text-left"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-medium text-text-primary">Filters</span>
+            <span className="block text-xs text-text-muted truncate">
+              {[from || to ? `${from || "…"} – ${to || "…"}` : "All dates",
+                managers.find((m) => m.email === manager)?.name ?? "All managers"]
+                .join(" · ")}
+            </span>
+          </span>
+          <ChevronDownIcon
+            size={18}
+            className={"shrink-0 text-text-muted transition-transform " + (filtersOpen ? "rotate-180" : "")}
+          />
+        </button>
+        <div className={"grid grid-cols-1 sm:grid-cols-4 gap-3" + (filtersOpen ? " max-md:mt-3" : " max-md:hidden")}>
           <DatePicker
             label="From"
             value={from}
@@ -145,7 +166,7 @@ export function EntriesView({
               </option>
             ))}
           </Select>
-          <div className="flex items-end">
+          <div className="flex items-end app-hide">
             <Button
               variant="secondary"
               onClick={exportCSV}
