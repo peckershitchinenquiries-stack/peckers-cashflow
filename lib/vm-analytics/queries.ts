@@ -32,6 +32,14 @@ import type {
   WeekOption,
   YoyRow,
   WeeklySummaryInputRow,
+  LoyaltySignupRow,
+  LoyaltyPointsRow,
+  LoyaltyPointsChannelRow,
+  LoyaltyRewardRow,
+  LoyaltyMemberSalesRow,
+  LoyaltyDiscountOrderRow,
+  LoyaltyMemberBaseRow,
+  LoyaltyBalanceRow,
 } from "@/lib/vm-analytics/types";
 import { canonicalStore, isDeliveryChannel } from "@/lib/vm-analytics/constants";
 import { groupAgg } from "@/lib/vm-analytics/channels";
@@ -893,3 +901,69 @@ export async function getDeliveryOrdersForWeek(
   if (scoped.length === 0) return null;
   return groupAgg(scoped, isDeliveryChannel).orders;
 }
+
+// ── Loyalty Customers ────────────────────────────────────────────────────────
+// `store` is a canonical store name or LOYALTY_ALL_STORES. The weekly views are
+// dense (one row per week since 2026-03-02), so whole histories are small.
+
+async function loyaltyRows<T>(
+  view: string,
+  label: string,
+  filters: { store?: string; weekIso?: string },
+  order: string = "week_start",
+): Promise<T[]> {
+  const sb = getVMSupabaseServer();
+  let q = sb.from(view).select("*");
+  if (filters.store) q = q.eq("store", filters.store);
+  if (filters.weekIso) q = q.eq("week_start", filters.weekIso);
+  const { data, error } = await q.order(order, { ascending: true });
+  if (error) throw new Error(`${label}: ${error.message}`);
+  return (data ?? []) as T[];
+}
+
+// Every store row (both stores + All stores): the sign-up chart splits by store.
+export const getLoyaltySignups = cache(async function getLoyaltySignups() {
+  return loyaltyRows<LoyaltySignupRow>("vm_v_loyalty_signups", "getLoyaltySignups", {});
+});
+
+export const getLoyaltyPoints = cache(async function getLoyaltyPoints(store: string) {
+  return loyaltyRows<LoyaltyPointsRow>("vm_v_loyalty_points_weekly", "getLoyaltyPoints", { store });
+});
+
+export const getLoyaltyPointsChannel = cache(async function getLoyaltyPointsChannel(
+  store: string,
+  weekIso: string,
+) {
+  return loyaltyRows<LoyaltyPointsChannelRow>(
+    "vm_v_loyalty_points_channel", "getLoyaltyPointsChannel", { store, weekIso }, "channel_rank",
+  );
+});
+
+export const getLoyaltyRewards = cache(async function getLoyaltyRewards(store: string) {
+  return loyaltyRows<LoyaltyRewardRow>("vm_v_loyalty_rewards_weekly", "getLoyaltyRewards", { store });
+});
+
+export const getLoyaltyMemberSales = cache(async function getLoyaltyMemberSales(store: string) {
+  return loyaltyRows<LoyaltyMemberSalesRow>("vm_v_loyalty_member_sales", "getLoyaltyMemberSales", { store });
+});
+
+export const getLoyaltyDiscountOrders = cache(async function getLoyaltyDiscountOrders(
+  store: string,
+  weekIso: string,
+) {
+  return loyaltyRows<LoyaltyDiscountOrderRow>(
+    "vm_v_loyalty_discount_orders", "getLoyaltyDiscountOrders", { store, weekIso }, "discount_name",
+  );
+});
+
+// Snapshots for every week synced so far (a handful of rows).
+export const getLoyaltyMemberBase = cache(async function getLoyaltyMemberBase(store: string) {
+  return loyaltyRows<LoyaltyMemberBaseRow>("vm_v_loyalty_member_base", "getLoyaltyMemberBase", { store });
+});
+
+// Every snapshot's distribution for the store (~11 rows per snapshot).
+export const getLoyaltyBalances = cache(async function getLoyaltyBalances(store: string) {
+  return loyaltyRows<LoyaltyBalanceRow>(
+    "vm_v_loyalty_balance_distribution", "getLoyaltyBalances", { store }, "balance_floor",
+  );
+});

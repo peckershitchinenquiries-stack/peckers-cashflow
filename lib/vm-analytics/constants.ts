@@ -20,6 +20,15 @@ export function resolveStore(param?: string): StoreName | null {
   return STORES.find((s) => shortStore(s).toLowerCase() === p) ?? null;
 }
 
+// The loyalty views' estate-wide row, computed in SQL: distinct people and
+// ratios can't be summed from the two store rows without double counting.
+export const LOYALTY_ALL_STORES = "All stores";
+
+// Peckers Inner Circle launched Tue 2026-04-14; member-base snapshots only
+// exist from the 2026-10-05 sync onward (they can't be backfilled).
+export const LOYALTY_LAUNCH_WEEK = "2026-04-13";
+export const LOYALTY_SNAPSHOT_START = "2026-10-05";
+
 // Channel buckets for the Executive dashboard. "Delivery" = own delivery + the
 // third-party platforms; everything else is treated as in-store (collection,
 // kiosk, till). Order & Pay at Table is listed for completeness — it may not be
@@ -152,7 +161,8 @@ export type DashboardKey =
   | "delivery"
   | "store-comparison"
   | "weekly-summary"
-  | "labor-cost";
+  | "labor-cost"
+  | "loyalty";
 
 export interface DashboardDef {
   key: DashboardKey;
@@ -209,5 +219,11 @@ export const DASHBOARDS: DashboardDef[] = [
     href: "/vm-analytics/labor-cost",
     title: "Labor Cost Performance",
     blurb: "Labor spend & efficiency metrics by store",
+  },
+  {
+    key: "loyalty",
+    href: "/vm-analytics/loyalty",
+    title: "Loyalty Customers",
+    blurb: "Inner Circle sign-ups, Chicken Heads, rewards & member spend",
   },
 ];

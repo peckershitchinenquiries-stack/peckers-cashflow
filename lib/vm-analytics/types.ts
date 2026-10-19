@@ -404,3 +404,131 @@ export interface YoyRow {
   return_customers:  Num;
   total_customers:   Num;
 }
+
+// ── Loyalty Customers (docs/sql/vm_loyalty_views.sql) ───────────────────────
+// Every view carries a store = "All stores" row (LOYALTY_ALL_STORES).
+
+interface LoyaltyWeek {
+  store: string;
+  week_start: string;
+  week_end: string;
+  week_start_iso: string;
+  pre_launch: boolean;
+}
+
+export interface LoyaltySignupRow extends LoyaltyWeek {
+  signups: Num;
+  prev_signups: Num;
+  signups_wow_pct: Num;
+  cumulative_signups: Num;
+}
+
+// Points here are Chicken Heads; points_redeemed only ever moves in 10s (a
+// completed card), so the page shows it as cards completed.
+export interface LoyaltyPointsRow extends LoyaltyWeek {
+  active_earners: Num;
+  active_redeemers: Num;
+  active_members: Num;
+  points_earnt: Num;
+  points_redeemed: Num;
+  redemption_rate: Num;
+  prev_active_earners: Num;
+  prev_points_earnt: Num;
+  prev_points_redeemed: Num;
+  active_earners_wow_pct: Num;
+  points_earnt_wow_pct: Num;
+  points_redeemed_wow_pct: Num;
+}
+
+export interface LoyaltyPointsChannelRow extends LoyaltyWeek {
+  channel: string;
+  channel_rank: Num;
+  points_earnt: Num;
+  points_redeemed: Num;
+  earnt_share: Num;
+  redeemed_share: Num;
+}
+
+export type LoyaltyRewardType = "gamma" | "beta" | "alpha" | "signup" | "birthday";
+
+export interface LoyaltyRewardRow extends LoyaltyWeek {
+  reward_type: LoyaltyRewardType;
+  reward_label: string;
+  reward_rank: Num;
+  redemptions: Num;
+  sku_only_redemptions: Num;
+  reward_cost: Num;
+  net_sales: Num;
+  prev_redemptions: Num;
+  prev_reward_cost: Num;
+  redemptions_wow_pct: Num;
+  reward_cost_wow_pct: Num;
+}
+
+export interface LoyaltyMemberSalesRow extends LoyaltyWeek {
+  total_orders: Num;
+  total_net_sales: Num;
+  discounted_orders: Num;
+  // NULL before launch: nobody was a member yet.
+  member_orders: Num;
+  member_net_sales: Num;
+  member_customers: Num;
+  returning_members: Num;
+  non_member_orders: Num;
+  non_member_net_sales: Num;
+  member_order_share: Num;
+  member_aov: Num;
+  non_member_aov: Num;
+  member_repeat_rate: Num;
+  discount_penetration: Num;
+  prev_member_orders: Num;
+  member_order_share_wow_pp: Num;
+}
+
+export interface LoyaltyDiscountOrderRow {
+  store: string;
+  week_start: string;
+  week_end: string;
+  week_start_iso: string;
+  discount_name: string;
+  reward_type: LoyaltyRewardType | null;
+  orders: Num;
+  discount_cost: Num;
+  net_sales: Num;
+  gross_before_discounts: Num;
+  prev_orders: Num;
+  prev_discount_cost: Num;
+  prev_net_sales: Num;
+  orders_wow_pct: Num;
+  discount_cost_wow_pct: Num;
+}
+
+// Snapshot of the member base at a weekly sync; history starts 2026-10-05.
+export interface LoyaltyMemberBaseRow {
+  store: string;
+  week_start: string;
+  week_end: string;
+  week_start_iso: string;
+  as_of: string | null;
+  total_members: Num;
+  imported_members: Num;
+  active_members: Num;
+  active_30d_members: Num;
+  lapsed_members: Num;
+  points_liability: Num;
+  points_liability_active: Num;
+  balance_accrued: Num;
+  balance_redeemed: Num;
+  // Absent until vm_loyalty_views.sql is re-run with the column.
+  holding_members?: Num;
+}
+
+export interface LoyaltyBalanceRow {
+  store: string;
+  week_start: string;
+  balance_floor: Num;
+  balance_band: string;
+  members: Num;
+  imported_members: Num;
+  non_integer_members: Num;
+}
