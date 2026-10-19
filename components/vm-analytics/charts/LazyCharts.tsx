@@ -28,6 +28,9 @@ export const LineChartCard = dynamic(() =>
 export const ComboChartCard = dynamic(() =>
   import("./Charts").then((m) => m.ComboChartCard),
 );
+export const TierBarChartCard = dynamic(() =>
+  import("./Charts").then((m) => m.TierBarChartCard),
+);
 export const PieChartCard = dynamic(() =>
   import("./Charts").then((m) => m.PieChartCard),
 );

@@ -324,6 +324,83 @@ export function ComboChartCard({
   );
 }
 
+// Grouped bars for a short run of weeks, styled quieter than BarChartCard:
+// one brand hue at stepped opacity, values printed on the bars, no axis chrome.
+// Colours read theme variables so the chart follows light/dark mode.
+export function TierBarChartCard({
+  data,
+  xKey,
+  bars,
+  height = 260,
+}: {
+  data: Record<string, unknown>[];
+  xKey: string;
+  bars: { key: string; name: string; opacity: number }[];
+  height?: number;
+}) {
+  const muted = "rgb(var(--color-text-muted))";
+  const gold = "rgb(var(--color-gold))";
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1">
+        {bars.map((b) => (
+          <span key={b.key} className="flex items-center gap-1.5 text-xs text-secondary">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: gold, opacity: b.opacity }}
+            />
+            {b.name}
+          </span>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={data} margin={{ top: 20, right: 0, left: 0, bottom: 0 }} barGap={4} barCategoryGap="22%">
+          <CartesianGrid stroke="rgb(var(--color-border))" strokeOpacity={0.6} vertical={false} />
+          <XAxis
+            dataKey={xKey}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fontSize: 12, fill: muted }}
+            dy={6}
+          />
+          <YAxis hide allowDecimals={false} />
+          <Tooltip
+            cursor={{ fill: "rgb(var(--color-text-muted))", fillOpacity: 0.06, radius: 8 } as object}
+            formatter={(v: number) => Number(v).toLocaleString()}
+            contentStyle={{
+              fontSize: 12,
+              borderRadius: 10,
+              border: "1px solid rgb(var(--color-border))",
+              background: "rgb(var(--color-surface))",
+              color: "rgb(var(--color-text-primary))",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+            }}
+            labelStyle={{ fontWeight: 600, marginBottom: 4 }}
+          />
+          {bars.map((b) => (
+            <Bar
+              key={b.key}
+              dataKey={b.key}
+              name={b.name}
+              fill={gold}
+              fillOpacity={b.opacity}
+              radius={[6, 6, 0, 0]}
+              maxBarSize={40}
+            >
+              <LabelList
+                dataKey={b.key}
+                position="top"
+                offset={6}
+                style={{ fontSize: 11, fill: muted, fontWeight: 500 }}
+              />
+            </Bar>
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 export function PieChartCard({
   data,
   nameKey,
