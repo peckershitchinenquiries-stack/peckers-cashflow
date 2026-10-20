@@ -14,6 +14,22 @@ const ThemeContext = React.createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = "peckers-theme";
 
+// Registered only by the iOS app shell (pms-mobile, PeckersBridgeViewController),
+// which matches the status bar text to the page. Absent everywhere else.
+const THEME_MESSAGE_HANDLER = "peckersTheme";
+
+type WebKitBridge = {
+  webkit?: { messageHandlers?: Record<string, { postMessage: (body: unknown) => void } | undefined> };
+};
+
+function reportThemeToApp(theme: Theme) {
+  try {
+    (window as unknown as WebKitBridge).webkit?.messageHandlers?.[THEME_MESSAGE_HANDLER]?.postMessage(theme);
+  } catch {
+    /* not in the iOS app */
+  }
+}
+
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
   if (theme === "dark") root.classList.add("dark");
@@ -42,6 +58,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const toggle = React.useCallback(() => {
     setTheme(theme === "dark" ? "light" : "dark");
   }, [theme, setTheme]);
+
+  React.useEffect(() => {
+    reportThemeToApp(theme);
+  }, [theme]);
 
   // If the user hasn't chosen yet, follow system changes.
   React.useEffect(() => {

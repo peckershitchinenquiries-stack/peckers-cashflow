@@ -15,6 +15,7 @@ import {
   rememberedNativeToken,
   requestNativePermission,
 } from "@/lib/native-push";
+import { appNotificationSettingsPath } from "@/lib/is-native-app";
 
 const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
@@ -334,7 +335,7 @@ export function ClockReminderOptIn({
                   ? "On iPhone/iPad, tap the Share button and “Add to Home Screen”, then open Peckers from your home screen to turn on reminders."
                   : status === "denied"
                     ? native
-                      ? "Notifications are blocked for Peckers. Turn them on in Android Settings › Apps › Peckers › Notifications, then reopen the app."
+                      ? `Notifications are blocked for Peckers. Turn them on in ${appNotificationSettingsPath(native)}, then reopen the app.`
                       : "Notifications are blocked for this site. Allow them in your browser settings, then reload to turn reminders on."
                     : "Get a nudge to clock in when your shift starts (and to clock out when it ends). Never miss it again."}
             </p>

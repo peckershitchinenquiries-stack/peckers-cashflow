@@ -156,6 +156,21 @@ export async function sendFcmToTokens(
         collapseKey: payload.tag,
         notification: { tag: payload.tag, defaultSound: true },
       },
+      // The iOS app's tokens go through FCM too, which hands this block to
+      // APNs. Without `sound` iOS delivers the reminder silently, and priority
+      // 10 is "deliver now" rather than "when convenient for the battery".
+      apns: {
+        headers: {
+          "apns-priority": "10",
+          ...(payload.tag ? { "apns-collapse-id": payload.tag } : {}),
+        },
+        payload: {
+          aps: {
+            sound: "default",
+            ...(payload.tag ? { threadId: payload.tag } : {}),
+          },
+        },
+      },
     });
   } catch (err) {
     // A whole-batch failure: bad credentials, or the network. No token is
