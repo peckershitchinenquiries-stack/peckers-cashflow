@@ -32,7 +32,7 @@ import {
   readGeolocationPermission,
   type Fix,
 } from "@/lib/geolocation";
-import { isPeckersApp } from "@/lib/is-native-app";
+import { appLocationSettingsPath, peckersAppPlatform } from "@/lib/is-native-app";
 import {
   FIX_RESUME_GRACE_MS,
   FIX_REUSE_AT_PRESS_MS,
@@ -66,9 +66,13 @@ export type RankedStore = { store: Store; distance: number; inRange: boolean };
  * unexplainable.
  */
 export function approximateLocationMessage(accuracyM: number): string {
-  const where = isPeckersApp()
-    ? "Android Settings › Apps › Peckers › Permissions › Location and choose Precise"
-    : "your location settings and turn on precise location";
+  const app = peckersAppPlatform();
+  const where =
+    app === "ios"
+      ? `${appLocationSettingsPath(app)} and turn on Precise Location`
+      : app === "android"
+        ? `${appLocationSettingsPath(app)} and choose Precise`
+        : "your location settings and turn on precise location";
   return `Your phone is only giving an approximate location (±${Math.round(accuracyM)}m), which is too wide to tell which store you're at — moving closer won't help. Open ${where}, then tap Retry.`;
 }
 
@@ -159,10 +163,11 @@ export function useGeoFix({
         current.current = null;
         if (isPermissionDenied(err)) {
           denied.current = true;
+          const app = peckersAppPlatform();
           setGeo({
             status: "denied",
-            message: isPeckersApp()
-              ? "Location permission denied. Open Android Settings › Apps › Peckers › Permissions › Location, allow it, then tap Retry."
+            message: app
+              ? `Location permission denied. Open ${appLocationSettingsPath(app)}, allow it, then tap Retry.`
               : "Location permission denied. Enable it in your browser settings, then tap Retry.",
           });
           // Best effort, and deliberately after the message above: a dismissed
@@ -176,8 +181,8 @@ export function useGeoFix({
                 ? {
                     ...prev,
                     blocked: true,
-                    message: isPeckersApp()
-                      ? "Location is blocked for the Peckers app, so you will not be asked again. Open Android Settings › Apps › Peckers › Permissions › Location and set it to Allow, then tap Retry."
+                    message: app
+                      ? `Location is blocked for the Peckers app, so you will not be asked again. Open ${appLocationSettingsPath(app)} and set it to ${app === "ios" ? "While Using the App" : "Allow"}, then tap Retry.`
                       : "Location is blocked for this site, so you will not be asked again. Tap the padlock in the address bar, allow Location, then tap Retry.",
                   }
                 : prev,
