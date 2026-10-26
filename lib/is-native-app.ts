@@ -4,11 +4,11 @@
 // Is this page running inside the Peckers app (pms-mobile, Android or iOS)
 // rather than a browser?
 //
-// Only ever used to word a message correctly. "Enable location in your browser
-// settings" is useless advice to someone holding an app — the permission lives
-// in the phone's Settings under Peckers, and there is no address bar padlock
-// to tap. Nothing about WHAT the app may do is allowed to branch on this; the
-// geofence verdict stays identical in both.
+// Used to word a message correctly — "Enable location in your browser settings"
+// is useless advice to someone holding an app — and, since Update 268, to show
+// the app-only UI (logo home header, profile photos; server twin in
+// is-native-app-server.ts). Nothing about what a person is ALLOWED to do may
+// branch on this; the geofence verdict stays identical in both.
 //
 // The marker comes from `android.appendUserAgent` / `ios.appendUserAgent` in
 // the shell's capacitor.config.json, which is explicit rather than sniffing the

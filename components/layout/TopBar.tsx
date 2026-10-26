@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Logo } from "./Logo";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import { StoreSwitcher, type StoreOption } from "./StoreSwitcher";
@@ -18,7 +18,11 @@ import {
 import { signOutAction } from "@/app/actions/auth";
 import { NAV_FOR_PORTAL } from "./nav-config";
 import { PullToRefresh } from "./PullToRefresh";
-import type { Portal } from "@/lib/types";
+import { Avatar } from "@/components/profile/Avatar";
+import { ProfilePhotoSheet } from "@/components/profile/ProfilePhotoSheet";
+import { WelcomePhotoStep } from "@/components/profile/WelcomePhotoStep";
+import { CameraIcon } from "@/components/ui/icons";
+import { PORTAL_HOME, type Portal } from "@/lib/types";
 
 const PORTAL_TAG: Record<Portal, string> = {
   admin: "Admin",
@@ -56,22 +60,14 @@ function resolveScreen(portal: Portal, pathname: string) {
   return { title: null, parent: null };
 }
 
-function initialsOf(name?: string | null) {
-  return (name ?? "")
-    .split(/[\s@.]+/)
-    .map((p) => p[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
-
 export function MobileTopBar({
   portal,
   userName,
   stores,
   activeStoreId = null,
   homeStoreId = null,
+  inApp = false,
+  avatarUrl = null,
 }: {
   portal: Portal;
   userName?: string | null;
@@ -79,11 +75,21 @@ export function MobileTopBar({
   stores?: StoreOption[];
   activeStoreId?: string | null;
   homeStoreId?: string | null;
+  /** Inside the Peckers app: logo on the portal's home screen, profile photo instead of initials. */
+  inApp?: boolean;
+  avatarUrl?: string | null;
 }) {
   const pathname = usePathname() ?? "";
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [accountOpen, setAccountOpen] = React.useState(false);
+  const [photoOpen, setPhotoOpen] = React.useState(false);
+  const [photo, setPhoto] = React.useState(avatarUrl);
   const closeAccount = React.useCallback(() => setAccountOpen(false), []);
+  const closePhoto = React.useCallback(() => setPhotoOpen(false), []);
+  const isHome = inApp && pathname === PORTAL_HOME[portal];
+  const welcome = inApp && searchParams?.get("welcome") === "photo";
+  const shownPhoto = inApp ? photo : null;
   const showSwitcher = stores != null && stores.length > 1;
   const { title, parent } = resolveScreen(portal, pathname);
   const settingsHref = NAV_FOR_PORTAL[portal].find((i) => i.href.endsWith("/settings"))?.href;
@@ -91,6 +97,8 @@ export function MobileTopBar({
   React.useEffect(() => {
     setAccountOpen(false);
   }, [pathname]);
+
+  React.useEffect(() => setPhoto(avatarUrl), [avatarUrl]);
 
   return (
     <>
@@ -110,7 +118,15 @@ export function MobileTopBar({
           <span className="w-2 shrink-0" />
         )}
         <div className="min-w-0 flex-1">
-          {title ? (
+          {isHome ? (
+            // eslint-disable-next-line @next/next/no-img-element -- static asset; the logo is white, so light mode inverts it.
+            <img
+              src="/peckers-logo.png"
+              alt="Peckers"
+              className="h-8 w-auto pl-1 invert dark:invert-0"
+              draggable={false}
+            />
+          ) : title ? (
             <h1 className="text-[17px] font-semibold tracking-tight text-text-primary truncate">
               {title}
             </h1>
@@ -132,9 +148,7 @@ export function MobileTopBar({
           onClick={() => setAccountOpen(true)}
           className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full active:bg-surface-hover"
         >
-          <span className="h-8 w-8 rounded-full bg-gold/15 text-gold border border-gold/30 flex items-center justify-center text-[11px] font-semibold">
-            {initialsOf(userName) || "•"}
-          </span>
+          <Avatar url={shownPhoto} name={userName} className="h-8 w-8" />
         </button>
       </div>
 
@@ -144,8 +158,20 @@ export function MobileTopBar({
           userName={userName}
           settingsHref={settingsHref}
           onNavigate={closeAccount}
+          photo={inApp ? { url: shownPhoto, onChange: () => { setAccountOpen(false); setPhotoOpen(true); } } : null}
         />
       </BottomSheet>
+      {welcome && (
+        <WelcomePhotoStep onPhoto={setPhoto} onDone={() => router.replace(pathname)} />
+      )}
+      {inApp && (
+        <ProfilePhotoSheet
+          open={photoOpen}
+          onClose={closePhoto}
+          hasPhoto={!!shownPhoto}
+          onChanged={setPhoto}
+        />
+      )}
     </header>
     </>
   );
@@ -156,11 +182,14 @@ function AccountSheetBody({
   userName,
   settingsHref,
   onNavigate,
+  photo,
 }: {
   portal: Portal;
   userName?: string | null;
   settingsHref?: string;
   onNavigate: () => void;
+  /** App only — null keeps the browser's initials-only sheet. */
+  photo: { url: string | null; onChange: () => void } | null;
 }) {
   const { theme, toggle } = useTheme();
   const isDark = theme === "dark";
@@ -168,17 +197,40 @@ function AccountSheetBody({
     "w-full flex items-center gap-3 px-4 min-h-[52px] text-left text-[15px] active:bg-surface-hover";
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-3 px-2 py-2">
-        <span className="h-12 w-12 shrink-0 rounded-full bg-gold/15 text-gold border border-gold/30 flex items-center justify-center text-sm font-semibold">
-          {initialsOf(userName) || "•"}
-        </span>
-        <div className="min-w-0">
-          <p className="text-base font-semibold text-text-primary truncate">{userName}</p>
+      {photo ? (
+        <div className="flex flex-col items-center gap-1 px-2 pt-1 pb-2 text-center">
+          <button
+            type="button"
+            onClick={photo.onChange}
+            aria-label={photo.url ? "Change photo" : "Add photo"}
+            className="relative rounded-full active:scale-[.97] transition-transform"
+          >
+            <Avatar url={photo.url} name={userName} className="h-20 w-20 border-2" textClassName="text-xl" />
+            <span className="absolute -right-0.5 -bottom-0.5 h-7 w-7 rounded-full bg-gold text-black border-2 border-surface flex items-center justify-center">
+              <CameraIcon size={14} />
+            </span>
+          </button>
+          <p className="mt-1.5 text-base font-semibold text-text-primary truncate max-w-full">{userName}</p>
           <p className="text-xs text-text-muted">{PORTAL_TAG[portal]}</p>
         </div>
-      </div>
+      ) : (
+        <div className="flex items-center gap-3 px-2 py-2">
+          <Avatar name={userName} className="h-12 w-12" textClassName="text-sm" />
+          <div className="min-w-0">
+            <p className="text-base font-semibold text-text-primary truncate">{userName}</p>
+            <p className="text-xs text-text-muted">{PORTAL_TAG[portal]}</p>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl bg-bg/60 border border-border divide-y divide-border overflow-hidden">
+        {photo && (
+          <button type="button" onClick={photo.onChange} className={row + " text-text-primary"}>
+            <span className="text-text-muted"><CameraIcon size={18} /></span>
+            <span className="flex-1 font-medium">{photo.url ? "Change photo" : "Add photo"}</span>
+            <ChevronRightIcon size={16} className="text-text-muted" />
+          </button>
+        )}
         <button type="button" onClick={toggle} className={row + " text-text-primary"}>
           <span className="text-text-muted">{isDark ? <MoonIcon size={18} /> : <SunIcon size={18} />}</span>
           <span className="flex-1 font-medium">Dark mode</span>

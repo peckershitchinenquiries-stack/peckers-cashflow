@@ -86,6 +86,8 @@ export type AllowedUser = {
    */
   weekly_contract_hours: number | null;
   weekly_ni_rate: number | null;
+  /** Optional profile photo (migration 069), public URL in the `avatars` bucket. Shown in the app only. */
+  avatar_url?: string | null;
   created_at: string;
 };
 
