@@ -8,6 +8,7 @@ import { useToast } from "@/components/ui/Toast";
 import { createClient } from "@/lib/supabase";
 import { clearMustChangePassword } from "@/app/actions/self";
 import { signOutAction } from "@/app/actions/auth";
+import { peckersAppPlatform } from "@/lib/is-native-app";
 import type { Portal } from "@/lib/types";
 
 /**
@@ -48,7 +49,10 @@ export function ForcedPasswordChange({
         return;
       }
       toast.success("Password updated");
-      router.replace(portalHome);
+      // In the app, home opens with the optional profile photo step. It can't
+      // run here: middleware redirects /change-password away once the flag is
+      // cleared, which would swallow the upload's server action.
+      router.replace(peckersAppPlatform() ? `${portalHome}?welcome=photo` : portalHome);
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
