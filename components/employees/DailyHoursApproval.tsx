@@ -860,6 +860,20 @@ export function DailyHoursApproval({
     return s.kind === "manager" ? true : s.clocked_hours > 0;
   }
 
+  /**
+   * `isApprovable`, plus the day whose clocked total rounds to zero — a
+   * clock-in and clock-out seconds apart — which ONLY a typed correction can
+   * settle. Without this the hours box sat next to a permanently dead Approve
+   * button: `effHours` honoured the edit, `isApprovable` never saw it.
+   *
+   * The counts and "Approve all" deliberately keep to `isApprovable`: a bulk
+   * approve carries no typed figure, and `approveDailyHoursForDate` skips a
+   * zero-hour day outright, so promising it there would approve nothing.
+   */
+  function canSignOff(s: ApprovalRow): boolean {
+    return isApprovable(s) || effHours(s) > 0;
+  }
+
   // One pass for the day's rows and both counts, rather than four sequential
   // filters over allRows on every keystroke into the edit maps.
   const selectedRows = React.useMemo(
@@ -1004,7 +1018,7 @@ export function DailyHoursApproval({
   async function doApprove(s: ApprovalRow) {
     const key = rowKey(s);
     const eff = effHours(s);
-    if (!isApprovable(s)) return;
+    if (!canSignOff(s)) return;
     // A manager's hours are never sent — nothing pays from them, and there is
     // no hours box on their row to have changed.
     const override =
@@ -1575,6 +1589,11 @@ export function DailyHoursApproval({
               {invalidHoursEdit(s) && (
                 <span className="text-[10px] text-danger max-sm:basis-full max-sm:text-right">Invalid — minutes above 59</span>
               )}
+              {!invalidHoursEdit(s) && !canSignOff(s) && (
+                <span className="text-[10px] text-text-muted max-sm:basis-full max-sm:text-right">
+                  Clocked under a minute — type the hours worked
+                </span>
+              )}
             </div>
             )}
 
@@ -1707,7 +1726,7 @@ export function DailyHoursApproval({
               loading={busy}
               className="max-sm:col-span-2 max-sm:min-h-11"
               disabled={
-                !isApprovable(s) ||
+                !canSignOff(s) ||
                 (s.kind !== "manager" && !(effHours(s) > 0)) ||
                 (s.is_driver &&
                   (extraNeedsReason(s, "extraShort") || extraNeedsReason(s, "extraLong")))
