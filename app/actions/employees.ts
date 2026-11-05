@@ -707,7 +707,7 @@ export async function approveDailyHours(input: {
   const { data: ce, error: ceErr } = await supabase
     .from("clock_events")
     .select(
-      "id, store_id, clock_in_at, clock_out_at, worked_hours, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason",
+      "id, store_id, clock_in_at, clock_out_at, worked_hours, hours_approved, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries, extra_short_reason, extra_long_reason",
     )
     .eq("employee_id", input.employee_id)
     .eq("event_date", input.event_date)
@@ -716,6 +716,21 @@ export async function approveDailyHours(input: {
   if (!ce || !ce.clock_in_at || !ce.clock_out_at)
     throw new Error("No completed clock-in/out for this day.");
   await managerMayApproveDay(user, supabase, ce, "approving it");
+
+  // With nothing pending, the pre-029 branch below would hand-write raw hours
+  // over the shift-derived approved figure — undoing a manager's correction on
+  // the payout (a stale tab, or two managers on one day). Judged per SHIFT, so
+  // a half-approved split day still approves its outstanding shift.
+  const daySessions = await sessionsForEvent(supabase, ce.id);
+  const nothingPending =
+    daySessions.length > 0
+      ? !daySessions.some((s) => s.clock_out_at && !s.hours_approved)
+      : ce.hours_approved === true;
+  if (nothingPending) {
+    throw new Error(
+      "This day is already approved. Refresh the page — to change it, withdraw the approval first.",
+    );
+  }
 
   // Summed shifts, so a day worked 09:00–13:00 and 17:00–21:00 approves at 8h
   // rather than the 12h the first-in-to-last-out span would suggest.
