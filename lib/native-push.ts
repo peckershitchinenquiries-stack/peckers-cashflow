@@ -153,23 +153,46 @@ export async function getNativePushToken(): Promise<string> {
 // The OS permission cannot be revoked from inside the app, so "granted" alone
 // can't distinguish "reminders on" from "turned off here after allowing". The
 // token we last stored server-side is what tells them apart.
-const TOKEN_KEY = "peckers.nativePushToken";
+//
+// Kept per audience (employee and manager rows live in different tables) and
+// tagged with WHO turned it on: a phone is often handed between people, and the
+// next person to sign in must not read as opted in — nor be silently signed up
+// by the refresh-on-open — because someone else allowed notifications on it.
 
-export function rememberedNativeToken(): string | null {
+/** Whose reminder table a token belongs to. */
+export type ReminderAudience = "employee" | "manager";
+
+type RememberedToken = { token: string; owner: string };
+
+// One shared key, before tokens were tagged. Read never, cleared on every write.
+const LEGACY_TOKEN_KEY = "peckers.nativePushToken";
+
+const tokenKey = (audience: ReminderAudience) => `peckers.nativePushToken.${audience}`;
+
+export function rememberedNativeToken(audience: ReminderAudience): RememberedToken | null {
   try {
-    return window.localStorage.getItem(TOKEN_KEY);
+    const raw = window.localStorage.getItem(tokenKey(audience));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RememberedToken>;
+    return typeof parsed.token === "string" && typeof parsed.owner === "string"
+      ? { token: parsed.token, owner: parsed.owner }
+      : null;
   } catch {
     return null;
   }
 }
 
-export function rememberNativeToken(token: string | null): void {
+export function rememberNativeToken(
+  audience: ReminderAudience,
+  remembered: RememberedToken | null,
+): void {
   try {
-    if (token) window.localStorage.setItem(TOKEN_KEY, token);
-    else window.localStorage.removeItem(TOKEN_KEY);
+    window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+    if (remembered) window.localStorage.setItem(tokenKey(audience), JSON.stringify(remembered));
+    else window.localStorage.removeItem(tokenKey(audience));
   } catch {
-    // Private mode / blocked storage. The card then re-registers on next open,
-    // which re-saves the same row — wrong state, never a wrong write.
+    // Private mode / blocked storage. The card then reads as off and offers
+    // "Turn on" again, which re-saves the same row — wrong state, never a wrong write.
   }
 }
 

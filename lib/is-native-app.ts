@@ -27,6 +27,24 @@ export function peckersAppPlatform(): PeckersAppPlatform | null {
   return /Android/i.test(ua) ? "android" : "ios";
 }
 
+/**
+ * The shell's version: the N in "PeckersApp/N", which the shell bumps whenever
+ * its NATIVE code changes (web changes never need it). Null in a browser.
+ */
+export function peckersAppVersion(): number | null {
+  if (typeof navigator === "undefined") return null;
+  const match = navigator.userAgent.match(new RegExp(`${NATIVE_APP_UA_MARKER}/(\\d+)`));
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Oldest shell that has every native fix staff need. An app reporting less is
+ * told to update — a native fix only reaches a phone by reinstalling. Raise it
+ * in step with pms-mobile's appendUserAgent when a release must not be skipped.
+ * 2 = renderer-crash recovery, reminder icon and channel (pms-mobile Update 22).
+ */
+export const MIN_PECKERS_APP_VERSION = 2;
+
 /** Where the phone keeps the app's location permission, for "open X" copy. */
 export function appLocationSettingsPath(platform: PeckersAppPlatform): string {
   return platform === "ios"

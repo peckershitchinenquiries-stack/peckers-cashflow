@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { LogoutIcon } from "@/components/ui/icons";
 import { requireRole } from "@/lib/supabase-server";
 import { signOutAction } from "@/app/actions/auth";
+import { NativeSignOutToken } from "@/components/auth/NativeSignOutToken";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
 
@@ -31,6 +32,7 @@ export default async function EmployeeSettingsPage() {
             </dl>
             <form action={signOutAction} className="mt-6">
               <input type="hidden" name="portal" value="employee" />
+              <NativeSignOutToken portal="employee" />
               <Button
                 type="submit"
                 variant="danger"

@@ -34,6 +34,32 @@ function loginPathForArea(pathname: string): string {
   return "/login";
 }
 
+// Same marker as lib/is-native-app-server.ts (the shell's appendUserAgent).
+const APP_UA_MARKER = "PeckersApp";
+// Written by LoginForm, inside the app only, on a successful sign-in.
+const LAST_PORTAL_COOKIE = "peckers_portal";
+const PORTAL_LOGIN_PATH: Record<string, string> = {
+  admin: "/login",
+  manager: "/manager/login",
+  employee: "/employee/login",
+  cover_driver: "/cover-driver/login",
+};
+
+/**
+ * Where a signed-out request is sent. The app always starts at "/", which in a
+ * browser means the admin login; inside the app it means the portal this phone
+ * last signed in to, else the crew login — most app users are crew, and that
+ * screen links to the other portals.
+ */
+function signedOutLoginPath(req: NextRequest, pathname: string): string {
+  const appEntry = pathname === "/" || pathname === "/dashboard";
+  if (!appEntry || !(req.headers.get("user-agent") ?? "").includes(APP_UA_MARKER)) {
+    return loginPathForArea(pathname);
+  }
+  const last = req.cookies.get(LAST_PORTAL_COOKIE)?.value;
+  return (last && PORTAL_LOGIN_PATH[last]) || "/employee/login";
+}
+
 // JSON endpoints fetched by client components: a redirect to a login page would
 // hand fetch() an HTML document, so they get a JSON status instead.
 function isJsonApiPath(pathname: string): boolean {
@@ -140,7 +166,7 @@ export async function middleware(req: NextRequest) {
         ? jsonError(401, "Unauthorized")
         : isPublic
           ? passThrough()
-          : redirectTo(loginPathForArea(pathname));
+          : redirectTo(signedOutLoginPath(req, pathname));
 
     // Reads (and refreshes, when due) the session from the cookie — no Auth
     // round-trip of its own. The session's own user object is NOT trusted here;

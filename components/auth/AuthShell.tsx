@@ -3,7 +3,9 @@ import Link from "next/link";
 import { Logo } from "@/components/layout/Logo";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
-type OtherPortalLink = { href: string; label: string };
+// `appOnly` links render only inside the Peckers app, where there is no address
+// bar to type a portal URL into; the browser site keeps its existing links.
+type OtherPortalLink = { href: string; label: string; appOnly?: boolean };
 
 export function AuthShell({
   badge,
@@ -46,12 +48,12 @@ export function AuthShell({
         </div>
 
         {otherPortals && otherPortals.length > 0 && (
-          <div className="mt-5 flex items-center justify-center gap-4 text-xs text-text-muted max-sm:mt-8 max-sm:gap-2">
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-4 text-xs text-text-muted max-sm:mt-8 max-sm:gap-2">
             {otherPortals.map((p) => (
               <Link
                 key={p.href}
                 href={p.href}
-                className="hover:text-gold transition-colors max-sm:h-10 max-sm:px-4 max-sm:inline-flex max-sm:items-center max-sm:rounded-full max-sm:border max-sm:border-border max-sm:bg-surface max-sm:text-sm max-sm:text-text-subtle"
+                className={(p.appOnly ? "app-only " : "") + "hover:text-gold transition-colors max-sm:h-10 max-sm:px-4 max-sm:inline-flex max-sm:items-center max-sm:rounded-full max-sm:border max-sm:border-border max-sm:bg-surface max-sm:text-sm max-sm:text-text-subtle"}
               >
                 {p.label}
               </Link>

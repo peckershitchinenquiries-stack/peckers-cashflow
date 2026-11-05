@@ -159,6 +159,8 @@ export default async function ManagerLivePage() {
           sendTest={sendManagerTestPush}
           saveNativeToken={saveManagerNativePushToken}
           deleteNativeToken={deleteManagerNativePushToken}
+          audience="manager"
+          ownerId={user.allowed!.id}
         />
       </div>
       <LiveDashboard

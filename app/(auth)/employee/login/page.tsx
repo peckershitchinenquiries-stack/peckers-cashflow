@@ -14,6 +14,7 @@ export default function EmployeeLoginPage() {
       otherPortals={[
         { href: "/login", label: "Admin login" },
         { href: "/manager/login", label: "Manager login" },
+        { href: "/cover-driver/login", label: "Cover driver login", appOnly: true },
       ]}
     >
       <LoginForm portal="employee" />

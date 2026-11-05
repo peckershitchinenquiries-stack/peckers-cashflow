@@ -543,6 +543,12 @@
   display: none !important;
 }
 
+/* The reverse: shown only inside the app. Hidden by exclusion rather than
+   revealed with display:revert, which would drop the element's own display. */
+html:not(.in-app) .app-only {
+  display: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .app-screen > * {
     animation: none;

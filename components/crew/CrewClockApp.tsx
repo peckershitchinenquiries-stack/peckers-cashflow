@@ -762,6 +762,8 @@ export function CrewClockApp({
         sendTest={sendTestPush}
         saveNativeToken={saveNativePushToken}
         deleteNativeToken={deleteNativePushToken}
+        audience="employee"
+        ownerId={employee.id}
       />
 
       {/* ---------- Week shifts ---------- */}

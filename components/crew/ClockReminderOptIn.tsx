@@ -14,6 +14,7 @@ import {
   rememberNativeToken,
   rememberedNativeToken,
   requestNativePermission,
+  type ReminderAudience,
 } from "@/lib/native-push";
 import { appNotificationSettingsPath } from "@/lib/is-native-app";
 
@@ -89,6 +90,9 @@ type Props = {
   deleteNativeToken: (token: string) => Promise<ActionResult>;
   /** Where the "we'll nudge you" copy sends the reader — attendance/clock screen. */
   homeHref?: string;
+  /** Which reminder table this card writes to, and who is signed in. */
+  audience: ReminderAudience;
+  ownerId: string;
 };
 
 /**
@@ -103,6 +107,8 @@ export function ClockReminderOptIn({
   sendTest,
   saveNativeToken,
   deleteNativeToken,
+  audience,
+  ownerId,
 }: Props) {
   const toast = useToast();
   const [status, setStatus] = React.useState<Status>("checking");
@@ -131,8 +137,9 @@ export function ClockReminderOptIn({
             setStatus("denied");
             return;
           }
-          const remembered = rememberedNativeToken();
-          if (permission !== "granted" || !remembered) {
+          // Someone else's token on a shared phone reads as off for this person.
+          const remembered = rememberedNativeToken(audience);
+          if (permission !== "granted" || remembered?.owner !== ownerId) {
             setStatus("off");
             return;
           }
@@ -147,7 +154,7 @@ export function ClockReminderOptIn({
             platform,
             typeof navigator !== "undefined" ? navigator.userAgent : null,
           );
-          if (res.ok) rememberNativeToken(token);
+          if (res.ok) rememberNativeToken(audience, { token, owner: ownerId });
         } catch (err) {
           console.error("[push] native refresh failed:", err);
           // Leave whatever status was set. A failed refresh means the row may
@@ -191,7 +198,9 @@ export function ClockReminderOptIn({
         const permission = await requestNativePermission();
         if (permission !== "granted") {
           setStatus(permission === "denied" ? "denied" : "off");
-          toast.error("Notifications weren't allowed. You can enable them in Android settings.");
+          toast.error(
+            `Notifications weren't allowed. You can turn them on in ${appNotificationSettingsPath(native)}.`,
+          );
           return;
         }
         const token = await getNativePushToken();
@@ -204,7 +213,7 @@ export function ClockReminderOptIn({
           toast.error(res.error);
           return;
         }
-        rememberNativeToken(token);
+        rememberNativeToken(audience, { token, owner: ownerId });
         setStatus("on");
         toast.success("Reminders on — we'll nudge you at shift start and end.");
       } catch (err) {
@@ -267,9 +276,9 @@ export function ClockReminderOptIn({
     if (native) {
       setBusy(true);
       try {
-        const token = rememberedNativeToken();
-        if (token) await deleteNativeToken(token);
-        rememberNativeToken(null);
+        const remembered = rememberedNativeToken(audience);
+        if (remembered) await deleteNativeToken(remembered.token);
+        rememberNativeToken(audience, null);
         setStatus("off");
         toast.success("Reminders turned off on this device.");
       } catch (err) {

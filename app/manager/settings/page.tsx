@@ -6,6 +6,7 @@ import { LogoutIcon } from "@/components/ui/icons";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveActiveStoreId } from "@/lib/types";
 import { signOutAction } from "@/app/actions/auth";
+import { NativeSignOutToken } from "@/components/auth/NativeSignOutToken";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { ChangePasswordCard } from "@/components/employee/ChangePasswordCard";
 import { ContactEmailCard } from "@/components/accounts/ContactEmailCard";
@@ -46,6 +47,7 @@ export default async function ManagerSettingsPage() {
           </dl>
           <form action={signOutAction} className="mt-6">
             <input type="hidden" name="portal" value="manager" />
+            <NativeSignOutToken portal="manager" />
             <Button
               type="submit"
               variant="danger"

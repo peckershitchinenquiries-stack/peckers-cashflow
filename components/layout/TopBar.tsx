@@ -16,6 +16,8 @@ import {
   SunIcon,
 } from "@/components/ui/icons";
 import { signOutAction } from "@/app/actions/auth";
+import { NativeSignOutToken } from "@/components/auth/NativeSignOutToken";
+import { AppUpdateBanner } from "./AppUpdateBanner";
 import { NAV_FOR_PORTAL } from "./nav-config";
 import { PullToRefresh } from "./PullToRefresh";
 import { Avatar } from "@/components/profile/Avatar";
@@ -151,6 +153,7 @@ export function MobileTopBar({
           <Avatar url={shownPhoto} name={userName} className="h-8 w-8" />
         </button>
       </div>
+      {inApp && <AppUpdateBanner />}
 
       <BottomSheet open={accountOpen} onClose={closeAccount}>
         <AccountSheetBody
@@ -261,6 +264,7 @@ function AccountSheetBody({
 
       <form action={signOutAction} className="rounded-2xl bg-bg/60 border border-border overflow-hidden">
         <input type="hidden" name="portal" value={portal} />
+        <NativeSignOutToken portal={portal} />
         <button type="submit" className={row + " text-danger"}>
           <LogoutIcon size={18} />
           <span className="flex-1 font-medium">Sign out</span>

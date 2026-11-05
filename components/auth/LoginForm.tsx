@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { buildLoginEmail } from "@/lib/credentials";
 import { PORTAL_HOME, type Portal } from "@/lib/types";
+import { peckersAppPlatform } from "@/lib/is-native-app";
 
 const PORTAL_LABEL: Record<Portal, string> = {
   admin: "Admin",
@@ -79,6 +80,12 @@ export function LoginForm({ portal }: { portal: Portal }) {
         );
         setLoading(false);
         return;
+      }
+
+      if (peckersAppPlatform()) {
+        // Read by middleware so the app reopens on THIS portal's login once the
+        // session lapses, instead of the browser default (admin). Not a secret.
+        document.cookie = `peckers_portal=${portal}; path=/; max-age=31536000; samesite=lax`;
       }
 
       router.replace(PORTAL_HOME[portal]);
