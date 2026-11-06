@@ -40,6 +40,11 @@ import type {
 async function requireAllowed() {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
+  // Every caller is the admin/manager Employees screen; crew must not reach
+  // these, since RLS lets an employee write their own pay and approval columns.
+  if (user.allowed.role !== "admin" && user.allowed.role !== "manager") {
+    throw new Error("Not authorised");
+  }
   return user;
 }
 

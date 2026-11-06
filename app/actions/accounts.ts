@@ -135,7 +135,6 @@ export async function createManagerAccount(input: {
     role: "manager",
     store_id: input.store_id,
     username,
-    temp_password: password,
     must_change_password: true,
     fixed_daily_wage: wage,
   });
@@ -474,7 +473,6 @@ async function performCreateEmployeeWithAccount(input: {
     role: "employee",
     store_id,
     username,
-    temp_password: password,
     must_change_password: true,
     employee_id: emp.id,
   });
@@ -571,7 +569,9 @@ export async function resetAccountPassword(input: {
 
   await supabase
     .from("allowed_users")
-    .update({ temp_password: password, must_change_password: true })
+    // The password is returned once for display and never stored: managers can
+    // read every allowed_users row, so a stored copy was readable by all of them.
+    .update({ temp_password: null, must_change_password: true })
     .eq("id", acct.id);
 
   await writeAudit({

@@ -5,6 +5,7 @@ import {
   type InsightInput,
 } from "@/lib/vm-analytics/insights";
 import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
+import { getSessionUser } from "@/lib/supabase-server";
 import type { Insight } from "@/lib/vm-analytics/types";
 
 export const runtime = "nodejs";
@@ -23,6 +24,12 @@ const CACHE_VERSIONS: Partial<Record<InsightInput["dashboard"], string>> = {
 };
 
 export async function POST(req: Request): Promise<Response> {
+  // Checked here as well as in middleware: this route spends paid API credit
+  // and writes a cache every admin dashboard reads.
+  const me = await getSessionUser();
+  if (me?.allowed?.role !== "admin" || me.allowed.must_change_password === true) {
+    return Response.json({ error: "Forbidden" }, { status: 403 });
+  }
   let input: InsightInput;
   try {
     const body = await req.json();

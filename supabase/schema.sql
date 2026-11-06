@@ -838,7 +838,10 @@ create policy "app_settings_modify" on public.app_settings
 -- admin-shared temp password; anyone with a null temp_password (real-email
 -- admins, or users who already changed) is left untouched.
 -- =============================================================
-update public.allowed_users set must_change_password = false where temp_password is null;
+-- One-time backfill, already applied. Disabled: temp_password is no longer
+-- stored (migration 072), so re-running it would clear the forced change for
+-- every account still on its first password.
+-- update public.allowed_users set must_change_password = false where temp_password is null;
 
 -- =============================================================
 -- =============================================================

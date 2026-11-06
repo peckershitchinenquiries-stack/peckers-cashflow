@@ -1,6 +1,5 @@
 import { cache } from "react";
 import { getVMSupabaseServer } from "@/lib/vm-analytics/client";
-import { getCashflowSupabaseServer } from "@/lib/supabase-cashflow";
 import type {
   ExecRow,
   ExecChannelRow,
@@ -25,7 +24,6 @@ import type {
   WeekdayRow,
   DeliveryRow,
   ComparisonRow,
-  LaborCostRow,
   AttachmentRow,
   MealDealRow,
   MenuCategoryRow,
@@ -46,26 +44,6 @@ import { groupAgg } from "@/lib/vm-analytics/channels";
 
 // All KPI views are weekly. Most queries take an optional ISO week_start; when
 // omitted they resolve to the latest available week.
-
-// Add N days to a YYYY-MM-DD date, returning the same format (UTC-safe so it
-// never shifts across a day boundary due to local timezone).
-function addDaysIso(iso: string, days: number): string {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-// Monday (UTC) of the week containing `now`, as YYYY-MM-DD. Weeks at or after
-// this date are the *current* (in-progress) week and shouldn't be offered as a
-// completed reporting week.
-function currentWeekMondayIso(now = new Date()): string {
-  const day = now.getUTCDay(); // 0=Sun … 6=Sat
-  const shift = day === 0 ? -6 : 1 - day;
-  const monday = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + shift),
-  );
-  return monday.toISOString().slice(0, 10);
-}
 
 // Asked for by the layout, the page and often a query below it, all in one
 // render. cache() collapses those into a single round trip per request.
@@ -628,80 +606,6 @@ export async function getMenuCategories(weekIso: string): Promise<MenuCategoryRo
     .order("gross_sales", { ascending: false });
   if (error) throw new Error(`getMenuCategories: ${error.message}`);
   return (data ?? []) as MenuCategoryRow[];
-}
-
-// ORPHANED as of Update 203 — nothing in the app calls either of the two
-// functions below any more. They are the last readers of `labor_cost_performance`,
-// whose figures were wrong at source (it priced the rota, hardcoded the NI split
-// and knew nothing about cover drivers, manager wages or delivery pay). Labour
-// now comes from lib/vm-analytics/labour.ts.
-//
-// They are kept, working, ONLY so the currently deployed build keeps running
-// while this change ships. Migration `059_drop_labor_cost_performance.sql` drops
-// the view and these go with it — dropping it before the new code is deployed
-// would break production the moment it ran (the migration 027 trap, Update 65).
-
-// Get available weeks for Labor Cost dashboard (from cashflow Supabase).
-// week_start_date is the only week field these tables carry, so it serves as
-// both the start and the (display) end of the option.
-export async function getLaborCostWeeks(): Promise<WeekOption[]> {
-  const sb = getCashflowSupabaseServer();
-  const { data, error } = await sb
-    .from("labor_cost_performance")
-    .select("week_start_date")
-    .order("week_start_date", { ascending: false });
-
-  if (error) throw new Error(`getLaborCostWeeks: ${error.message}`);
-
-  // Deduplicate (the view has one row per store/week) and drop nulls.
-  // week_start_date is the Monday; the week runs Mon–Sun, so week_end is +6 days.
-  // Exclude the current in-progress week — its data isn't fully synced yet, so
-  // we only offer completed weeks (most recent completed week shows by default).
-  const thisMonday = currentWeekMondayIso();
-  const seen = new Set<string>();
-  const weeks: WeekOption[] = [];
-  for (const row of data ?? []) {
-    const weekDate = (row as { week_start_date: string | null }).week_start_date;
-    if (weekDate && weekDate < thisMonday && !seen.has(weekDate)) {
-      seen.add(weekDate);
-      weeks.push({
-        week_start: weekDate,
-        week_end: addDaysIso(weekDate, 6),
-        week_start_iso: weekDate,
-      });
-    }
-  }
-  return weeks;
-}
-
-// Labor Cost Performance (from cashflow Supabase)
-export async function getLaborCost(weekIso: string): Promise<LaborCostRow[]> {
-  const sb = getCashflowSupabaseServer();
-  const { data, error } = await sb
-    .from("labor_cost_performance")
-    .select("*")
-    .eq("week_start_date", weekIso)
-    .order("store", { ascending: true });
-
-  if (error) throw new Error(`getLaborCost: ${error.message}`);
-
-  // Cast rows and compute TOTAL row (sum across stores)
-  const rows = (data ?? []) as LaborCostRow[];
-  if (rows.length > 0) {
-    const total: LaborCostRow = {
-      store: "TOTAL",
-      week_start_date: weekIso,
-      labour_cost: rows.reduce((sum, r) => sum + (parseFloat(String(r.labour_cost)) || 0), 0),
-      revenue: rows.reduce((sum, r) => sum + (parseFloat(String(r.revenue)) || 0), 0),
-      labour_pct: 0,
-    };
-    // Recalculate labour_pct for the total
-    const rev = Number(total.revenue ?? 0);
-    const cost = Number(total.labour_cost ?? 0);
-    total.labour_pct = rev > 0 ? Math.round((cost / rev) * 1000) / 10 : 0;
-    return [...rows, total];
-  }
-  return rows;
 }
 
 /**

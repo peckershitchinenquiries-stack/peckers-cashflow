@@ -114,15 +114,16 @@ export async function updateOwnContactEmail(input: {
  */
 export async function clearMustChangePassword() {
   const user = await getSessionUser();
-  if (!user || !user.email) return { ok: false };
+  if (!user || !user.allowed) return { ok: false };
   try {
     const client = isProvisioningConfigured()
       ? createAdminClient()
       : createServerSupabase();
+    // By id, not ilike(email): `_`/`%` in an email would match other rows.
     const { error } = await client
       .from("allowed_users")
       .update({ must_change_password: false, temp_password: null })
-      .ilike("email", user.email);
+      .eq("id", user.allowed.id);
     if (error) throw new Error(error.message);
   } catch (err) {
     console.error("[self] clearMustChangePassword failed:", err);

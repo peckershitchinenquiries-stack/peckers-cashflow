@@ -160,7 +160,6 @@ export async function createCoverDriverWithAccount(input: CoverDriverInput): Pro
     role: "cover_driver",
     store_id,
     username,
-    temp_password: password,
     must_change_password: true,
     cover_driver_id: driver.id,
   });

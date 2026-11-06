@@ -206,6 +206,12 @@ export async function middleware(req: NextRequest) {
     const userId = typeof claims.sub === "string" ? claims.sub : null;
     const userEmail = typeof claims.email === "string" ? claims.email : null;
     if (!userId) return notSignedIn();
+    // Every account is provisioned with an email; a session without one (an
+    // anonymous or phone sign-in) would otherwise skip the allowlist below.
+    if (!userEmail) {
+      await supabase.auth.signOut();
+      return notSignedIn();
+    }
 
     // ---- signed in: resolve whitelist + role ----
     let role: "admin" | "manager" | "employee" | "cover_driver" | null = null;
