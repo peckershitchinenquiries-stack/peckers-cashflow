@@ -160,6 +160,21 @@ export function PrePaymentView({
     return { added, changed, removed };
   }, [payout, summary.lines]);
 
+  // Regenerating keeps a "paid" tick even when the line's amount moves, so the
+  // cash handed over and the sheet can disagree. Name every such line.
+  const paidChanged = React.useMemo(() => {
+    if (!payout) return [];
+    return payout.lines
+      .filter((l) => l.is_paid && l.paid_amount != null)
+      .map((l) => ({
+        id: l.id,
+        name: l.employee_name,
+        paid: Number(l.paid_amount),
+        now: Number(l.total_payment),
+      }))
+      .filter((l) => Math.abs(l.paid - l.now) > 0.005);
+  }, [payout]);
+
   // Ticking "paid" writes to the server and then re-renders the whole page, so
   // the box used to sit on its old value for a second or more. Hold the new
   // value locally the moment it's clicked (and spin in place of the box while
@@ -376,6 +391,10 @@ export function PrePaymentView({
   // as though it were computed from the current one. Say so instead.
   const snapshotStale =
     confirmed && Math.abs(fin.vita_mojo_total - summary.vita_mojo_total) > 0.005;
+  // Cash entries stay editable after a week is confirmed, and an envelope-only
+  // edit leaves the Vita Mojo total unchanged — so it needs its own check.
+  const envelopeStale =
+    confirmed && Math.abs(fin.cash_collected - summary.cash_collected) > 0.005;
 
   return (
     <div className="flex flex-col gap-5">
@@ -464,7 +483,20 @@ export function PrePaymentView({
                     : undefined
                 }
               />
-              <SummaryRow label="Less: logged differences / cash used" value={`(${formatGBP(fin.logged_differences)})`} tone="bad" />
+              <SummaryRow
+                label="Less: logged differences / cash used"
+                value={`(${formatGBP(fin.logged_differences)})`}
+                tone="bad"
+                hint={
+                  envelopeStale
+                    ? `A cash entry changed after this payout was confirmed. Envelopes were ${formatGBP(
+                        fin.cash_collected,
+                      )} when locked and now total ${formatGBP(
+                        summary.cash_collected,
+                      )} — a Super Admin must unlock and regenerate to restate it.`
+                    : undefined
+                }
+              />
               {fin.supermarket_cash > 0.001 && (
                 <SummaryRow label={supermarketCashLabel(store.name)} value={`+ ${formatGBP(fin.supermarket_cash)}`} tone="good" />
               )}
@@ -658,6 +690,29 @@ export function PrePaymentView({
                 Regenerate sheet
               </Button>
             )}
+          </div>
+        )}
+
+        {paidChanged.length > 0 && (
+          <div className="mx-3 sm:mx-5 mt-4 rounded-lg border border-danger/50 bg-danger/10 px-4 py-3">
+            <p className="text-sm font-medium text-danger">
+              {paidChanged.length === 1 ? "A payment" : `${paidChanged.length} payments`} changed
+              after being marked paid.
+            </p>
+            <ul className="mt-1.5 flex flex-col gap-0.5 text-xs text-text-subtle">
+              {paidChanged.map((c) => (
+                <li key={c.id}>
+                  <span className="font-medium text-text-primary">{c.name}</span> was
+                  ticked paid at {formatGBP(c.paid)}, the sheet now says {formatGBP(c.now)}{" "}
+                  ({c.now > c.paid ? "owed" : "overpaid"} {formatGBP(Math.abs(c.now - c.paid))})
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-text-muted">
+              {locked
+                ? "This payout was confirmed with these differences."
+                : "Settle the difference, then untick and re-tick to record the new amount before confirming."}
+            </p>
           </div>
         )}
 

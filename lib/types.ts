@@ -1202,6 +1202,8 @@ export type CashPayoutLine = {
   is_paid: boolean;
   paid_at: string | null;
   paid_by_name: string | null;
+  /** total_payment when it was ticked paid (migration 074); null when unticked or pre-074. */
+  paid_amount?: number | null;
   created_at: string;
   updated_at: string;
 };

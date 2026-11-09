@@ -714,7 +714,7 @@ export async function markLinePaid(input: {
 
   const { data: line } = await supabase
     .from("cash_payout_lines")
-    .select("id, payout_id, cash_payouts!inner(store_id, locked)")
+    .select("id, payout_id, total_payment, cash_payouts!inner(store_id, locked)")
     .eq("id", input.line_id)
     .maybeSingle();
   if (!line) throw new Error("Payout line not found");
@@ -728,6 +728,9 @@ export async function markLinePaid(input: {
       is_paid: input.paid,
       paid_at: input.paid ? new Date().toISOString() : null,
       paid_by_name: input.paid ? (user.allowed!.name ?? user.email) : null,
+      // What was handed over. Regenerating keeps the tick but can move
+      // total_payment, and the sheet warns when the two no longer match.
+      paid_amount: input.paid ? Number(line.total_payment) || 0 : null,
     })
     .eq("id", input.line_id);
   if (error) throw new Error(error.message);
