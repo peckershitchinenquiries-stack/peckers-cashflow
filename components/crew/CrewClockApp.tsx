@@ -17,6 +17,7 @@ import {
 import {
   WEEKDAY_LONG,
   addDays,
+  clockedHours,
   formatDDMMYYYY,
   formatHoursMinsWords,
   formatShiftRange,
@@ -204,6 +205,37 @@ export function CrewClockApp({
         `${formatTimeOnly(s.clock_in_at)}–${s.clock_out_at ? formatTimeOnly(s.clock_out_at) : "now"}`,
     )
     .join(", ");
+
+  // The header's store_id is the LATEST shift's store, so a day split across
+  // stores must be attributed per session or it all reads as the last store.
+  const todayByStore = React.useMemo(() => {
+    const groups: { storeId: string | null; hours: number; windows: string[] }[] = [];
+    for (const s of todaySessions) {
+      const sid = s.store_id ?? null;
+      let g = groups.find((x) => x.storeId === sid);
+      if (!g) {
+        g = { storeId: sid, hours: 0, windows: [] };
+        groups.push(g);
+      }
+      g.hours +=
+        s.hours_approved && s.approved_hours != null
+          ? Number(s.approved_hours)
+          : clockedHours(s.clock_in_at, s.clock_out_at);
+      g.windows.push(
+        `${formatTimeOnly(s.clock_in_at)}–${s.clock_out_at ? formatTimeOnly(s.clock_out_at) : "now"}`,
+      );
+    }
+    return groups;
+  }, [todaySessions]);
+  const todayStoreBreakdown =
+    todayByStore.length > 1
+      ? todayByStore
+          .map((g) => {
+            const name = stores.find((st) => st.id === g.storeId)?.name ?? "another store";
+            return `${formatHoursMinsWords(g.hours)} at ${name} (${g.windows.join(", ")})`;
+          })
+          .join(" · ")
+      : null;
 
   // Effective shift(s) for a date: published rota rows first (a day can hold
   // several — split shifts), else the employee's recurring schedule template
@@ -559,9 +591,12 @@ export function CrewClockApp({
                 </div>
                 <p className="text-xs mt-1 text-success/80">
                   You worked {formatHoursMinsWords(todayWorkedHours)}
-                  {clockedStore ? ` at ${clockedStore.name}` : ""} —{" "}
-                  {todayShiftLabel ||
-                    `clocked in ${formatTimeOnly(todayClock?.clock_in_at)} · clocked out ${formatTimeOnly(todayClock?.clock_out_at)}`}
+                  {todayStoreBreakdown
+                    ? ` — ${todayStoreBreakdown}`
+                    : `${clockedStore ? ` at ${clockedStore.name}` : ""} — ${
+                        todayShiftLabel ||
+                        `clocked in ${formatTimeOnly(todayClock?.clock_in_at)} · clocked out ${formatTimeOnly(todayClock?.clock_out_at)}`
+                      }`}
                 </p>
                 <p className="text-[11px] mt-1 text-success/70">
                   Back later today? Just clock in again below.
