@@ -303,8 +303,10 @@ LEFT JOIN agg p
 -- 7. REWARD REDEMPTIONS BY TIER — dense: every week × every reward type.
 --    Alpha is also rung through "Alpha …" SKUs (Update 119). An order is
 --    counted once per tier: SKU-only Alpha orders are added only when the
---    same order has no "Loyalty Alpha" discount. Their cost is the SKU line's
---    recorded discount, usually ~0 — the free meal is priced into the SKU.
+--    same order has no "Loyalty Alpha" discount AND its Alpha lines were rung
+--    at £0. A SKU-only order where the customer paid for the Alpha item is a
+--    sale, not a free meal: 43 of the first 134 "claimed" meals were paid
+--    £8–£14 (Update 277). net_sales is the whole order's, as for discounts.
 -- ---------------------------------------------------------------------------
 -- Defined as *_live; the app reads the materialized copy (section 11).
 CREATE OR REPLACE VIEW vm_v_loyalty_rewards_weekly_live AS
@@ -320,22 +322,33 @@ WITH disc AS (
     AND btrim(coalesce(order_uuid, '')) <> ''
     AND vm_loyalty_reward_type(discount_name) IS NOT NULL
 ),
-alpha_lines AS (
-  SELECT store, week_start, btrim(order_uuid) AS order_uuid,
-         abs(COALESCE(vm_num_sci(discounts), 0)) AS cost,
-         COALESCE(vm_num_sci(net_sales), 0)      AS net_sales
+alpha_orders AS (
+  SELECT DISTINCT btrim(order_uuid) AS order_uuid
   FROM vm_detailed_sales_info
   WHERE store IS NOT NULL AND week_start IS NOT NULL
     AND btrim(coalesce(order_uuid, '')) <> ''
     AND lower(btrim(menu_name)) LIKE 'alpha %'
 ),
+order_lines AS (
+  SELECT l.store, l.week_start, btrim(l.order_uuid) AS order_uuid,
+         (lower(btrim(l.menu_name)) LIKE 'alpha %') AS is_alpha,
+         abs(COALESCE(vm_num_sci(l.discounts), 0)) AS cost,
+         COALESCE(vm_num_sci(l.gross_sales), 0)    AS gross_sales,
+         COALESCE(vm_num_sci(l.net_sales), 0)      AS net_sales
+  FROM vm_detailed_sales_info l
+  JOIN alpha_orders a ON a.order_uuid = btrim(l.order_uuid)
+  WHERE l.store IS NOT NULL AND l.week_start IS NOT NULL
+),
 alpha_sku AS (
-  SELECT store, week_start, order_uuid, SUM(cost) AS cost, SUM(net_sales) AS net_sales
-  FROM alpha_lines a
+  SELECT store, week_start, order_uuid,
+         SUM(cost) FILTER (WHERE is_alpha) AS cost,
+         SUM(net_sales)                    AS net_sales
+  FROM order_lines o
   WHERE NOT EXISTS (
-    SELECT 1 FROM disc d WHERE d.order_uuid = a.order_uuid AND d.reward_type = 'alpha'
+    SELECT 1 FROM disc d WHERE d.order_uuid = o.order_uuid AND d.reward_type = 'alpha'
   )
   GROUP BY store, week_start, order_uuid
+  HAVING SUM(gross_sales) FILTER (WHERE is_alpha) = 0
 ),
 ro AS (
   SELECT store, week_start, order_uuid, reward_type, cost, net_sales, false AS via_sku FROM disc
@@ -586,13 +599,11 @@ GROUP BY GROUPING SETS ((store, week_start, balance_floor, balance_band), (week_
 -- 11. MATERIALIZED COPIES of the two views that scan all of
 --     vm_detailed_sales_info. The app-facing names select from these, so the
 --     page reads precomputed rows. They go stale until refreshed: the
---     vm-extractor loyalty step must call vm_refresh_loyalty_snapshots() after
---     it loads (core sales load earlier, so this sees both).
---     NOT YET WIRED (as of 2026-10-19): the extractor's LOYALTY step does not
---     call it, so after every sync run `select vm_refresh_loyalty_snapshots();`
---     by hand. Until you do, the Loyalty page shows a "snapshot out of date"
---     banner and "—" for rewards / member share; without the refresh those
---     figures read 0.
+--     vm-extractor loyalty step calls vm_refresh_loyalty_snapshots() after
+--     it loads (core sales load earlier, so this sees both) — wired in
+--     vm-extractor 4521b9a (2026-10-19). If a refresh ever fails, the Loyalty
+--     page shows a "snapshot out of date" banner and "—" for rewards / member
+--     share until `select vm_refresh_loyalty_snapshots();` is run by hand.
 --     IF NOT EXISTS keeps re-runs cheap; if a *_live view's columns ever
 --     change, DROP MATERIALIZED VIEW ... CASCADE first, then re-run the file.
 -- ---------------------------------------------------------------------------
@@ -609,17 +620,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_vm_loyalty_rewards_weekly_pk
 CREATE OR REPLACE VIEW vm_v_loyalty_member_sales  AS SELECT * FROM mv_vm_loyalty_member_sales;
 CREATE OR REPLACE VIEW vm_v_loyalty_rewards_weekly AS SELECT * FROM mv_vm_loyalty_rewards_weekly;
 
--- CONCURRENTLY keeps the dashboard readable during the refresh (needs the
--- unique indexes above).
+-- Refreshes EVERY mv_vm_loyalty_* that exists — these two plus the insight
+-- matviews from vm_loyalty_insights.sql — so re-running either file, in either
+-- order, leaves the same function. CONCURRENTLY keeps the dashboard readable
+-- during the refresh (needs each matview's unique index).
 CREATE OR REPLACE FUNCTION vm_refresh_loyalty_snapshots()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  mv record;
 BEGIN
-  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_vm_loyalty_member_sales;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_vm_loyalty_rewards_weekly;
+  FOR mv IN
+    SELECT matviewname FROM pg_matviews
+    WHERE schemaname = 'public' AND matviewname LIKE 'mv\_vm\_loyalty\_%'
+    ORDER BY matviewname
+  LOOP
+    EXECUTE format('REFRESH MATERIALIZED VIEW CONCURRENTLY public.%I', mv.matviewname);
+  END LOOP;
 END;
 $$;
 

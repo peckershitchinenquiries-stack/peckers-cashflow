@@ -523,6 +523,90 @@ export interface LoyaltyMemberBaseRow {
   holding_members?: Num;
 }
 
+// ── Loyalty insight tabs (docs/sql/vm_loyalty_insights.sql) ─────────────────
+// Visits = order-earned heads (one per day the member spent £12+).
+
+export interface LoyaltyActivityRow {
+  store: string;
+  week_start: string;
+  week_end: string;
+  week_start_iso: string;
+  visited_1: Num;
+  visited_2: Num;
+  visited_3: Num;
+  visited_6: Num;
+  visited_9: Num;
+  unlocked_meal: Num;
+  seg_champion: Num;
+  seg_regular: Num;
+  seg_occasional: Num;
+  seg_new: Num;
+  seg_at_risk: Num;
+  seg_lapsed: Num;
+  active_4w: Num;
+  freq_1: Num;
+  freq_2: Num;
+  freq_3: Num;
+  freq_4plus: Num;
+  visits_4w: Num;
+}
+
+export interface LoyaltyCohortRow {
+  store: string;
+  cohort_month: string;
+  cohort_label: string;
+  members: Num;
+  eligible_2w: Num;
+  back_2w: Num;
+  eligible_4w: Num;
+  back_4w: Num;
+  eligible_8w: Num;
+  back_8w: Num;
+  eligible_12w: Num;
+  back_12w: Num;
+  back_ever: Num;
+  data_to_week: string;
+}
+
+export type LoyaltyProfileDimension =
+  | "channel"
+  | "value_band"
+  | "weekday"
+  | "daypart"
+  | "item"
+  | "reward_gamma"
+  | "reward_beta";
+
+export interface LoyaltyOrderProfileRow {
+  store: string;
+  week_start: string;
+  week_start_iso: string;
+  dimension: LoyaltyProfileDimension;
+  bucket: string;
+  bucket_rank: Num;
+  is_member: boolean;
+  orders: Num;
+  net_sales: Num;
+}
+
+export interface LoyaltyActivationRow extends LoyaltyWeek {
+  signups: Num;
+  visited_same_week: Num;
+  visited_4w: Num;
+  visited_ever: Num;
+  window_4w_complete: boolean;
+}
+
+export interface LoyaltyWinbackRow {
+  store: string;
+  week_start: string;
+  week_start_iso: string;
+  near_reward: Num;
+  near_reward_quiet: Num;
+  meal_ready: Num;
+  meal_ready_quiet: Num;
+}
+
 export interface LoyaltyBalanceRow {
   store: string;
   week_start: string;

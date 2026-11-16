@@ -20,6 +20,13 @@ import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { TierBarChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
+import { LoyaltyTabStrip } from "@/components/vm-analytics/LoyaltyTabStrip";
+import { isLoyaltyTab } from "@/lib/vm-analytics/loyalty-tabs";
+import { Caveat, Note, pickSnapshot, pointsDelta, shortWeek, wow } from "./_tabs/shared";
+import { MembersTab } from "./_tabs/MembersTab";
+import { RetentionTab } from "./_tabs/RetentionTab";
+import { ValueTab } from "./_tabs/ValueTab";
+import { BehaviourTab } from "./_tabs/BehaviourTab";
 import type {
   LoyaltyDiscountOrderRow,
   LoyaltyMemberBaseRow,
@@ -52,36 +59,12 @@ const TIER_CHART_WEEKS = 4;
 // Heads redeemed only ever move in 10s: a completed card becomes an Alpha meal.
 const HEADS_PER_CARD = 10;
 
-function shortWeek(iso: string): string {
-  return new Date(iso + "T00:00:00Z").toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
-}
-
-function wow(cur: number, prev: number | null | undefined): number | null {
-  if (prev === null || prev === undefined || prev <= 0) return null;
-  return ((cur - prev) / prev) * 100;
-}
-
-function Note({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-dashed border-line bg-surface p-4 text-sm text-secondary">
-      {children}
-    </div>
-  );
-}
-
-function Caveat({ children }: { children: React.ReactNode }) {
-  return <p className="mb-3 text-xs text-tertiary">{children}</p>;
-}
-
 export default async function LoyaltyPage({
   searchParams,
 }: {
-  searchParams: { week?: string; store?: string };
+  searchParams: { week?: string; store?: string; tab?: string };
 }) {
+  const tab = isLoyaltyTab(searchParams.tab) ? searchParams.tab : "overview";
   const activeStore = resolveStore(searchParams.store);
   const storeKey = activeStore ?? LOYALTY_ALL_STORES;
   const scopeLabel = activeStore ? shortStore(activeStore) : "both stores";
@@ -151,7 +134,10 @@ export default async function LoyaltyPage({
   const reward = (t: LoyaltyRewardType) => rewardsThisWeek.find((r) => r.reward_type === t);
   const tierRows = TIERS.map((t) => reward(t.type));
   const tierRedeemed = tierRows.reduce((s, r) => s + n(r?.redemptions), 0);
-  const prevTierRedeemed = tierRows.reduce((s, r) => s + n(r?.prev_redemptions), 0);
+  // Every reward type, so the card totals the Rewards table and matches the cost card.
+  const allRedeemed = rewardsThisWeek.reduce((s, r) => s + n(r.redemptions), 0);
+  const prevAllRedeemed = rewardsThisWeek.reduce((s, r) => s + n(r.prev_redemptions), 0);
+  const extraRedeemed = allRedeemed - tierRedeemed;
   const loyaltyCost = rewardsThisWeek.reduce((s, r) => s + n(r.reward_cost), 0);
   const prevLoyaltyCost = rewardsThisWeek.reduce((s, r) => s + n(r.prev_reward_cost), 0);
 
@@ -192,19 +178,19 @@ export default async function LoyaltyPage({
       Alpha: n(rewardsByWeek(r.week_start_iso, "alpha")?.redemptions),
     }));
 
-  // ── Member base snapshot (feeds the Loyalty customers card) ─────────────────────────────────────────────────────────────────
-  // Snapshots can't be backfilled: use the selected week's if one exists,
-  // otherwise the closest one, and say which.
-  const snapshot =
-    memberBase.find((r) => r.week_start_iso === week) ??
-    [...memberBase].reverse().find((r) => r.week_start_iso <= week) ??
-    memberBase[0] ??
-    null;
+  // ── Member base snapshot (feeds the Active members card) ───────────────────
+  // The old "Loyalty customers" card counted everyone holding a head, which
+  // included ~8,300 launch imports who never used the scheme. Active in the
+  // last 30 days is the honest headline; the hint carries the rest.
+  const snapshot = pickSnapshot(memberBase, week);
   const snapshotIsExact = snapshot?.week_start_iso === week;
   const prevSnapshot = snapshot ? memberBase[memberBase.indexOf(snapshot) - 1] : undefined;
-  const holdingMissing = snapshot?.holding_members === undefined;
-  const holding = n(snapshot?.holding_members);
-  const prevHolding = prevSnapshot?.holding_members == null ? null : n(prevSnapshot.holding_members);
+  const active30 = n(snapshot?.active_30d_members);
+  const prevActive30 = prevSnapshot ? n(prevSnapshot.active_30d_members) : null;
+  const activeHint = snapshot
+    ? `${int(snapshot.active_members)} joined · ${int(snapshot.imported_members)} dormant imports` +
+      (snapshotIsExact ? "" : ` · snapshot w/c ${shortWeek(snapshot.week_start_iso)}`)
+    : "no snapshot yet";
 
   // ── Channel mix (selected week) ────────────────────────────────────────────
   const channelColumns: Column<LoyaltyPointsChannelRow>[] = [
@@ -228,6 +214,7 @@ export default async function LoyaltyPage({
     { label: "Beta — free main", row: reward("beta") },
     { label: "Alpha — free meal", row: reward("alpha") },
     { label: "Birthday churros", row: reward("birthday") },
+    { label: "Sign-up milkshake", row: reward("signup") },
   ];
   const tierColumns: Column<TierLine>[] = [
     { key: "tier", header: "Reward", render: (r) => <span className="font-medium">{r.label}</span> },
@@ -253,16 +240,6 @@ export default async function LoyaltyPage({
     ? [
         { metric: "Orders", member: int(ms.member_orders), nonMember: int(ms.non_member_orders) },
         { metric: "Net sales", member: gbp(ms.member_net_sales), nonMember: gbp(ms.non_member_net_sales) },
-        {
-          metric: "AOV",
-          member: ms.member_aov === null ? "—" : gbp(ms.member_aov),
-          nonMember: ms.non_member_aov === null ? "—" : gbp(ms.non_member_aov),
-        },
-        {
-          metric: "Share of orders",
-          member: pct(100 * n(ms.member_order_share), 1),
-          nonMember: pct(100 - 100 * n(ms.member_order_share), 1),
-        },
       ]
     : [];
   const memberColumns: Column<MemberLine>[] = [
@@ -338,25 +315,45 @@ export default async function LoyaltyPage({
         </div>
       )}
 
+      <LoyaltyTabStrip active={tab} />
+
+      {tab === "members" && (
+        <MembersTab
+          storeKey={storeKey}
+          scopeLabel={scopeLabel}
+          week={week}
+          memberBase={memberBase}
+          showStoreSplit={!activeStore}
+        />
+      )}
+      {tab === "retention" && (
+        <RetentionTab storeKey={storeKey} week={week} memberSales={memberSales} preLaunch={preLaunch} />
+      )}
+      {tab === "value" && (
+        <ValueTab
+          storeKey={storeKey}
+          week={week}
+          preLaunch={preLaunch}
+          rewards={rewards}
+          memberSales={memberSales}
+          points={points}
+          memberBase={memberBase}
+        />
+      )}
+      {tab === "behaviour" && <BehaviourTab storeKey={storeKey} week={week} />}
+
+      {tab === "overview" && (
       <div className="flex flex-col gap-8">
         <Section title="This week" description={`Loyalty KPIs for ${scopeLabel}, week-on-week.`}>
           <KpiGrid>
             <KpiCard
-              label="Loyalty customers"
-              value={holdingMissing ? "—" : int(holding)}
-              delta={holdingMissing ? null : wow(holding, prevHolding)}
-              hint={
-                !snapshot
-                  ? "no snapshot yet"
-                  : holdingMissing
-                    ? "re-run vm_loyalty_views.sql"
-                    : snapshotIsExact
-                      ? undefined
-                      : `snapshot w/c ${shortWeek(snapshot.week_start_iso)}`
-              }
+              label="Active members (30 days)"
+              value={snapshot ? int(active30) : "—"}
+              delta={snapshot ? wow(active30, prevActive30) : null}
+              hint={activeHint}
             />
             <KpiCard
-              label="New members"
+              label="New sign-ups"
               value={int(signupRow?.signups)}
               delta={signupRow?.signups_wow_pct ?? null}
             />
@@ -384,16 +381,19 @@ export default async function LoyaltyPage({
             />
             <KpiCard
               label="Rewards redeemed"
-              value={rewardsMissing ? "—" : int(tierRedeemed)}
-              delta={rewardsMissing ? null : wow(tierRedeemed, prevTierRedeemed)}
+              value={rewardsMissing ? "—" : int(allRedeemed)}
+              delta={rewardsMissing ? null : wow(allRedeemed, prevAllRedeemed)}
               hint={
                 rewardsMissing
                   ? "snapshot not refreshed"
-                  : TIERS.map((t, i) => `${t.label[0]} ${int(tierRows[i]?.redemptions)}`).join(" · ")
+                  : [
+                      ...TIERS.map((t, i) => `${t.label[0]} ${int(tierRows[i]?.redemptions)}`),
+                      ...(extraRedeemed > 0 ? [`other ${int(extraRedeemed)}`] : []),
+                    ].join(" · ")
               }
             />
             <KpiCard
-              label="Loyalty discount cost"
+              label="Reward cost"
               value={rewardsMissing ? "—" : gbp(loyaltyCost)}
               delta={rewardsMissing ? null : wow(loyaltyCost, prevLoyaltyCost)}
               hint={rewardsMissing ? "snapshot not refreshed" : "incl. sign-up & birthday"}
@@ -401,7 +401,6 @@ export default async function LoyaltyPage({
             <KpiCard
               label="Member share of orders"
               value={memberShare === null ? "—" : pct(memberShare, 1)}
-              delta={memberShare === null ? null : wow(memberShare, prevMemberShare)}
               hint={
                 preLaunch
                   ? "pre-launch"
@@ -409,7 +408,7 @@ export default async function LoyaltyPage({
                     ? "snapshot not refreshed"
                     : !hasOrders
                       ? "no order data"
-                      : undefined
+                      : (pointsDelta(memberShare, prevMemberShare) ?? undefined)
               }
             />
           </KpiGrid>
@@ -429,7 +428,7 @@ export default async function LoyaltyPage({
 
         <Section
           title="Rewards redeemed"
-          description="From the Loyalty Gamma / Beta / Alpha discounts. Alpha also counts orders rung through an “Alpha …” meal SKU, once per order."
+          description="From the Loyalty Gamma / Beta / Alpha discounts. Alpha also counts an “Alpha …” meal SKU rung at £0 without the discount; one the customer paid for is a sale, not a free meal."
         >
           {tierChart.length === 0 ? (
             <Note>No rewards before launch.</Note>
@@ -455,9 +454,8 @@ export default async function LoyaltyPage({
           {!preLaunch && !rewardsMissing && tierRedeemed === 0 && <Caveat>No tier rewards were redeemed this week.</Caveat>}
           {alphaSkuOnly > 0 && (
             <Caveat>
-              {int(alphaSkuOnly)} Alpha {alphaSkuOnly === 1 ? "meal was" : "meals were"} rung through an Alpha SKU
-              without the discount; the SKU price already makes it free, so no cost is recorded for{" "}
-              {alphaSkuOnly === 1 ? "it" : "them"}.
+              {int(alphaSkuOnly)} Alpha {alphaSkuOnly === 1 ? "meal was" : "meals were"} rung through an Alpha SKU at £0
+              without the discount, so no cost is recorded for {alphaSkuOnly === 1 ? "it" : "them"}.
             </Caveat>
           )}
         </Section>
@@ -485,8 +483,7 @@ export default async function LoyaltyPage({
             <KpiCard
               label="Discount penetration"
               value={penetration === null ? "—" : pct(penetration, 1)}
-              delta={penetration === null ? null : wow(penetration, prevPenetration)}
-              hint={hasOrders ? "discounted ÷ all orders" : "no order data"}
+              hint={hasOrders ? (pointsDelta(penetration, prevPenetration) ?? "discounted ÷ all orders") : "no order data"}
             />
           </KpiGrid>
           <DataTable
@@ -496,6 +493,7 @@ export default async function LoyaltyPage({
           />
         </Section>
       </div>
+      )}
     </>
   );
 }

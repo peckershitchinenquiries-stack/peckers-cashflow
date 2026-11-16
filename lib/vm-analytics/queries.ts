@@ -38,6 +38,12 @@ import type {
   LoyaltyDiscountOrderRow,
   LoyaltyMemberBaseRow,
   LoyaltyBalanceRow,
+  LoyaltyActivityRow,
+  LoyaltyCohortRow,
+  LoyaltyOrderProfileRow,
+  LoyaltyProfileDimension,
+  LoyaltyActivationRow,
+  LoyaltyWinbackRow,
 } from "@/lib/vm-analytics/types";
 import { canonicalStore, isDeliveryChannel } from "@/lib/vm-analytics/constants";
 import { groupAgg } from "@/lib/vm-analytics/channels";
@@ -869,5 +875,92 @@ export const getLoyaltyMemberBase = cache(async function getLoyaltyMemberBase(st
 export const getLoyaltyBalances = cache(async function getLoyaltyBalances(store: string) {
   return loyaltyRows<LoyaltyBalanceRow>(
     "vm_v_loyalty_balance_distribution", "getLoyaltyBalances", { store }, "balance_floor",
+  );
+});
+
+// ── Loyalty insight tabs (docs/sql/vm_loyalty_insights.sql) ─────────────────
+// These views arrive with a SQL file run by hand, so a missing view is an
+// expected state the page explains, not an error that takes the page down.
+
+export interface InsightResult<T> {
+  rows: T[];
+  missing: boolean;
+}
+
+interface InsightFilters {
+  store: string;
+  weekIso?: string;
+  fromWeek?: string;
+  toWeek?: string;
+  dimension?: LoyaltyProfileDimension;
+}
+
+const INSIGHT_PAGE = 1000;
+
+function isMissingView(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === "PGRST205" ||
+    error.code === "42P01" ||
+    /does not exist|could not find the table/i.test(error.message ?? "")
+  );
+}
+
+async function insightRows<T>(
+  view: string,
+  label: string,
+  filters: InsightFilters,
+  order: string[],
+): Promise<InsightResult<T>> {
+  const sb = getVMSupabaseServer();
+  const rows: T[] = [];
+  // PostgREST caps a response at 1,000 rows; the item breakdown can pass that.
+  for (let from = 0; ; from += INSIGHT_PAGE) {
+    let q = sb.from(view).select("*").eq("store", filters.store);
+    if (filters.weekIso) q = q.eq("week_start", filters.weekIso);
+    if (filters.fromWeek) q = q.gte("week_start", filters.fromWeek);
+    if (filters.toWeek) q = q.lte("week_start", filters.toWeek);
+    if (filters.dimension) q = q.eq("dimension", filters.dimension);
+    for (const col of order) q = q.order(col, { ascending: true });
+    const { data, error } = await q.range(from, from + INSIGHT_PAGE - 1);
+    if (error) {
+      if (isMissingView(error)) return { rows: [], missing: true };
+      throw new Error(`${label}: ${error.message}`);
+    }
+    rows.push(...((data ?? []) as T[]));
+    if (!data || data.length < INSIGHT_PAGE) break;
+  }
+  return { rows, missing: false };
+}
+
+export const getLoyaltyActivity = cache(async function getLoyaltyActivity(store: string) {
+  return insightRows<LoyaltyActivityRow>("vm_v_loyalty_activity", "getLoyaltyActivity", { store }, ["week_start"]);
+});
+
+export const getLoyaltyCohorts = cache(async function getLoyaltyCohorts(store: string) {
+  return insightRows<LoyaltyCohortRow>("vm_v_loyalty_cohorts", "getLoyaltyCohorts", { store }, ["cohort_month"]);
+});
+
+export const getLoyaltyActivation = cache(async function getLoyaltyActivation(store: string) {
+  return insightRows<LoyaltyActivationRow>(
+    "vm_v_loyalty_activation", "getLoyaltyActivation", { store }, ["week_start"],
+  );
+});
+
+export const getLoyaltyWinback = cache(async function getLoyaltyWinback(store: string) {
+  return insightRows<LoyaltyWinbackRow>("vm_v_loyalty_winback", "getLoyaltyWinback", { store }, ["week_start"]);
+});
+
+// One dimension over an inclusive week range (e.g. the 4 weeks to the selected one).
+export const getLoyaltyOrderProfile = cache(async function getLoyaltyOrderProfile(
+  store: string,
+  dimension: LoyaltyProfileDimension,
+  fromWeek: string,
+  toWeek: string,
+) {
+  return insightRows<LoyaltyOrderProfileRow>(
+    "vm_v_loyalty_order_profile",
+    "getLoyaltyOrderProfile",
+    { store, dimension, fromWeek, toWeek },
+    ["week_start", "bucket_rank", "bucket"],
   );
 });
