@@ -20,7 +20,9 @@ import { Section, ChartCard } from "@/components/vm-analytics/Section";
 import { DataTable, type Column } from "@/components/vm-analytics/DataTable";
 import { TierBarChartCard } from "@/components/vm-analytics/charts/LazyCharts";
 import { EmptyWeek, ErrorState, PageTitle } from "@/components/vm-analytics/PageState";
-import { LoyaltyTabStrip } from "@/components/vm-analytics/LoyaltyTabStrip";
+import { Suspense } from "react";
+import { LoyaltyTabs } from "@/components/vm-analytics/LoyaltyTabStrip";
+import { LoyaltyTabSkeleton } from "@/components/vm-analytics/LoyaltyTabSkeleton";
 import { isLoyaltyTab } from "@/lib/vm-analytics/loyalty-tabs";
 import { Caveat, Note, pickSnapshot, pointsDelta, shortWeek, wow } from "./_tabs/shared";
 import { MembersTab } from "./_tabs/MembersTab";
@@ -84,13 +86,16 @@ export default async function LoyaltyPage({
     if (!weekIso) return <EmptyWeek />;
     week = weekIso;
     weekEnd = weeks.find((w) => w.week_start_iso === weekIso)?.week_end ?? "";
+    // Sign-ups, channel mix and discounts only appear on Overview; the other
+    // tabs shouldn't wait on them.
+    const onOverview = tab === "overview";
     [signups, points, channels, rewards, memberSales, discounts, memberBase] = await Promise.all([
-      getLoyaltySignups(),
+      onOverview ? getLoyaltySignups() : Promise.resolve([]),
       getLoyaltyPoints(storeKey),
-      getLoyaltyPointsChannel(storeKey, weekIso),
+      onOverview ? getLoyaltyPointsChannel(storeKey, weekIso) : Promise.resolve([]),
       getLoyaltyRewards(storeKey),
       getLoyaltyMemberSales(storeKey),
-      getLoyaltyDiscountOrders(storeKey, weekIso),
+      onOverview ? getLoyaltyDiscountOrders(storeKey, weekIso) : Promise.resolve([]),
       getLoyaltyMemberBase(storeKey),
     ]);
   } catch (e) {
@@ -214,19 +219,12 @@ export default async function LoyaltyPage({
     { label: "Beta — free main", row: reward("beta") },
     { label: "Alpha — free meal", row: reward("alpha") },
     { label: "Birthday churros", row: reward("birthday") },
-    { label: "Sign-up milkshake", row: reward("signup") },
   ];
   const tierColumns: Column<TierLine>[] = [
     { key: "tier", header: "Reward", render: (r) => <span className="font-medium">{r.label}</span> },
     { key: "count", header: "Redeemed", align: "right", render: (r) => int(r.row?.redemptions) },
     { key: "wow", header: "WoW", align: "right", render: (r) => signedPct(r.row?.redemptions_wow_pct ?? null) },
     { key: "cost", header: "Cost", align: "right", render: (r) => gbp(r.row?.reward_cost) },
-    {
-      key: "avg",
-      header: "Cost each",
-      align: "right",
-      render: (r) => (n(r.row?.redemptions) > 0 ? gbp(n(r.row?.reward_cost) / n(r.row?.redemptions)) : "—"),
-    },
   ];
   const alphaSkuOnly = n(reward("alpha")?.sku_only_redemptions);
 
@@ -315,32 +313,37 @@ export default async function LoyaltyPage({
         </div>
       )}
 
-      <LoyaltyTabStrip active={tab} />
-
-      {tab === "members" && (
-        <MembersTab
-          storeKey={storeKey}
-          scopeLabel={scopeLabel}
-          week={week}
-          memberBase={memberBase}
-          showStoreSplit={!activeStore}
-        />
+      <LoyaltyTabs active={tab}>
+      {tab !== "overview" && (
+        // Keyed so a new tab, week or store mounts a fresh boundary and streams
+        // behind its skeleton instead of holding the page until every query is back.
+        <Suspense key={`${tab}|${week}|${storeKey}`} fallback={<LoyaltyTabSkeleton tab={tab} />}>
+          {tab === "members" && (
+            <MembersTab
+              storeKey={storeKey}
+              scopeLabel={scopeLabel}
+              week={week}
+              memberBase={memberBase}
+              showStoreSplit={!activeStore}
+            />
+          )}
+          {tab === "retention" && (
+            <RetentionTab storeKey={storeKey} week={week} memberSales={memberSales} preLaunch={preLaunch} />
+          )}
+          {tab === "value" && (
+            <ValueTab
+              storeKey={storeKey}
+              week={week}
+              preLaunch={preLaunch}
+              rewards={rewards}
+              memberSales={memberSales}
+              points={points}
+              memberBase={memberBase}
+            />
+          )}
+          {tab === "behaviour" && <BehaviourTab storeKey={storeKey} week={week} />}
+        </Suspense>
       )}
-      {tab === "retention" && (
-        <RetentionTab storeKey={storeKey} week={week} memberSales={memberSales} preLaunch={preLaunch} />
-      )}
-      {tab === "value" && (
-        <ValueTab
-          storeKey={storeKey}
-          week={week}
-          preLaunch={preLaunch}
-          rewards={rewards}
-          memberSales={memberSales}
-          points={points}
-          memberBase={memberBase}
-        />
-      )}
-      {tab === "behaviour" && <BehaviourTab storeKey={storeKey} week={week} />}
 
       {tab === "overview" && (
       <div className="flex flex-col gap-8">
@@ -494,6 +497,7 @@ export default async function LoyaltyPage({
         </Section>
       </div>
       )}
+      </LoyaltyTabs>
     </>
   );
 }

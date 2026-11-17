@@ -12,6 +12,19 @@ import { usePathname } from "next/navigation";
  * Works with the App Router: clicking a <Link> fires the capture handler →
  * bar starts; when navigation commits, `usePathname()` changes → bar finishes.
  */
+const START_EVENT = "top-progress:start";
+const DONE_EVENT = "top-progress:done";
+
+// For navigations the link capture can't see: buttons calling router.push, or
+// query-only changes that never move usePathname().
+export function startTopProgress() {
+  window.dispatchEvent(new Event(START_EVENT));
+}
+
+export function finishTopProgress() {
+  window.dispatchEvent(new Event(DONE_EVENT));
+}
+
 export function TopProgressBar() {
   const pathname = usePathname();
   const [visible, setVisible] = React.useState(false);
@@ -108,6 +121,15 @@ export function TopProgressBar() {
     lastPath.current = pathname;
     finish();
   }, [pathname, finish]);
+
+  React.useEffect(() => {
+    window.addEventListener(START_EVENT, start);
+    window.addEventListener(DONE_EVENT, finish);
+    return () => {
+      window.removeEventListener(START_EVENT, start);
+      window.removeEventListener(DONE_EVENT, finish);
+    };
+  }, [start, finish]);
 
   React.useEffect(() => clearTimers, [clearTimers]);
 
