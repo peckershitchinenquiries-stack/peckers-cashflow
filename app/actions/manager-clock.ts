@@ -34,7 +34,23 @@ import {
   overlapsExistingSession,
   type DeliveryInput,
 } from "@/lib/clock-sessions";
+import { createAdminClient, isProvisioningConfigured } from "@/lib/supabase-admin";
 import { writeAudit } from "./audit";
+
+/**
+ * Rebuild a manager's day header with sight of EVERY shift. RLS shows a manager
+ * only the shifts at the store they're running, so rebuilding a cross-store day
+ * under a peer's session wrote the header from half of it (Update 282).
+ */
+function rebuildManagerDay(
+  supabase: ReturnType<typeof createServerSupabase>,
+  clockEventId: string,
+) {
+  return recomputeManagerDayHeader(
+    isProvisioningConfigured() ? createAdminClient() : supabase,
+    clockEventId,
+  );
+}
 
 /**
  * Same boundary as app/actions/clock.ts: return user-facing errors instead of
@@ -214,7 +230,7 @@ async function performManagerClockIn(input: ClockInput) {
     lng: input.longitude,
   });
 
-  await recomputeManagerDayHeader(supabase, clockEventId);
+  await rebuildManagerDay(supabase, clockEventId);
 
   await writeAudit({
     action: "manager_clock_in",
@@ -300,7 +316,7 @@ async function performManagerClockOut(input: ManagerClockOutInput) {
 
   // Header last: first-in / last-out / summed hours AND summed drops all come
   // from the sessions.
-  const { workedHours, deliveries: dayDrops } = await recomputeManagerDayHeader(
+  const { workedHours, deliveries: dayDrops } = await rebuildManagerDay(
     supabase,
     existing.id,
   );
@@ -524,7 +540,7 @@ async function performManualManagerDeliveryEntry(input: ManualManagerDeliveryInp
     if (error) throw new Error(error.message);
   }
 
-  await recomputeManagerDayHeader(supabase, clockEventId);
+  await rebuildManagerDay(supabase, clockEventId);
 
   await writeAudit({
     action: alreadyEntered
@@ -886,7 +902,7 @@ async function performManualManagerClockEntry(input: ManualManagerClockEntryInpu
 
   // Header last: first-in / last-out / summed hours / summed drops and the
   // day's store all derive from the sessions.
-  const { workedHours } = await recomputeManagerDayHeader(supabase, clockEventId);
+  const { workedHours } = await rebuildManagerDay(supabase, clockEventId);
 
   await writeAudit({
     action: openOnDay
@@ -1030,7 +1046,7 @@ export async function approveManagerDeliveries(input: {
         scopeStoreId,
       );
       if (applied) {
-        await recomputeManagerDayHeader(supabase, day.id);
+        await rebuildManagerDay(supabase, day.id);
       } else {
         // Pre-031 day with no sessions to carry the counts: write the header
         // directly, as the old build always did.
@@ -1054,7 +1070,7 @@ export async function approveManagerDeliveries(input: {
     await approveManagerDaySessions(supabase, day.id, user.id, scopeStoreId);
     const sessions = await managerSessionsForEvent(supabase, day.id);
     if (sessions.length > 0) {
-      await recomputeManagerDayHeader(supabase, day.id);
+      await rebuildManagerDay(supabase, day.id);
     } else {
       // Pre-031 day with no shifts to carry it: the header IS the record, so
       // the approved columns are copied from the raw ones — re-read, because a
@@ -1148,7 +1164,7 @@ export async function unapproveManagerDeliveries(input: {
       scopeStoreId,
     );
     if (withdrawn > 0) {
-      await recomputeManagerDayHeader(supabase, day.id);
+      await rebuildManagerDay(supabase, day.id);
     } else {
       const { error: hdrErr } = await supabase
         .from("manager_clock_events")

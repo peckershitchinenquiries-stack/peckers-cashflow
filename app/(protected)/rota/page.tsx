@@ -1,6 +1,10 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireUser } from "@/lib/supabase-server";
-import { RotaView, type RotaClockSession } from "@/components/rota/RotaView";
+import {
+  RotaView,
+  type RotaClockSession,
+  type RotaManagerSession,
+} from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
 import {
   addDays,
@@ -32,6 +36,7 @@ import {
   ROTA_CLOCK_SESSION_COLUMNS,
   ROTA_EMPLOYEE_COLUMNS,
   ROTA_HISTORY_SHIFT_COLUMNS,
+  ROTA_MANAGER_SESSION_COLUMNS,
   ROTA_SHIFT_COLUMNS,
   SCHEDULE_COLUMNS,
 } from "@/lib/rota-columns";
@@ -72,6 +77,7 @@ export default async function RotaPage({
     managersRes,
     managerShiftsRes,
     managerClocksRes,
+    managerSessionsRes,
     coverDriversRes,
     coverShiftsRes,
     coverSchedulesRes,
@@ -121,6 +127,11 @@ export default async function RotaPage({
       .select("*")
       .gte("event_date", startIso)
       .lte("event_date", clockEndIso),
+    supabase
+      .from("manager_clock_sessions")
+      .select(ROTA_MANAGER_SESSION_COLUMNS)
+      .gte("event_date", startIso)
+      .lte("event_date", clockEndIso),
     supabase.from("cover_drivers").select("*").eq("is_active", true),
     supabase
       .from("cover_driver_shifts")
@@ -153,6 +164,7 @@ export default async function RotaPage({
         managers={(managersRes.data ?? []) as AllowedUser[]}
         managerShifts={(managerShiftsRes.data ?? []) as ManagerShift[]}
         managerClocks={(managerClocksRes.data ?? []) as ManagerClockEvent[]}
+        managerSessions={(managerSessionsRes.data ?? []) as RotaManagerSession[]}
         coverDrivers={(coverDriversRes.data ?? []) as CoverDriver[]}
         coverDriverShifts={(coverShiftsRes.data ?? []) as CoverDriverShift[]}
         coverDriverSchedules={(coverSchedulesRes.data ?? []) as CoverDriverScheduleDay[]}

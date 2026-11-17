@@ -18,6 +18,9 @@ export const ROTA_CLOCK_COLUMNS =
 export const ROTA_CLOCK_SESSION_COLUMNS =
   "employee_id, store_id, event_date, clock_in_at, clock_out_at, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
 
+export const ROTA_MANAGER_SESSION_COLUMNS =
+  "manager_id, store_id, event_date, clock_in_at, clock_out_at, auto_clocked_out, deliveries_only, short_deliveries_count, long_deliveries_count, extra_short_deliveries, extra_long_deliveries";
+
 // The rota needs each employee's identity, store, rates and DOB (for min-wage
 // checks) — but never their bank details. Both pages load every store's staff
 // (to schedule visitors), so the sensitive payment columns are deliberately

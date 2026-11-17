@@ -58,6 +58,10 @@ function presetShort(t: ShiftPreset | null): string | null {
   return null;
 }
 
+function formatClockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
 /** Leave is amber so a booked holiday never reads as a plain red Day Off. */
 function dayOffTone(onLeave: boolean | undefined, past: boolean): string {
   if (onLeave) {
@@ -83,6 +87,21 @@ export type RotaClockSession = {
   extra_long_deliveries: number | null;
 };
 
+/** One manager shift, as the Rota needs it. */
+export type RotaManagerSession = {
+  manager_id: string;
+  store_id: string | null;
+  event_date: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+  auto_clocked_out: boolean | null;
+  deliveries_only: boolean | null;
+  short_deliveries_count: number | null;
+  long_deliveries_count: number | null;
+  extra_short_deliveries: number | null;
+  extra_long_deliveries: number | null;
+};
+
 type Props = {
   stores: Store[];
   employees: RotaEmployee[];
@@ -100,6 +119,9 @@ type Props = {
   managers?: AllowedUser[];
   managerShifts?: ManagerShift[];
   managerClocks?: ManagerClockEvent[];
+  /** The shifts under those days. A manager's header names one store, but where
+   *  they clocked in — at either store — is what places them on a store's rota. */
+  managerSessions?: RotaManagerSession[];
   /** Cover driver rota, shown below the employee rota. Hidden entirely when the
    *  store has no cover drivers; cells stay blank on days they aren't booked,
    *  which is most weekdays. */
@@ -127,6 +149,7 @@ export function RotaView({
   managers = [],
   managerShifts = [],
   managerClocks = [],
+  managerSessions = [],
   coverDrivers = [],
   coverDriverShifts = [],
   coverDriverSchedules = [],
@@ -294,7 +317,44 @@ export function RotaView({
     return m;
   }, [clocks]);
 
-  // Managers who have a cover shift AT the active store within the visible range
+  // A manager's real shifts per day, earliest first. Deliveries-only rows carry
+  // drops for a day nobody clocked, so they never place anyone anywhere.
+  const managerSessionsByKey = React.useMemo(() => {
+    const m = new Map<string, RotaManagerSession[]>();
+    for (const s of managerSessions) {
+      if (s.deliveries_only) continue;
+      const key = `${s.manager_id}:${s.event_date}`;
+      const arr = m.get(key) ?? [];
+      arr.push(s);
+      m.set(key, arr);
+    }
+    for (const arr of m.values()) arr.sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at));
+    return m;
+  }, [managerSessions]);
+
+  const managerClockByKey = React.useMemo(() => {
+    const m = new Map<string, ManagerClockEvent>();
+    for (const c of managerClocks) m.set(`${c.manager_id}:${c.event_date}`, c);
+    return m;
+  }, [managerClocks]);
+
+  // Where a manager actually clocked in on a day — every store, since a day can
+  // be split. Wins over the booking and the home store: Shreehari, homed at
+  // Hitchin and never booked, was listed at Hitchin while clocked in at
+  // Stevenage (Update 282). A pre-031 day with no shifts falls back to its header.
+  function managerClockedStores(managerId: string, dateIso: string): string[] {
+    const key = `${managerId}:${dateIso}`;
+    const sessions = managerSessionsByKey.get(key);
+    if (sessions?.length) {
+      return Array.from(
+        new Set(sessions.map((s) => s.store_id).filter((v): v is string => Boolean(v))),
+      );
+    }
+    const clk = managerClockByKey.get(key);
+    return clk?.clock_in_at && clk.store_id ? [clk.store_id] : [];
+  }
+
+  // Managers booked OR clocked in at the active store within the visible range
   // — i.e. a manager visiting from the other store to cover here.
   const managerVisitorIds = React.useMemo(() => {
     const set = new Set<string>();
@@ -303,8 +363,24 @@ export function RotaView({
         set.add(s.manager_id);
       }
     }
+    for (const [key, sessions] of managerSessionsByKey) {
+      const [managerId, dateIso] = key.split(":");
+      if (visibleDates.has(dateIso) && sessions.some((s) => s.store_id === activeStoreId)) {
+        set.add(managerId);
+      }
+    }
+    for (const c of managerClocks) {
+      if (
+        c.clock_in_at &&
+        c.store_id === activeStoreId &&
+        visibleDates.has(c.event_date) &&
+        !managerSessionsByKey.has(`${c.manager_id}:${c.event_date}`)
+      ) {
+        set.add(c.manager_id);
+      }
+    }
     return set;
-  }, [managerShifts, activeStoreId, visibleDates]);
+  }, [managerShifts, managerSessionsByKey, managerClocks, activeStoreId, visibleDates]);
 
   // Managers shown above the employee rota: this store's own managers, anyone
   // covering here in range (a visitor), and anyone just picked from another
@@ -356,13 +432,6 @@ export function RotaView({
     for (const s of managerShifts) m.set(`${s.manager_id}:${s.shift_date}`, s);
     return m;
   }, [managerShifts]);
-
-  // Manager clocks indexed by manager+date
-  const managerClockByKey = React.useMemo(() => {
-    const m = new Map<string, ManagerClockEvent>();
-    for (const c of managerClocks) m.set(`${c.manager_id}:${c.event_date}`, c);
-    return m;
-  }, [managerClocks]);
 
   // ---- Cover drivers ----
   // Unlike staff and managers, cover drivers belong to one store and aren't
@@ -429,22 +498,41 @@ export function RotaView({
   // Drops a manager covered in the shown range, at THIS store. Managers aren't
   // hourly, so the manager rota has no wage column — but these are paid per
   // drop, so the count belongs on the row that shows what they worked.
+  // Read from the shifts: the header holds the whole day's drops against one
+  // store, so a split day showed every drop on both stores' rows.
   const managerDeliveriesByMgr = React.useMemo(() => {
     const weekSet = new Set(weekDays.map((d) => toISODate(d)));
     const live = new Map<string, number>();
     const extra = new Map<string, number>();
+    const add = (
+      managerId: string,
+      r: {
+        short_deliveries_count?: number | null;
+        long_deliveries_count?: number | null;
+        extra_short_deliveries?: number | null;
+        extra_long_deliveries?: number | null;
+      },
+    ) => {
+      const base =
+        (Number(r.short_deliveries_count) || 0) + (Number(r.long_deliveries_count) || 0);
+      if (base) live.set(managerId, (live.get(managerId) ?? 0) + base);
+      const ex =
+        (Number(r.extra_short_deliveries) || 0) + (Number(r.extra_long_deliveries) || 0);
+      if (ex) extra.set(managerId, (extra.get(managerId) ?? 0) + ex);
+    };
+    const daysWithShifts = new Set<string>();
+    for (const s of managerSessions) {
+      daysWithShifts.add(`${s.manager_id}:${s.event_date}`);
+      if (weekSet.has(s.event_date) && s.store_id === activeStoreId) add(s.manager_id, s);
+    }
     for (const c of managerClocks) {
       if (!weekSet.has(c.event_date)) continue;
+      if (daysWithShifts.has(`${c.manager_id}:${c.event_date}`)) continue;
       if (c.store_id && c.store_id !== activeStoreId) continue;
-      const base =
-        (Number(c.short_deliveries_count) || 0) + (Number(c.long_deliveries_count) || 0);
-      if (base) live.set(c.manager_id, (live.get(c.manager_id) ?? 0) + base);
-      const ex =
-        (Number(c.extra_short_deliveries) || 0) + (Number(c.extra_long_deliveries) || 0);
-      if (ex) extra.set(c.manager_id, (extra.get(c.manager_id) ?? 0) + ex);
+      add(c.manager_id, c);
     }
     return { live, extra };
-  }, [managerClocks, weekDays, activeStoreId]);
+  }, [managerSessions, managerClocks, weekDays, activeStoreId]);
 
   // Hours scheduled AT THE ACTIVE STORE only — a manager can be covering another
   // store on a given day, and those hours belong to that store's rota.
@@ -715,28 +803,99 @@ export function RotaView({
   // One manager's cell for one day — shared by the desktop grid and the phone day list.
   function managerDayCell(mgr: AllowedUser, d: Date): React.ReactNode {
     const dateIso = toISODate(d);
-    const cell = managerShiftByKey.get(`${mgr.id}:${dateIso}`);
-    // Covering ANOTHER store this day — read-only here, so this
-    // store's view shows where the manager has gone.
-    if (cell && cell.store_id !== activeStoreId) {
-      const awayStore = storeById.get(cell.store_id);
+    const key = `${mgr.id}:${dateIso}`;
+    const cell = managerShiftByKey.get(key);
+    const clockedStores = managerClockedStores(mgr.id, dateIso);
+    const clockedHere = clockedStores.includes(activeStoreId);
+    const clockedAway = clockedStores.filter((id) => id !== activeStoreId);
+    const bookedHere = !!cell && cell.store_id === activeStoreId;
+    const shortName = (id: string) => storeById.get(id)?.name?.split(" ")[0] ?? "Away";
+    // At ANOTHER store this day — read-only here, so this store's view shows
+    // where the manager has gone. Where they clocked in beats where they were
+    // booked; a booking HERE keeps its cell so it can still be edited.
+    if (!clockedHere && !bookedHere && (cell || clockedAway.length > 0)) {
+      const awaySessions = (managerSessionsByKey.get(key) ?? []).filter(
+        (s) => s.store_id && s.store_id !== activeStoreId,
+      );
+      const awayIds = clockedAway.length > 0 ? clockedAway : [cell!.store_id];
+      const awayNames = awayIds.map((id) => storeById.get(id)?.name ?? "another store");
+      const lastOut = awaySessions.some((s) => !s.clock_out_at)
+        ? null
+        : awaySessions.reduce<string | null>(
+            (max, s) => (s.clock_out_at && (!max || s.clock_out_at > max) ? s.clock_out_at : max),
+            null,
+          );
       return (
         <div
           className="w-full h-12 rounded-lg text-[11px] border border-dashed border-gold/40 bg-gold/5 text-gold flex flex-col items-center justify-center px-1"
-          title={`Covering ${awayStore?.name ?? "another store"} this day`}
+          title={`${clockedAway.length > 0 ? "Clocked in at" : "Covering"} ${awayNames.join(" + ")} this day`}
         >
           <span className="font-medium truncate max-w-full">
-            @ {awayStore?.name?.split(" ")[0] ?? "Away"}
+            @ {awayIds.map(shortName).join(" + ")}
           </span>
-          {!cell.is_day_off && cell.start_time && (
+          {awaySessions.length > 0 ? (
             <span className="opacity-80 truncate max-w-full">
-              {formatShiftRange(false, cell.start_time, cell.end_time)}
+              ✓ in {formatClockTime(awaySessions[0].clock_in_at)}
+              {lastOut && <> · out {formatClockTime(lastOut)}</>}
             </span>
+          ) : (
+            cell &&
+            !cell.is_day_off &&
+            cell.start_time && (
+              <span className="opacity-80 truncate max-w-full">
+                {formatShiftRange(false, cell.start_time, cell.end_time)}
+              </span>
+            )
           )}
         </div>
       );
     }
-    const clk = managerClockByKey.get(`${mgr.id}:${dateIso}`);
+    // Only THIS store's shifts: a split day's other half belongs to the other
+    // store's rota, not to the first-in / last-out shown here.
+    const hereSessions = (managerSessionsByKey.get(key) ?? []).filter(
+      (s) => s.store_id === activeStoreId,
+    );
+    const header = managerClockByKey.get(key);
+    const clk: {
+      clock_in_at: string | null;
+      clock_out_at: string | null;
+      auto_clocked_out: boolean;
+      session_count: number;
+      worked_hours: number | null;
+    } | null = hereSessions.length
+      ? {
+          clock_in_at: hereSessions[0].clock_in_at,
+          clock_out_at: hereSessions.some((s) => !s.clock_out_at)
+            ? null
+            : hereSessions.reduce<string | null>(
+                (max, s) =>
+                  s.clock_out_at && (!max || s.clock_out_at > max) ? s.clock_out_at : max,
+                null,
+              ),
+          auto_clocked_out: hereSessions.some((s) => s.auto_clocked_out),
+          session_count: hereSessions.length,
+          worked_hours: hereSessions.reduce(
+            (sum, s) =>
+              s.clock_out_at
+                ? sum +
+                  Math.max(
+                    0,
+                    (new Date(s.clock_out_at).getTime() - new Date(s.clock_in_at).getTime()) /
+                      3_600_000,
+                  )
+                : sum,
+            0,
+          ),
+        }
+      : clockedHere && header && !managerSessionsByKey.has(key)
+        ? {
+            clock_in_at: header.clock_in_at,
+            clock_out_at: header.clock_out_at,
+            auto_clocked_out: Boolean(header.auto_clocked_out),
+            session_count: Number(header.session_count) || 1,
+            worked_hours: header.worked_hours != null ? Number(header.worked_hours) : null,
+          }
+        : null;
     const isPast = dateIso < todayISO();
     const prevShift = managerShiftByKey.get(
       `${mgr.id}:${toISODate(addDays(d, -1))}`,
@@ -750,7 +909,10 @@ export function RotaView({
         : null;
     // "Came or not" — a past scheduled (non-day-off) shift
     // with no clock-in is a no-show.
-    const missed = isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at;
+    // Booked here but clocked in only at the other store: they turned up, just
+    // not here, so that is said instead of "not clocked in".
+    const missed =
+      isPast && !!cell && !cell.is_day_off && !clk?.clock_in_at && clockedAway.length === 0;
     const cellInner = (
       <>
         {cell ? formatShiftRange(cell.is_day_off, cell.start_time, cell.end_time, cell.is_on_leave) : "—"}
@@ -798,6 +960,11 @@ export function RotaView({
         )}
         {missed && (
           <div className="text-[9px] text-danger mt-0.5">✗ not clocked in</div>
+        )}
+        {!clk?.clock_in_at && clockedAway.length > 0 && (
+          <div className="text-[9px] text-gold mt-0.5">
+            worked @ {clockedAway.map(shortName).join(" + ")}
+          </div>
         )}
       </>
     );
