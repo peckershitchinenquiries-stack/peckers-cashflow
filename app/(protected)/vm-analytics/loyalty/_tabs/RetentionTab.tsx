@@ -127,6 +127,11 @@ export async function RetentionTab({
       <Section title="Are they coming back?" description="Repeat behaviour for the selected week and the 4 weeks to it.">
         <KpiGrid>
           <KpiCard
+            label="Members who ordered"
+            value={ms && !preLaunch ? int(ms.member_customers) : "—"}
+            hint={ms && !preLaunch ? `${int(ms.returning_members)} had ordered in an earlier week` : "this week"}
+          />
+          <KpiCard
             label="Repeat rate"
             value={repeat === null ? "—" : pct(repeat, 1)}
             hint={pointsDelta(repeat, prevRepeat) ?? "members this week who had ordered before"}
@@ -153,7 +158,8 @@ export async function RetentionTab({
           />
         </KpiGrid>
         <Caveat>
-          Repeat rate = members who ordered this week and had already placed a member order in an earlier week. Peckers-app
+          Repeat rate = members who ordered this week and had already placed a member order in any earlier week since
+          launch (not just last week). Peckers-app
           orders always count as member orders.
         </Caveat>
       </Section>
