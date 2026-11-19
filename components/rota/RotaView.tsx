@@ -117,7 +117,7 @@ type Props = {
   clockSessions?: RotaClockSession[];
   weeklyDeliveries: WeeklyDelivery[];
   schedules?: EmployeeScheduleDay[];
-  /** Manager rota section shown above the employee rota (admin Rota page only). */
+  /** Manager rota group shown above the staff rows (admin and manager Rota). */
   managers?: AllowedUser[];
   managerShifts?: ManagerShift[];
   managerClocks?: ManagerClockEvent[];
@@ -814,7 +814,7 @@ export function RotaView({
   const visitingCount = rotaEmployees.filter((e) => e.store_id !== activeStoreId).length;
 
   // ---- One combined rota: managers, staff and cover drivers as groups ----
-  // The manager group exists only where the page passes managers (admin Rota).
+  // The manager group exists only where the page passes managers.
   const hasManagerGroup = managers.length > 0;
   const hasCoverGroup = activeCoverDrivers.length > 0;
   const groupCount = 1 + (hasManagerGroup ? 1 : 0) + (hasCoverGroup ? 1 : 0);

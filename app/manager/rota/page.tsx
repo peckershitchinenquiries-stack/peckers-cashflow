@@ -1,7 +1,11 @@
 import { PageHeader } from "@/components/layout/PageHeader";
 import { createServerSupabase, requireRole } from "@/lib/supabase-server";
 import { resolveActiveStoreId } from "@/lib/types";
-import { RotaView, type RotaClockSession } from "@/components/rota/RotaView";
+import {
+  RotaView,
+  type RotaClockSession,
+  type RotaManagerSession,
+} from "@/components/rota/RotaView";
 import { getAppSettings } from "@/app/actions/settings";
 import {
   addDays,
@@ -12,6 +16,9 @@ import {
   todayISO,
 } from "@/lib/utils";
 import type {
+  AllowedUser,
+  ManagerClockEvent,
+  ManagerShift,
   CoverDriver,
   CoverDriverClockEvent,
   CoverDriverScheduleDay,
@@ -30,6 +37,7 @@ import {
   ROTA_CLOCK_SESSION_COLUMNS,
   ROTA_EMPLOYEE_COLUMNS,
   ROTA_HISTORY_SHIFT_COLUMNS,
+  ROTA_MANAGER_SESSION_COLUMNS,
   ROTA_SHIFT_COLUMNS,
   SCHEDULE_COLUMNS,
 } from "@/lib/rota-columns";
@@ -71,6 +79,10 @@ export default async function ManagerRotaPage({
     clockSessionsRes,
     deliveriesRes,
     schedulesRes,
+    managersRes,
+    managerShiftsRes,
+    managerClocksRes,
+    managerSessionsRes,
     coverDriversRes,
     coverShiftsRes,
     coverSchedulesRes,
@@ -110,6 +122,31 @@ export default async function ManagerRotaPage({
         .eq("store_id", storeId)
         .eq("week_start_date", weekStartIso),
       supabase.from("employee_schedules").select(SCHEDULE_COLUMNS),
+      // Managers cross-cover, so every manager is loaded — identity columns
+      // only, never wages, contact details or login fields.
+      supabase
+        .from("allowed_users")
+        .select("id, name, username, role, store_id")
+        .eq("role", "manager"),
+      supabase
+        .from("manager_shifts")
+        .select("*")
+        .gte("shift_date", startIso)
+        .lte("shift_date", endIso),
+      // RLS scopes these to this store's days (034/061); a peer's attendance
+      // elsewhere stays private between them and the admin.
+      supabase
+        .from("manager_clock_events")
+        .select(
+          "manager_id, event_date, store_id, clock_in_at, clock_out_at, auto_clocked_out, session_count, worked_hours",
+        )
+        .gte("event_date", startIso)
+        .lte("event_date", clockEndIso),
+      supabase
+        .from("manager_clock_sessions")
+        .select(ROTA_MANAGER_SESSION_COLUMNS)
+        .gte("event_date", startIso)
+        .lte("event_date", clockEndIso),
       // Cover drivers belong to one store and aren't loaned out, so unlike
       // staff these are scoped to this store rather than loaded estate-wide.
       supabase
@@ -147,6 +184,10 @@ export default async function ManagerRotaPage({
         clockSessions={(clockSessionsRes.data ?? []) as RotaClockSession[]}
         weeklyDeliveries={(deliveriesRes.data ?? []) as WeeklyDelivery[]}
         schedules={(schedulesRes.data ?? []) as EmployeeScheduleDay[]}
+        managers={(managersRes.data ?? []) as AllowedUser[]}
+        managerShifts={(managerShiftsRes.data ?? []) as ManagerShift[]}
+        managerClocks={(managerClocksRes.data ?? []) as ManagerClockEvent[]}
+        managerSessions={(managerSessionsRes.data ?? []) as RotaManagerSession[]}
         coverDrivers={(coverDriversRes.data ?? []) as CoverDriver[]}
         coverDriverShifts={(coverShiftsRes.data ?? []) as CoverDriverShift[]}
         coverDriverSchedules={(coverSchedulesRes.data ?? []) as CoverDriverScheduleDay[]}

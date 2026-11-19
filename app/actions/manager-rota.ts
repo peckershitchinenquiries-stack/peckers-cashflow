@@ -4,18 +4,42 @@ import { revalidatePath } from "next/cache";
 import { createServerSupabase, getSessionUser } from "@/lib/supabase-server";
 import { writeAudit } from "./audit";
 import { shiftHours, todayISO } from "@/lib/utils";
+import { resolveActiveStoreId } from "@/lib/types";
 
-// Managers are provisioned/managed by admin only (see /managers), and the
-// edit UI for this table only exists on the admin Rota page — so, unlike
-// employee rota_shifts (which managers can also edit), writes here are
-// admin-only. Mirrors the manager_shifts_modify RLS policy.
-async function requireAdmin() {
+// Admin books any store; a manager books only the store they're running, so
+// they can schedule a peer without gaining anything else admin can do.
+// Mirrors the manager_shifts_modify RLS policy (migration 076).
+async function requireRotaEditor(): Promise<{
+  userId: string;
+  scopeStoreId: string | null;
+}> {
   const user = await getSessionUser();
   if (!user || !user.allowed) throw new Error("Not authorised");
-  if (user.allowed.role !== "admin") {
-    throw new Error("Only admin can edit the manager rota.");
-  }
-  return user;
+  const role = user.allowed.role;
+  if (role === "admin") return { userId: user.id, scopeStoreId: null };
+  if (role !== "manager") throw new Error("Not authorised");
+  const activeStore = resolveActiveStoreId(user.allowed);
+  if (!activeStore) throw new Error("No store assigned to your account.");
+  return { userId: user.id, scopeStoreId: activeStore };
+}
+
+// One booking per manager per date across the estate, so another store's
+// booking would be overwritten by an upsert from here — refuse instead.
+function assertBookingInScope(
+  scopeStoreId: string | null,
+  bookingStoreId: string | null | undefined,
+) {
+  if (!scopeStoreId || !bookingStoreId || bookingStoreId === scopeStoreId) return;
+  throw new Error(
+    "This manager is already booked at another store that day. Ask that store's manager or an admin to change it.",
+  );
+}
+
+function revalidateManagerRotaPaths() {
+  revalidatePath("/rota");
+  revalidatePath("/manager/rota");
+  revalidatePath("/live");
+  revalidatePath("/manager/live");
 }
 
 export type ManagerShiftInput = {
@@ -32,12 +56,24 @@ export type ManagerShiftInput = {
 
 /** Upsert a manager's shift cell. Computes scheduled hours. */
 export async function upsertManagerShift(input: ManagerShiftInput) {
-  const user = await requireAdmin();
+  const { userId, scopeStoreId } = await requireRotaEditor();
   const supabase = createServerSupabase();
 
   if (!input.manager_id) throw new Error("Missing manager");
   if (!input.store_id) throw new Error("Missing store");
   if (!input.shift_date) throw new Error("Missing date");
+  if (scopeStoreId && input.store_id !== scopeStoreId) {
+    throw new Error("You can only book shifts at the store you're managing.");
+  }
+
+  const { data: target } = await supabase
+    .from("allowed_users")
+    .select("id, role")
+    .eq("id", input.manager_id)
+    .maybeSingle();
+  if (!target || target.role !== "manager") {
+    throw new Error("That account isn't a manager.");
+  }
 
   // Past days are read-only — only today and future shifts can be edited.
   if (input.shift_date < todayISO()) {
@@ -64,6 +100,7 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
     .eq("manager_id", input.manager_id)
     .eq("shift_date", input.shift_date)
     .maybeSingle();
+  assertBookingInScope(scopeStoreId, existing?.store_id);
 
   const payload = {
     manager_id: input.manager_id,
@@ -75,7 +112,7 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
     is_on_leave: isOnLeave,
     scheduled_hours: hours,
     notes: input.notes?.trim() || null,
-    updated_by: user.id,
+    updated_by: userId,
   };
 
   if (existing) {
@@ -93,7 +130,7 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
   } else {
     const { error } = await supabase
       .from("manager_shifts")
-      .insert({ ...payload, created_by: user.id });
+      .insert({ ...payload, created_by: userId });
     if (error) throw new Error(error.message);
     await writeAudit({
       action: "create",
@@ -103,22 +140,23 @@ export async function upsertManagerShift(input: ManagerShiftInput) {
     });
   }
 
-  revalidatePath("/rota");
-  revalidatePath("/live");
+  revalidateManagerRotaPaths();
   return { ok: true };
 }
 
 export async function deleteManagerShift(id: string) {
-  await requireAdmin();
+  const { scopeStoreId } = await requireRotaEditor();
   const supabase = createServerSupabase();
 
   // Block clearing shifts on past days — they are read-only.
   const { data: existing } = await supabase
     .from("manager_shifts")
-    .select("shift_date")
+    .select("shift_date, store_id")
     .eq("id", id)
     .maybeSingle();
-  if (existing && existing.shift_date < todayISO()) {
+  if (!existing) throw new Error("Shift not found.");
+  assertBookingInScope(scopeStoreId, existing.store_id);
+  if (existing.shift_date < todayISO()) {
     throw new Error(
       "Past days are locked. You can view previous shifts but only edit today or upcoming days.",
     );
@@ -127,7 +165,6 @@ export async function deleteManagerShift(id: string) {
   const { error } = await supabase.from("manager_shifts").delete().eq("id", id);
   if (error) throw new Error(error.message);
   await writeAudit({ action: "delete", entity: "manager_shift", entity_id: id });
-  revalidatePath("/rota");
-  revalidatePath("/live");
+  revalidateManagerRotaPaths();
   return { ok: true };
 }
