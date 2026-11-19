@@ -51,6 +51,8 @@ import type {
 } from "@/lib/types";
 import { hasRole } from "@/lib/types";
 
+type RotaGroupFilter = "all" | "managers" | "staff" | "cover";
+
 /** Short label for a rota preset, shown under the time in a filled cell. */
 function presetShort(t: ShiftPreset | null): string | null {
   if (t === "open_close") return "Open–Close";
@@ -183,6 +185,9 @@ export function RotaView({
   // manager rota before their first cover shift is saved.
   const [addedManagerVisitorIds, setAddedManagerVisitorIds] = React.useState<string[]>([]);
   React.useEffect(() => setAddedManagerVisitorIds([]), [activeStoreId]);
+  // Reset on store change: the other store may have no cover drivers to filter to.
+  const [groupFilter, setGroupFilter] = React.useState<RotaGroupFilter>("all");
+  React.useEffect(() => setGroupFilter("all"), [activeStoreId]);
   const [editingShift, setEditingShift] = React.useState<{
     employee: RotaEmployee;
     date: string;
@@ -588,6 +593,7 @@ export function RotaView({
       return {
         sessionCount: Number(clk?.session_count ?? 0),
         workedHours: clk?.worked_hours != null ? Number(clk.worked_hours) : null,
+        firstInAt: clk?.store_id === activeStoreId ? clk.clock_in_at : null,
       };
     }
     const mine = storeSessionsByEmpDay.get(key) ?? [];
@@ -596,9 +602,16 @@ export function RotaView({
       const ms = new Date(x.clock_out_at!).getTime() - new Date(x.clock_in_at).getTime();
       return sum + (ms > 0 ? ms / 3_600_000 : 0);
     }, 0);
+    // The header's clock_in_at is the earliest at ANY store, so a split day's
+    // Stevenage morning would read as this store's clock-in.
+    const firstInAt = mine.reduce<string | null>(
+      (min, x) => (!min || x.clock_in_at < min ? x.clock_in_at : min),
+      null,
+    );
     return {
       sessionCount: mine.length,
       workedHours: closed.length > 0 ? hours : null,
+      firstInAt,
     };
   }
 
@@ -799,6 +812,110 @@ export function RotaView({
     0,
   );
   const visitingCount = rotaEmployees.filter((e) => e.store_id !== activeStoreId).length;
+
+  // ---- One combined rota: managers, staff and cover drivers as groups ----
+  // The manager group exists only where the page passes managers (admin Rota).
+  const hasManagerGroup = managers.length > 0;
+  const hasCoverGroup = activeCoverDrivers.length > 0;
+  const groupCount = 1 + (hasManagerGroup ? 1 : 0) + (hasCoverGroup ? 1 : 0);
+  const showManagers = hasManagerGroup && (groupFilter === "all" || groupFilter === "managers");
+  const showStaff = groupFilter === "all" || groupFilter === "staff";
+  const showCover = hasCoverGroup && (groupFilter === "all" || groupFilter === "cover");
+
+  function coverWages(driver: CoverDriver): number {
+    return rangeCoverTotalHours(driver.id) * (Number(driver.hourly_cash_rate) || 0);
+  }
+  const expectedCoverBill = activeCoverDrivers.reduce((sum, d) => sum + coverWages(d), 0);
+  const peopleCount =
+    (hasManagerGroup ? activeManagers.length : 0) + rotaEmployees.length + activeCoverDrivers.length;
+  const totalVisiting = (hasManagerGroup ? managerVisitingCount : 0) + visitingCount;
+
+  // Managers are on a fixed daily wage: their hours count, their pay never does.
+  const shownHours =
+    (showManagers ? activeManagers.reduce((s, m) => s + weekManagerTotalHours(m.id), 0) : 0) +
+    (showStaff ? rotaEmployees.reduce((s, e) => s + weekTotalHours(e.id), 0) : 0) +
+    (showCover ? activeCoverDrivers.reduce((s, d) => s + rangeCoverTotalHours(d.id), 0) : 0);
+  const shownCashHours =
+    (showStaff ? rotaEmployees.reduce((s, e) => s + weekCashHours(e), 0) : 0) +
+    (showCover ? activeCoverDrivers.reduce((s, d) => s + rangeCoverTotalHours(d.id), 0) : 0);
+  const shownWages = (showStaff ? expectedWageBill : 0) + (showCover ? expectedCoverBill : 0);
+
+  // People booked to work AT THIS STORE on a day, across the groups on screen.
+  function bookedHereCount(d: Date): number {
+    const iso = toISODate(d);
+    let n = 0;
+    if (showManagers) {
+      for (const m of activeManagers) {
+        const s = managerShiftByKey.get(`${m.id}:${iso}`);
+        if (s && !s.is_day_off && s.store_id === activeStoreId) n++;
+      }
+    }
+    if (showStaff) {
+      for (const e of rotaEmployees) {
+        const day = shiftByKey.get(`${e.id}:${iso}`) ?? [];
+        if (day.some((s) => !s.is_day_off && s.store_id === activeStoreId)) n++;
+      }
+    }
+    if (showCover) {
+      for (const c of activeCoverDrivers) {
+        const s = coverShiftByKey.get(`${c.id}:${iso}`);
+        if (s && !s.is_day_off) n++;
+      }
+    }
+    return n;
+  }
+
+  const groupChips: { key: RotaGroupFilter; label: string; count: number }[] = [
+    { key: "all", label: "Everyone", count: peopleCount },
+    ...(hasManagerGroup
+      ? [{ key: "managers" as const, label: "Managers", count: activeManagers.length }]
+      : []),
+    { key: "staff", label: "Staff", count: rotaEmployees.length },
+    ...(hasCoverGroup
+      ? [{ key: "cover" as const, label: "Cover drivers", count: activeCoverDrivers.length }]
+      : []),
+  ];
+  const groupSummary = [
+    hasManagerGroup
+      ? `${activeManagers.length} manager${activeManagers.length === 1 ? "" : "s"}`
+      : null,
+    `${rotaEmployees.length} staff`,
+    hasCoverGroup
+      ? `${activeCoverDrivers.length} cover driver${activeCoverDrivers.length === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  const colCount = 4 + weekDays.length + 5;
+
+  function groupHeadingRow(label: string, note: string): React.ReactNode {
+    if (groupCount < 2) return null;
+    return (
+      <tr className="border-t border-border bg-surface-hover/40">
+        <td colSpan={colCount} className="px-3 py-1.5 text-[11px] text-text-muted">
+          <span className="sticky left-3 inline-block">
+            <span className="uppercase tracking-wider font-medium text-text-subtle">{label}</span>
+            <span> · {note}</span>
+          </span>
+        </td>
+      </tr>
+    );
+  }
+
+  function groupHeadingItem(label: string, note: string): React.ReactNode {
+    if (groupCount < 2) return null;
+    return (
+      <li className="px-4 py-1.5 bg-surface-hover/40 text-[11px] text-text-muted">
+        <span className="uppercase tracking-wider font-medium text-text-subtle">{label}</span>
+        <span> · {note}</span>
+      </li>
+    );
+  }
+
+  const MANAGER_NOTE = "fixed daily wage, not in the wage bill";
+  const STAFF_NOTE = "NI up to their weekly limit, cash above it";
+  const COVER_NOTE = "cash per hour, paid from what they clock";
 
   // One manager's cell for one day — shared by the desktop grid and the phone day list.
   function managerDayCell(mgr: AllowedUser, d: Date): React.ReactNode {
@@ -1127,9 +1244,9 @@ export function RotaView({
         ) : (
           "—"
         )}
-        {clk?.clock_in_at && (
+        {clk && storeAttendance.firstInAt && (
           <div className="text-[9px] text-text-muted mt-0.5">
-            in {new Date(clk.clock_in_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+            in {new Date(storeAttendance.firstInAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
             {/* Labelled as WORKED, on its own line: the row
                 above is the scheduled shift, and the two are
                 different things on a split day. Counted AT THIS
@@ -1469,302 +1586,271 @@ export function RotaView({
         </div>
       </Card>
 
-      {/* Manager rota — managers are on a fixed daily wage, not hourly, so this
-          is scheduling + attendance only (no wage/hours-avg columns). */}
-      {managers.length > 0 && (
-        <Card className="overflow-hidden p-0 max-md:p-0">
-          <CardHeader className="px-4 sm:px-5 pt-5 flex-col sm:flex-row sm:items-start sm:justify-between gap-3 max-md:pt-4">
-            <div>
-              <CardTitle>{activeStore?.name ?? "—"} Manager Rota</CardTitle>
-              <CardDescription>
-                {activeManagers.length} manager{activeManagers.length === 1 ? "" : "s"}
-                {managerVisitingCount > 0 ? ` (${managerVisitingCount} visiting)` : ""} · fixed
-                daily wage — not hourly, shown for scheduling &amp; attendance only
-              </CardDescription>
-            </div>
-            {eligibleManagerVisitors.length > 0 && (
+      {/* One rota for everyone at this store — managers, staff and cover drivers
+          as groups in a single table, so a day's whole cover reads in one place. */}
+      <Card className="overflow-hidden p-0 max-md:p-0">
+        <CardHeader
+          className="px-5 pt-5 mb-3 flex-row items-start justify-between gap-3 max-md:px-4 max-md:pt-4 max-sm:flex-col"
+          action={
+            (eligibleVisitors.length > 0 || eligibleManagerVisitors.length > 0) && (
               <select
-                className="h-10 w-full sm:w-auto rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer sm:max-w-[260px]"
+                className="h-10 min-w-[240px] rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-sm:w-full"
                 value=""
                 onChange={(e) => {
-                  if (e.target.value)
-                    setAddedManagerVisitorIds((p) => [...p, e.target.value]);
+                  const v = e.target.value;
+                  if (v.startsWith("m:")) {
+                    setAddedManagerVisitorIds((p) => [...p, v.slice(2)]);
+                    setGroupFilter((f) => (f === "all" ? f : "managers"));
+                  } else if (v.startsWith("e:")) {
+                    setAddedVisitorIds((p) => [...p, v.slice(2)]);
+                    setGroupFilter((f) => (f === "all" ? f : "staff"));
+                  }
                 }}
-                title="Add a manager from another store to cover a shift here"
+                title="Add someone from another store to cover a shift here"
               >
-                <option value="">+ Add manager from another store…</option>
-                {eligibleManagerVisitors.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.username || "Manager"} —{" "}
-                    {storeById.get(m.store_id ?? "")?.name ?? "Other store"}
-                  </option>
-                ))}
-              </select>
-            )}
-          </CardHeader>
-
-          <ul className="md:hidden divide-y divide-border border-t border-border">
-            {activeManagers.length === 0 && (
-              <li className="px-4 py-6 text-sm text-center text-text-muted">
-                No managers assigned to this store yet. Add one on the Managers page.
-              </li>
-            )}
-            {activeManagers.map((mgr) => {
-              const total = weekManagerTotalHours(mgr.id);
-              const drops =
-                (managerDeliveriesByMgr.live.get(mgr.id) ?? 0) +
-                (managerDeliveriesByMgr.extra.get(mgr.id) ?? 0);
-              return (
-                <li key={mgr.id} className="px-4 py-3 flex flex-col gap-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="font-medium text-text-primary min-w-0 truncate">
-                      {mgr.name || mgr.username || "Manager"}
-                      {mgr.store_id !== activeStoreId && (
-                        <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
-                          visiting
-                        </span>
-                      )}
-                    </p>
-                    <p className="shrink-0 text-[11px] text-text-muted tabular-nums">
-                      {formatHoursMinsWords(total)}
-                      {drops > 0 && <span className="text-gold"> · {drops} drops</span>}
-                    </p>
-                  </div>
-                  {managerDayCell(mgr, mobileDay)}
-                </li>
-              );
-            })}
-          </ul>
-
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm min-w-[900px]">
-              <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
-                <tr>
-                  <th className="text-left px-3 py-2 sticky left-0 bg-surface-hover z-10 sticky-col">
-                    Manager
-                  </th>
-                  {weekDays.map((d) => (
-                    <th
-                      key={d.toISOString()}
-                      className="text-center px-2 py-2 min-w-[110px]"
-                    >
-                      <div>{WEEKDAY_SHORT[(d.getDay() + 6) % 7]}</div>
-                      <div className="text-[10px] font-normal text-text-muted normal-case">
-                        {String(d.getDate()).padStart(2, "0")}/{String(d.getMonth() + 1).padStart(2, "0")}
-                      </div>
-                    </th>
-                  ))}
-                  <th
-                    className="text-center px-2 py-2"
-                    title="Deliveries this manager covered, paid per drop on the Tuesday sheet"
-                  >
-                    Deliveries
-                  </th>
-                  <th className="text-right px-3 py-2">Total hrs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeManagers.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={weekDays.length + 3}
-                      className="px-4 py-8 text-center text-text-muted"
-                    >
-                      No managers assigned to this store yet. Add one on the Managers page.
-                    </td>
-                  </tr>
+                <option value="">+ Add from another store…</option>
+                {eligibleManagerVisitors.length > 0 && (
+                  <optgroup label="Managers">
+                    {eligibleManagerVisitors.map((m) => (
+                      <option key={m.id} value={`m:${m.id}`}>
+                        {m.name || m.username || "Manager"} —{" "}
+                        {storeById.get(m.store_id ?? "")?.name ?? "Other store"}
+                      </option>
+                    ))}
+                  </optgroup>
                 )}
-                {activeManagers.map((mgr) => {
-                  const total = weekManagerTotalHours(mgr.id);
-                  return (
-                    <tr
-                      key={mgr.id}
-                      className="border-t border-border hover:bg-surface-hover/60 transition-colors"
-                    >
-                      <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
+                {eligibleVisitors.length > 0 && (
+                  <optgroup label="Staff">
+                    {eligibleVisitors.map((e) => (
+                      <option key={e.id} value={`e:${e.id}`}>
+                        {e.name} — {storeById.get(e.store_id ?? "")?.name ?? "Other store"}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            )
+          }
+        >
+          <CardTitle>{activeStore?.name ?? "—"} Rota</CardTitle>
+          <CardDescription>
+            {peopleCount} {peopleCount === 1 ? "person" : "people"}
+            {groupCount > 1 ? ` · ${groupSummary}` : ""}
+            {totalVisiting > 0 ? ` (${totalVisiting} visiting)` : ""} · Expected wage bill{" "}
+            <span className="text-text-primary font-medium">
+              {formatGBP(expectedWageBill + expectedCoverBill)}
+            </span>
+            {hasManagerGroup && (
+              <span className="text-text-muted"> · excludes managers&apos; fixed daily wage</span>
+            )}
+          </CardDescription>
+        </CardHeader>
+
+        {groupCount > 1 && (
+          <div className="px-5 pb-4 max-md:px-4 flex gap-1.5 overflow-x-auto scrollbar-none">
+            {groupChips.map((chip) => (
+              <button
+                key={chip.key}
+                type="button"
+                onClick={() => setGroupFilter(chip.key)}
+                aria-pressed={groupFilter === chip.key}
+                className={
+                  "shrink-0 h-8 px-3 rounded-full border text-xs font-medium transition-colors " +
+                  (groupFilter === chip.key
+                    ? "bg-gold text-black border-gold"
+                    : "bg-surface text-text-subtle border-border hover:bg-surface-hover hover:text-text-primary")
+                }
+              >
+                {chip.label}
+                <span className="ml-1.5 tabular-nums opacity-70">{chip.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <ul className="md:hidden divide-y divide-border border-t border-border">
+          {showManagers && (
+            <>
+              {groupHeadingItem("Managers", MANAGER_NOTE)}
+              {activeManagers.length === 0 && (
+                <li className="px-4 py-6 text-sm text-center text-text-muted">
+                  No managers assigned to this store yet. Add one on the Managers page.
+                </li>
+              )}
+              {activeManagers.map((mgr) => {
+                const total = weekManagerTotalHours(mgr.id);
+                const drops =
+                  (managerDeliveriesByMgr.live.get(mgr.id) ?? 0) +
+                  (managerDeliveriesByMgr.extra.get(mgr.id) ?? 0);
+                return (
+                  <li key={`m:${mgr.id}`} className="px-4 py-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-medium text-text-primary min-w-0 truncate">
                         {mgr.name || mgr.username || "Manager"}
                         {mgr.store_id !== activeStoreId && (
-                          <span
-                            className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
-                            title={`Visiting from ${storeById.get(mgr.store_id ?? "")?.name ?? "another store"}`}
-                          >
+                          <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
                             visiting
                           </span>
                         )}
-                      </td>
-                      {weekDays.map((d) => {
-                        const dateIso = toISODate(d);
-                        return (
-                          <td
-                            key={dateIso}
-                            className={
-                              "px-1 py-1 text-center align-middle " +
-                              (dateIso === todayISO() ? "bg-gold/5" : "")
-                            }
-                          >
-                            {managerDayCell(mgr, d)}
-                          </td>
-                        );
-                      })}
-                      <td className="px-2 py-2 text-center tabular-nums">
-                        {(() => {
-                          const live = managerDeliveriesByMgr.live.get(mgr.id) ?? 0;
-                          const extra = managerDeliveriesByMgr.extra.get(mgr.id) ?? 0;
-                          if (live + extra === 0) {
-                            return <span className="text-text-subtle">—</span>;
-                          }
-                          return (
-                            <span
-                              className="text-gold font-medium"
-                              title={
-                                extra > 0
-                                  ? `${live} on the round + ${extra} extra, paid at the same per-drop rate`
-                                  : "Drops covered on the normal round"
-                              }
-                            >
-                              {live + extra}
-                              {extra > 0 && (
-                                <span className="text-[10px] text-text-muted"> (+{extra})</span>
-                              )}
+                      </p>
+                      <p className="shrink-0 text-[11px] text-text-muted tabular-nums">
+                        {formatHoursMinsWords(total)}
+                        {drops > 0 && <span className="text-gold"> · {drops} drops</span>}
+                      </p>
+                    </div>
+                    {managerDayCell(mgr, mobileDay)}
+                  </li>
+                );
+              })}
+            </>
+          )}
+
+          {showStaff && (
+            <>
+              {groupHeadingItem("Staff", STAFF_NOTE)}
+              {rotaEmployees.length === 0 && (
+                <li className="px-4 py-6 text-sm text-center text-text-muted">
+                  No staff on this store&apos;s rota yet. Assign staff to this store in
+                  Employees, or add someone from the other store above.
+                </li>
+              )}
+              {rotaEmployees.map((emp) => {
+                const total = weekTotalHours(emp.id);
+                const cashHrs = weekCashHours(emp);
+                const avg = fourWkAvg.get(emp.id) ?? 0;
+                const wages = weekWages(emp);
+                const variance = avg > 0 ? ((total - avg) / avg) * 100 : 0;
+                const flagVariance = avg > 0 && Math.abs(variance) > 20;
+                const isDriver = hasRole(emp.position, "Driver");
+                const delivery = deliveryByDriver.get(emp.id);
+                const wage = wageComplianceForEmployee(emp, minWageBands);
+                const underMinWage = wage ? !wage.compliant : false;
+                const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
+                const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
+                return (
+                  <li key={`e:${emp.id}`} className="px-4 py-3 flex flex-col gap-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-text-primary truncate">
+                          {emp.name}
+                          {emp.store_id !== activeStoreId && (
+                            <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
+                              visiting
                             </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-3 py-2 text-right font-medium">
-                        <HoursMinsDisplay hours={total} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                          )}
+                        </p>
+                        <p className="text-[11px] text-text-muted truncate">
+                          {emp.position ?? "—"} ·{" "}
+                          <span className={underMinWage ? "text-danger font-medium" : ""}>
+                            NI £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
+                            {underMinWage && " ⚠ below min"}
+                          </span>
+                          {emp.hourly_cash_rate ? ` · Cash £${Number(emp.hourly_cash_rate).toFixed(2)}` : ""}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold tabular-nums text-text-primary">
+                          {formatGBP(wages.total)}
+                        </p>
+                        {wages.cash > 0 && (
+                          <p className="text-[10px] text-success tabular-nums">Cash {formatGBP(wages.cash)}</p>
+                        )}
+                      </div>
+                    </div>
 
-      {/* Rota grid */}
-      <Card className="overflow-hidden p-0 max-md:p-0">
-        <CardHeader className="px-5 pt-5 flex-row items-start justify-between gap-3 max-md:px-4 max-md:pt-4 max-sm:flex-col">
-          <div>
-            <CardTitle>{activeStore?.name ?? "—"} Rota</CardTitle>
-            <CardDescription>
-              {rotaEmployees.length} staff
-              {visitingCount > 0 ? ` (${visitingCount} visiting)` : ""} · Expected wage bill{" "}
-              <span className="text-text-primary font-medium">
-                {formatGBP(expectedWageBill)}
-              </span>
-            </CardDescription>
-          </div>
-          {eligibleVisitors.length > 0 && (
-            <select
-              className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-text-primary hover:bg-surface-hover cursor-pointer max-w-[260px] max-sm:w-full max-sm:max-w-none"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) setAddedVisitorIds((p) => [...p, e.target.value]);
-              }}
-              title="Add a member of staff from the other store to cover a shift here"
-            >
-              <option value="">+ Add staff from another store…</option>
-              {eligibleVisitors.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name} — {storeById.get(e.store_id ?? "")?.name ?? "Other store"}
-                </option>
-              ))}
-            </select>
-          )}
-        </CardHeader>
+                    {employeeDayCell(emp, mobileDay)}
 
-        <ul className="md:hidden divide-y divide-border border-t border-border">
-          {rotaEmployees.length === 0 && (
-            <li className="px-4 py-6 text-sm text-center text-text-muted">
-              No staff on this store&apos;s rota yet. Assign staff to this store in
-              Employees, or add someone from the other store above.
-            </li>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted tabular-nums">
+                      <span>
+                        Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
+                      </span>
+                      {cashHrs > 0 && (
+                        <span className="text-gold">Cash {formatHoursMinsWords(cashHrs)}</span>
+                      )}
+                      <span className={flagVariance ? "text-warning" : ""}>
+                        4-wk avg {formatHoursMinsWords(avg)}
+                        {flagVariance && ` (${variance > 0 ? "+" : ""}${variance.toFixed(0)}%)`}
+                      </span>
+                      {isDriver && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingDelivery({
+                              driver: emp,
+                              existing: delivery ?? null,
+                              weekDays: weekDays.map((d) => toISODate(d)),
+                              events: clocks.filter(
+                                (c) =>
+                                  c.employee_id === emp.id &&
+                                  weekDays.some((d) => toISODate(d) === c.event_date),
+                              ),
+                            })
+                          }
+                          className="ml-auto h-7 px-2 rounded-md border border-border text-text-subtle hover:text-text-primary"
+                        >
+                          Drops{" "}
+                          <span className="text-success">Live {liveDeliv}</span>
+                          {liveExtra > 0 && <span className="text-gold"> +{liveExtra}</span>}
+                          {delivery?.manager_avg_4wk != null && <> · Avg {delivery.manager_avg_4wk}</>}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </>
           )}
-          {rotaEmployees.map((emp) => {
-            const total = weekTotalHours(emp.id);
-            const cashHrs = weekCashHours(emp);
-            const avg = fourWkAvg.get(emp.id) ?? 0;
-            const wages = weekWages(emp);
-            const variance = avg > 0 ? ((total - avg) / avg) * 100 : 0;
-            const flagVariance = avg > 0 && Math.abs(variance) > 20;
-            const isDriver = hasRole(emp.position, "Driver");
-            const delivery = deliveryByDriver.get(emp.id);
-            const wage = wageComplianceForEmployee(emp, minWageBands);
-            const underMinWage = wage ? !wage.compliant : false;
-            const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
-            const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
-            return (
-              <li key={emp.id} className="px-4 py-3 flex flex-col gap-2">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="font-medium text-text-primary truncate">
-                      {emp.name}
-                      {emp.store_id !== activeStoreId && (
-                        <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle">
-                          visiting
-                        </span>
+
+          {showCover && (
+            <>
+              {groupHeadingItem("Cover drivers", COVER_NOTE)}
+              {activeCoverDrivers.map((driver) => {
+                const total = rangeCoverTotalHours(driver.id);
+                const liveDeliv = coverDeliveriesByDriver.live.get(driver.id) ?? 0;
+                const liveExtra = coverDeliveriesByDriver.extra.get(driver.id) ?? 0;
+                return (
+                  <li key={`c:${driver.id}`} className="px-4 py-3 flex flex-col gap-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium text-text-primary truncate">{driver.name}</p>
+                        <p className="text-[11px] text-text-muted">
+                          {formatGBP(driver.hourly_cash_rate)}/h cash
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-success">
+                        {formatGBP(coverWages(driver))}
+                      </p>
+                    </div>
+                    {coverDayCell(driver, mobileDay)}
+                    <p className="text-[11px] text-text-muted tabular-nums">
+                      Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
+                      {(liveDeliv > 0 || liveExtra > 0) && (
+                        <>
+                          {" · "}
+                          <span className="text-success">{liveDeliv} drops</span>
+                          {liveExtra > 0 && <span className="text-gold"> (+{liveExtra} extra)</span>}
+                        </>
                       )}
                     </p>
-                    <p className="text-[11px] text-text-muted truncate">
-                      {emp.position ?? "—"} ·{" "}
-                      <span className={underMinWage ? "text-danger font-medium" : ""}>
-                        NI £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
-                        {underMinWage && " ⚠ below min"}
-                      </span>
-                      {emp.hourly_cash_rate ? ` · Cash £${Number(emp.hourly_cash_rate).toFixed(2)}` : ""}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <p className="text-sm font-semibold tabular-nums text-text-primary">
-                      {formatGBP(wages.total)}
-                    </p>
-                    {wages.cash > 0 && (
-                      <p className="text-[10px] text-success tabular-nums">Cash {formatGBP(wages.cash)}</p>
-                    )}
-                  </div>
-                </div>
+                  </li>
+                );
+              })}
+            </>
+          )}
 
-                {employeeDayCell(emp, mobileDay)}
-
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted tabular-nums">
-                  <span>
-                    Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
-                  </span>
-                  {cashHrs > 0 && (
-                    <span className="text-gold">Cash {formatHoursMinsWords(cashHrs)}</span>
-                  )}
-                  <span className={flagVariance ? "text-warning" : ""}>
-                    4-wk avg {formatHoursMinsWords(avg)}
-                    {flagVariance && ` (${variance > 0 ? "+" : ""}${variance.toFixed(0)}%)`}
-                  </span>
-                  {isDriver && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEditingDelivery({
-                          driver: emp,
-                          existing: delivery ?? null,
-                          weekDays: weekDays.map((d) => toISODate(d)),
-                          events: clocks.filter(
-                            (c) =>
-                              c.employee_id === emp.id &&
-                              weekDays.some((d) => toISODate(d) === c.event_date),
-                          ),
-                        })
-                      }
-                      className="ml-auto h-7 px-2 rounded-md border border-border text-text-subtle hover:text-text-primary"
-                    >
-                      Drops{" "}
-                      <span className="text-success">Live {liveDeliv}</span>
-                      {liveExtra > 0 && <span className="text-gold"> +{liveExtra}</span>}
-                      {delivery?.manager_avg_4wk != null && <> · Avg {delivery.manager_avg_4wk}</>}
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
+          <li className="px-4 py-3 bg-surface-hover/40 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted tabular-nums">
+            <span>
+              On shift <span className="text-text-primary font-medium">{bookedHereCount(mobileDay)}</span>
+            </span>
+            <span>
+              Week <span className="text-text-primary font-medium">{formatHoursMinsWords(shownHours)}</span>
+            </span>
+            {groupFilter !== "managers" && (
+              <span className="ml-auto">
+                Wages <span className="text-text-primary font-medium">{formatGBP(shownWages)}</span>
+              </span>
+            )}
+          </li>
         </ul>
 
         <div className="hidden md:block overflow-x-auto">
@@ -1772,7 +1858,7 @@ export function RotaView({
             <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
               <tr>
                 <th className="text-left px-3 py-2 sticky left-0 bg-surface-hover z-10 sticky-col">
-                  Employee
+                  Name
                 </th>
                 <th className="text-left px-2 py-2">Position</th>
                 <th className="text-right px-2 py-2">NI £/h</th>
@@ -1789,11 +1875,17 @@ export function RotaView({
                   </th>
                 ))}
                 <th className="text-right px-2 py-2">Total hrs</th>
-                <th className="text-right px-2 py-2" title="Hours above 20/week are paid in cash">
+                <th
+                  className="text-right px-2 py-2"
+                  title="Staff: hours above their weekly NI limit. Cover drivers: every hour."
+                >
                   Cash hrs
                 </th>
                 <th className="text-right px-2 py-2">4-wk avg</th>
-                <th className="text-right px-3 py-2 group relative">
+                <th
+                  className="text-right px-3 py-2"
+                  title="Booked hours × rate. Managers are on a fixed daily wage and aren't counted here."
+                >
                   Wages
                   <InfoIcon size={11} className="inline ml-1 opacity-60" />
                 </th>
@@ -1801,307 +1893,365 @@ export function RotaView({
               </tr>
             </thead>
             <tbody>
-              {rotaEmployees.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={16}
-                    className="px-4 py-8 text-center text-text-muted"
-                  >
-                    No staff on this store&apos;s rota yet. Assign staff to this store
-                    in Employees, or add someone from the other store above.
-                  </td>
-                </tr>
-              )}
-              {rotaEmployees.map((emp) => {
-                const total = weekTotalHours(emp.id);
-                const cashHrs = weekCashHours(emp);
-                const avg = fourWkAvg.get(emp.id) ?? 0;
-                const wages = weekWages(emp);
-                const variance =
-                  avg > 0 ? ((total - avg) / avg) * 100 : 0;
-                const flagVariance = avg > 0 && Math.abs(variance) > 20;
-                const isDriver = hasRole(emp.position, "Driver");
-                const delivery = deliveryByDriver.get(emp.id);
-                const wage = wageComplianceForEmployee(emp, minWageBands);
-                const underMinWage = wage ? !wage.compliant : false;
-                const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
-                const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
-
-                return (
-                  <tr
-                    key={emp.id}
-                    className="border-t border-border hover:bg-surface-hover/60 transition-colors"
-                  >
-                    <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
-                      {emp.name}
-                      {emp.store_id !== activeStoreId && (
-                        <span
-                          className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
-                          title={`Visiting from ${storeById.get(emp.store_id ?? "")?.name ?? "another store"}`}
-                        >
-                          visiting
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-text-subtle">
-                      {emp.position ?? "—"}
-                    </td>
-                    <td className="px-2 py-2 text-right text-text-subtle">
-                      <span className={underMinWage ? "text-danger font-medium" : ""}>
-                        £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
-                      </span>
-                      {underMinWage && wage && (
-                        <span
-                          className="block text-[9px] text-danger"
-                          title={`Below minimum wage for age ${wage.age}: needs £${wage.required.toFixed(2)}/h (${minWageBands.effective_label})`}
-                        >
-                          ⚠ below min
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right text-text-subtle">
-                      {emp.hourly_cash_rate
-                        ? `£${Number(emp.hourly_cash_rate).toFixed(2)}`
-                        : "—"}
-                    </td>
-                    {weekDays.map((d) => {
-                      const dateIso = toISODate(d);
-                      return (
-                        <td
-                          key={dateIso}
-                          className={
-                            "px-1 py-1 text-center align-middle " +
-                            (dateIso === todayISO() ? "bg-gold/5" : "")
-                          }
-                        >
-                          {employeeDayCell(emp, d)}
-                        </td>
-                      );
-                    })}
-                    <td className="px-2 py-2 text-right font-medium">
-                      <HoursMinsDisplay hours={total} />
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      {cashHrs > 0 ? (
-                        <span className="font-medium text-gold">
-                          <HoursMinsDisplay hours={cashHrs} />
-                        </span>
-                      ) : (
-                        <span className="text-text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right text-text-subtle">
-                      <span className={flagVariance ? "text-warning" : ""}>
-                        <HoursMinsDisplay hours={avg} />
-                        {flagVariance && (
-                          <span className="ml-1 text-[10px]">
-                            ({variance > 0 ? "+" : ""}
-                            {variance.toFixed(0)}%)
-                          </span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <div className="font-medium text-text-primary">
-                        {formatGBP(wages.total)}
-                      </div>
-                      <div className="text-[10px] text-text-muted leading-tight mt-0.5">
-                        <span>NI {formatGBP(wages.ni)}</span>
-                        {wages.cash > 0 && (
-                          <span className="block text-success">Cash {formatGBP(wages.cash)}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-2 py-2 text-center text-xs">
-                      {isDriver ? (
-                        <button
-                          onClick={() =>
-                            setEditingDelivery({
-                              driver: emp,
-                              existing: delivery ?? null,
-                              weekDays: weekDays.map((d) => toISODate(d)),
-                              events: clocks.filter(
-                                (c) =>
-                                  c.employee_id === emp.id &&
-                                  weekDays.some((d) => toISODate(d) === c.event_date),
-                              ),
-                            })
-                          }
-                          className="text-text-subtle hover:text-text-primary underline-offset-2 hover:underline"
-                        >
-                          {delivery?.manager_avg_4wk != null
-                            ? `Avg ${delivery.manager_avg_4wk}`
-                            : "Enter"}
-                          {delivery?.vita_mojo_count != null && (
-                            <span className="block text-[10px] text-text-muted">
-                              Vita {delivery.vita_mojo_count}
+              {showManagers && (
+                <>
+                  {groupHeadingRow("Managers", MANAGER_NOTE)}
+                  {activeManagers.length === 0 && (
+                    <tr className="border-t border-border">
+                      <td colSpan={colCount} className="px-4 py-6 text-center text-text-muted">
+                        No managers assigned to this store yet. Add one on the Managers page.
+                      </td>
+                    </tr>
+                  )}
+                  {activeManagers.map((mgr) => {
+                    const total = weekManagerTotalHours(mgr.id);
+                    const live = managerDeliveriesByMgr.live.get(mgr.id) ?? 0;
+                    const extra = managerDeliveriesByMgr.extra.get(mgr.id) ?? 0;
+                    return (
+                      <tr
+                        key={`m:${mgr.id}`}
+                        className="border-t border-border hover:bg-surface-hover/60 transition-colors"
+                      >
+                        <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
+                          {mgr.name || mgr.username || "Manager"}
+                          {mgr.store_id !== activeStoreId && (
+                            <span
+                              className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
+                              title={`Visiting from ${storeById.get(mgr.store_id ?? "")?.name ?? "another store"}`}
+                            >
+                              visiting
                             </span>
                           )}
-                          <span
-                            className="block text-[10px] text-success"
-                            title="Deliveries logged via clock-out this week"
-                          >
-                            Live {liveDeliv}
-                            {liveExtra > 0 && (
-                              <span className="text-gold"> (+{liveExtra} extra)</span>
+                        </td>
+                        <td className="px-2 py-2 text-text-subtle">Manager</td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        {weekDays.map((d) => {
+                          const dateIso = toISODate(d);
+                          return (
+                            <td
+                              key={dateIso}
+                              className={
+                                "px-1 py-1 text-center align-middle " +
+                                (dateIso === todayISO() ? "bg-gold/5" : "")
+                              }
+                            >
+                              {managerDayCell(mgr, d)}
+                            </td>
+                          );
+                        })}
+                        <td className="px-2 py-2 text-right font-medium">
+                          <HoursMinsDisplay hours={total} />
+                        </td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        <td
+                          className="px-3 py-2 text-right text-[11px] text-text-muted"
+                          title="Fixed daily wage — not hourly, so not part of the rota wage bill"
+                        >
+                          Fixed daily
+                        </td>
+                        <td className="px-2 py-2 text-center text-xs tabular-nums">
+                          {live + extra === 0 ? (
+                            <span className="text-text-muted">—</span>
+                          ) : (
+                            <span
+                              className="text-gold font-medium"
+                              title={
+                                extra > 0
+                                  ? `${live} on the round + ${extra} extra, paid at the same per-drop rate`
+                                  : "Drops covered on the normal round"
+                              }
+                            >
+                              {live + extra}
+                              {extra > 0 && (
+                                <span className="text-[10px] text-text-muted"> (+{extra})</span>
+                              )}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </>
+              )}
+
+              {showStaff && (
+                <>
+                  {groupHeadingRow("Staff", STAFF_NOTE)}
+                  {rotaEmployees.length === 0 && (
+                    <tr className="border-t border-border">
+                      <td colSpan={colCount} className="px-4 py-6 text-center text-text-muted">
+                        No staff on this store&apos;s rota yet. Assign staff to this store
+                        in Employees, or add someone from the other store above.
+                      </td>
+                    </tr>
+                  )}
+                  {rotaEmployees.map((emp) => {
+                    const total = weekTotalHours(emp.id);
+                    const cashHrs = weekCashHours(emp);
+                    const avg = fourWkAvg.get(emp.id) ?? 0;
+                    const wages = weekWages(emp);
+                    const variance =
+                      avg > 0 ? ((total - avg) / avg) * 100 : 0;
+                    const flagVariance = avg > 0 && Math.abs(variance) > 20;
+                    const isDriver = hasRole(emp.position, "Driver");
+                    const delivery = deliveryByDriver.get(emp.id);
+                    const wage = wageComplianceForEmployee(emp, minWageBands);
+                    const underMinWage = wage ? !wage.compliant : false;
+                    const liveDeliv = liveDeliveriesByEmp.get(emp.id) ?? 0;
+                    const liveExtra = liveExtraByEmp.get(emp.id) ?? 0;
+
+                    return (
+                      <tr
+                        key={`e:${emp.id}`}
+                        className="border-t border-border hover:bg-surface-hover/60 transition-colors"
+                      >
+                        <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
+                          {emp.name}
+                          {emp.store_id !== activeStoreId && (
+                            <span
+                              className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide bg-gold/15 text-gold border border-gold/30 align-middle"
+                              title={`Visiting from ${storeById.get(emp.store_id ?? "")?.name ?? "another store"}`}
+                            >
+                              visiting
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-text-subtle">
+                          {emp.position ?? "—"}
+                        </td>
+                        <td className="px-2 py-2 text-right text-text-subtle">
+                          <span className={underMinWage ? "text-danger font-medium" : ""}>
+                            £{Number(emp.hourly_ni_rate ?? emp.hourly_rate ?? 0).toFixed(2)}
+                          </span>
+                          {underMinWage && wage && (
+                            <span
+                              className="block text-[9px] text-danger"
+                              title={`Below minimum wage for age ${wage.age}: needs £${wage.required.toFixed(2)}/h (${minWageBands.effective_label})`}
+                            >
+                              ⚠ below min
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right text-text-subtle">
+                          {emp.hourly_cash_rate
+                            ? `£${Number(emp.hourly_cash_rate).toFixed(2)}`
+                            : "—"}
+                        </td>
+                        {weekDays.map((d) => {
+                          const dateIso = toISODate(d);
+                          return (
+                            <td
+                              key={dateIso}
+                              className={
+                                "px-1 py-1 text-center align-middle " +
+                                (dateIso === todayISO() ? "bg-gold/5" : "")
+                              }
+                            >
+                              {employeeDayCell(emp, d)}
+                            </td>
+                          );
+                        })}
+                        <td className="px-2 py-2 text-right font-medium">
+                          <HoursMinsDisplay hours={total} />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          {cashHrs > 0 ? (
+                            <span className="font-medium text-gold">
+                              <HoursMinsDisplay hours={cashHrs} />
+                            </span>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right text-text-subtle">
+                          <span className={flagVariance ? "text-warning" : ""}>
+                            <HoursMinsDisplay hours={avg} />
+                            {flagVariance && (
+                              <span className="ml-1 text-[10px]">
+                                ({variance > 0 ? "+" : ""}
+                                {variance.toFixed(0)}%)
+                              </span>
                             )}
                           </span>
-                        </button>
-                      ) : (
-                        <span className="text-text-muted">—</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="font-medium text-text-primary">
+                            {formatGBP(wages.total)}
+                          </div>
+                          <div className="text-[10px] text-text-muted leading-tight mt-0.5">
+                            <span>NI {formatGBP(wages.ni)}</span>
+                            {wages.cash > 0 && (
+                              <span className="block text-success">Cash {formatGBP(wages.cash)}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2 text-center text-xs">
+                          {isDriver ? (
+                            <button
+                              onClick={() =>
+                                setEditingDelivery({
+                                  driver: emp,
+                                  existing: delivery ?? null,
+                                  weekDays: weekDays.map((d) => toISODate(d)),
+                                  events: clocks.filter(
+                                    (c) =>
+                                      c.employee_id === emp.id &&
+                                      weekDays.some((d) => toISODate(d) === c.event_date),
+                                  ),
+                                })
+                              }
+                              className="text-text-subtle hover:text-text-primary underline-offset-2 hover:underline"
+                            >
+                              {delivery?.manager_avg_4wk != null
+                                ? `Avg ${delivery.manager_avg_4wk}`
+                                : "Enter"}
+                              {delivery?.vita_mojo_count != null && (
+                                <span className="block text-[10px] text-text-muted">
+                                  Vita {delivery.vita_mojo_count}
+                                </span>
+                              )}
+                              <span
+                                className="block text-[10px] text-success"
+                                title="Deliveries logged via clock-out this week"
+                              >
+                                Live {liveDeliv}
+                                {liveExtra > 0 && (
+                                  <span className="text-gold"> (+{liveExtra} extra)</span>
+                                )}
+                              </span>
+                            </button>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </>
+              )}
+
+              {showCover && (
+                <>
+                  {groupHeadingRow("Cover drivers", COVER_NOTE)}
+                  {activeCoverDrivers.map((driver) => {
+                    const total = rangeCoverTotalHours(driver.id);
+                    const rate = Number(driver.hourly_cash_rate) || 0;
+                    const liveDeliv = coverDeliveriesByDriver.live.get(driver.id) ?? 0;
+                    const liveExtra = coverDeliveriesByDriver.extra.get(driver.id) ?? 0;
+                    return (
+                      <tr
+                        key={`c:${driver.id}`}
+                        className="border-t border-border hover:bg-surface-hover/60 transition-colors"
+                      >
+                        <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
+                          {driver.name}
+                        </td>
+                        <td className="px-2 py-2 text-text-subtle">Cover driver</td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        <td className="px-2 py-2 text-right text-text-subtle">{formatGBP(rate)}</td>
+                        {weekDays.map((d) => {
+                          const dateIso = toISODate(d);
+                          return (
+                            <td
+                              key={dateIso}
+                              className={
+                                "px-1 py-1 text-center align-middle " +
+                                (dateIso === todayISO() ? "bg-gold/5" : "")
+                              }
+                            >
+                              {coverDayCell(driver, d)}
+                            </td>
+                          );
+                        })}
+                        <td className="px-2 py-2 text-right font-medium">
+                          <HoursMinsDisplay hours={total} />
+                        </td>
+                        {/* Cash only — no NI split, so every booked hour is cash. */}
+                        <td className="px-2 py-2 text-right">
+                          {total > 0 ? (
+                            <span className="font-medium text-gold">
+                              <HoursMinsDisplay hours={total} />
+                            </span>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-right text-text-muted">—</td>
+                        <td className="px-3 py-2 text-right">
+                          <div className="font-medium text-success">{formatGBP(total * rate)}</div>
+                          <div className="text-[10px] text-text-muted leading-tight mt-0.5">Cash</div>
+                        </td>
+                        <td className="px-2 py-2 text-center text-xs">
+                          {liveDeliv > 0 || liveExtra > 0 ? (
+                            <span
+                              className="text-success"
+                              title="Deliveries logged via clock-out in this range"
+                            >
+                              {liveDeliv}
+                              {liveExtra > 0 && (
+                                <span className="text-gold"> (+{liveExtra} extra)</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </>
+              )}
             </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-border bg-surface-hover text-xs">
+                <td className="px-3 py-2.5 sticky left-0 bg-surface-hover z-10 sticky-col font-semibold text-text-primary">
+                  {groupChips.find((c) => c.key === groupFilter)?.label ?? "Everyone"}
+                </td>
+                <td colSpan={3} className="px-2 py-2.5 text-text-muted">
+                  On shift
+                </td>
+                {weekDays.map((d) => {
+                  const dateIso = toISODate(d);
+                  return (
+                    <td
+                      key={dateIso}
+                      className={
+                        "px-2 py-2.5 text-center tabular-nums text-text-subtle " +
+                        (dateIso === todayISO() ? "bg-gold/5" : "")
+                      }
+                    >
+                      {bookedHereCount(d)}
+                    </td>
+                  );
+                })}
+                <td className="px-2 py-2.5 text-right font-semibold text-text-primary">
+                  <HoursMinsDisplay hours={shownHours} />
+                </td>
+                <td className="px-2 py-2.5 text-right">
+                  {shownCashHours > 0 ? (
+                    <span className="font-medium text-gold">
+                      <HoursMinsDisplay hours={shownCashHours} />
+                    </span>
+                  ) : (
+                    <span className="text-text-muted">—</span>
+                  )}
+                </td>
+                <td />
+                <td className="px-3 py-2.5 text-right font-semibold text-text-primary">
+                  {groupFilter === "managers" ? (
+                    <span className="text-text-muted font-normal">—</span>
+                  ) : (
+                    formatGBP(shownWages)
+                  )}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
           </table>
         </div>
       </Card>
-
-      {/* Cover driver rota — hidden entirely when this store has no cover
-          drivers. Cells stay blank on days they aren't booked, which is most
-          weekdays: cover drivers are mainly a weekend resource. */}
-      {activeCoverDrivers.length > 0 && (
-        <Card className="overflow-hidden p-0 max-md:p-0">
-          <CardHeader className="px-5 pt-5 max-md:px-4 max-md:pt-4">
-            <div>
-              <CardTitle>{activeStore?.name ?? "—"} Cover Driver Rota</CardTitle>
-              <CardDescription>
-                {activeCoverDrivers.length} cover driver
-                {activeCoverDrivers.length === 1 ? "" : "s"} · paid cash per hour worked —
-                booking a day sets the expected shift, pay still comes from what they clock
-              </CardDescription>
-            </div>
-          </CardHeader>
-
-          <ul className="md:hidden divide-y divide-border border-t border-border">
-            {activeCoverDrivers.map((driver) => {
-              const total = rangeCoverTotalHours(driver.id);
-              const rate = Number(driver.hourly_cash_rate) || 0;
-              const liveDeliv = coverDeliveriesByDriver.live.get(driver.id) ?? 0;
-              const liveExtra = coverDeliveriesByDriver.extra.get(driver.id) ?? 0;
-              return (
-                <li key={driver.id} className="px-4 py-3 flex flex-col gap-2">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium text-text-primary truncate">{driver.name}</p>
-                      <p className="text-[11px] text-text-muted">
-                        {formatGBP(driver.hourly_cash_rate)}/h cash
-                      </p>
-                    </div>
-                    <p className="shrink-0 text-sm font-semibold tabular-nums text-success">
-                      {formatGBP(total * rate)}
-                    </p>
-                  </div>
-                  {coverDayCell(driver, mobileDay)}
-                  <p className="text-[11px] text-text-muted tabular-nums">
-                    Total <span className="text-text-primary font-medium">{formatHoursMinsWords(total)}</span>
-                    {(liveDeliv > 0 || liveExtra > 0) && (
-                      <>
-                        {" · "}
-                        <span className="text-success">{liveDeliv} drops</span>
-                        {liveExtra > 0 && <span className="text-gold"> (+{liveExtra} extra)</span>}
-                      </>
-                    )}
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm min-w-[900px]">
-              <thead className="bg-surface-hover text-xs uppercase tracking-wider text-text-muted">
-                <tr>
-                  <th className="text-left px-3 py-2 sticky left-0 bg-surface-hover z-10 sticky-col">
-                    Cover Driver
-                  </th>
-                  {weekDays.map((d) => (
-                    <th key={d.toISOString()} className="text-center px-2 py-2 min-w-[110px]">
-                      <div>{WEEKDAY_SHORT[(d.getDay() + 6) % 7]}</div>
-                      <div className="text-[10px] font-normal text-text-muted normal-case">
-                        {String(d.getDate()).padStart(2, "0")}/
-                        {String(d.getMonth() + 1).padStart(2, "0")}
-                      </div>
-                    </th>
-                  ))}
-                  <th className="text-right px-2 py-2">Total hrs</th>
-                  <th
-                    className="text-right px-3 py-2"
-                    title="Booked hours × cash rate. Cover drivers are paid cash only — no NI split."
-                  >
-                    Wages
-                  </th>
-                  <th className="text-center px-2 py-2">Deliveries</th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeCoverDrivers.map((driver) => {
-                  const total = rangeCoverTotalHours(driver.id);
-                  const rate = Number(driver.hourly_cash_rate) || 0;
-                  const liveDeliv = coverDeliveriesByDriver.live.get(driver.id) ?? 0;
-                  const liveExtra = coverDeliveriesByDriver.extra.get(driver.id) ?? 0;
-                  return (
-                    <tr
-                      key={driver.id}
-                      className="border-t border-border hover:bg-surface-hover/60 transition-colors"
-                    >
-                      <td className="px-3 py-2 sticky left-0 bg-surface z-10 sticky-col font-medium text-text-primary">
-                        {driver.name}
-                        <span className="block text-[10px] text-text-muted font-normal">
-                          {formatGBP(driver.hourly_cash_rate)}/h cash
-                        </span>
-                      </td>
-                      {weekDays.map((d) => {
-                        const dateIso = toISODate(d);
-                        return (
-                          <td
-                            key={dateIso}
-                            className={
-                              "px-1 py-1 text-center align-middle " +
-                              (dateIso === todayISO() ? "bg-gold/5" : "")
-                            }
-                          >
-                            {coverDayCell(driver, d)}
-                          </td>
-                        );
-                      })}
-                      <td className="px-2 py-2 text-right font-medium">
-                        <HoursMinsDisplay hours={total} />
-                      </td>
-                      {/* Cash only — no NI/cash split, unlike the employee rota. */}
-                      <td className="px-3 py-2 text-right">
-                        <div className="font-medium text-success">
-                          {formatGBP(total * rate)}
-                        </div>
-                        <div className="text-[10px] text-text-muted leading-tight mt-0.5">
-                          Cash · {formatGBP(rate)}/h
-                        </div>
-                      </td>
-                      <td className="px-2 py-2 text-center text-xs">
-                        {liveDeliv > 0 || liveExtra > 0 ? (
-                          <span
-                            className="text-success"
-                            title="Deliveries logged via clock-out in this range"
-                          >
-                            {liveDeliv}
-                            {liveExtra > 0 && (
-                              <span className="text-gold"> (+{liveExtra} extra)</span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-text-muted">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
 
       {/* Modals */}
       {editingShift && (
